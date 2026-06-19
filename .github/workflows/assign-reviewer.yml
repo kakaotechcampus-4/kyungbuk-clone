@@ -14,9 +14,13 @@ permissions:
 jobs:
   assign:
     runs-on: ubuntu-latest
-    # draft PR 은 제외 — "리뷰 준비 안 됨" 상태에 reviewer 지정/Discord ping 방지.
-    # draft → "Ready for review" 전환 시 ready_for_review 이벤트로 그때 발화.
-    if: github.event.pull_request.draft == false
+    # 발화 조건:
+    #  - draft 제외 ("리뷰 준비 안 됨" 상태에 reviewer 지정/Discord ping 방지)
+    #  - 학생 PR 모양만 (base = "<user>/final"). 배포/운영 PR(→main)·base-template PR 은 skip
+    #    → 운영 PR 이 roster 미존재로 실패해 ops-alert 내는 노이즈 차단 (별도 flag 불요)
+    if: >-
+      github.event.pull_request.draft == false &&
+      endsWith(github.event.pull_request.base.ref, '/final')
     steps:
       - name: Checkout mapping data
         uses: actions/checkout@v4
