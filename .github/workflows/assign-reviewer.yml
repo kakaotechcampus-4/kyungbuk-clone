@@ -5,7 +5,7 @@ name: Auto-assign reviewer
 
 on:
   pull_request:
-    types: [opened, reopened]
+    types: [opened, reopened, ready_for_review]
 
 permissions:
   pull-requests: write
@@ -14,6 +14,9 @@ permissions:
 jobs:
   assign:
     runs-on: ubuntu-latest
+    # draft PR 은 제외 — "리뷰 준비 안 됨" 상태에 reviewer 지정/Discord ping 방지.
+    # draft → "Ready for review" 전환 시 ready_for_review 이벤트로 그때 발화.
+    if: github.event.pull_request.draft == false
     steps:
       - name: Checkout mapping data
         uses: actions/checkout@v4
@@ -30,11 +33,13 @@ jobs:
           PR_NUM: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           REPO: ${{ github.repository }}
+          FEEDBACK_FORM_URL: ${{ vars.FEEDBACK_FORM_URL }}
         run: |
           set -euo pipefail
 
           STUDENT_ROSTER=mapping/data/student-roster.csv
           CYCLE_MAPPING=mapping/data/cycle-mapping.csv
+          FEEDBACK_STATUS=mapping/data/feedback-status.csv
           CURRENT_CYCLE=$(tr -d '[:space:]' < mapping/data/current-cycle.txt)
 
           if [ -z "$CURRENT_CYCLE" ]; then
@@ -51,6 +56,23 @@ jobs:
           if [ -z "$TEAM_NO" ]; then
             echo "::error::student $PR_AUTHOR not in roster"
             exit 1
+          fi
+
+          # ── 상호피드백 게이트 (ADR-0007) ──
+          # cleared_cycle = 이 학생이 멘토링 받을 수 있는 최고 window cycle (행 없으면 1).
+          # window(current-cycle) > cleared 이면 = 직전 사이클 상호피드백 미제출 → reviewer 미배정(NONE).
+          CLEARED=$(awk -F, -v u="$PR_AUTHOR" '
+            NR==1 || /^#/ {next}
+            $1==u {print $2; exit}
+          ' "$FEEDBACK_STATUS")
+          CLEARED=${CLEARED:-1}
+
+          if [ "$CURRENT_CYCLE" -gt "$CLEARED" ]; then
+            echo "gated: $PR_AUTHOR (window=$CURRENT_CYCLE > cleared=$CLEARED) — reviewer 미배정"
+            BODY="🔒 직전 사이클 **상호피드백 미제출**로 이번 사이클 멘토가 배정되지 않았습니다. 상호피드백 제출 후 **다음 PR** 부터 자동으로 멘토가 배정됩니다. (이미 올린 이 PR 은 제출 확인 후 **운영 매니저가 배정**해 드립니다.)"
+            [ -n "${FEEDBACK_FORM_URL:-}" ] && BODY="${BODY}"$'\n\n'"상호피드백 폼: ${FEEDBACK_FORM_URL}"
+            gh pr comment "$PR_NUM" -R "$REPO" --body "$BODY"
+            exit 0
           fi
 
           # (cycle, team_no) → mentor github username
