@@ -1,0 +1,96 @@
+name: Notify Discord school channel
+# Phase 2 plan §8.1 (FR-N1 ~ FR-N7)
+# 학교 repo (kangwon-clone 등) 의 .github/workflows/notify-discord.yml 로 배포.
+# PR.review_requested 또는 pull_request_review.submitted 발화 시:
+#   - repo name → 학교 → DISCORD_WEBHOOK_<학교> 선택
+#   - event type → target user (멘토 or 학생) 결정
+#   - student-roster / mentor-roster 에서 discord_id 조회
+#   - Discord webhook 으로 embed 메시지 + 본인 mention 발사
+#   - discord_id 누락 시 graceful (이름 표기) + ops-alert issue 생성
+
+on:
+  pull_request:
+    types: [review_requested]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+  issues: write  # ops-alert issue 발사용
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    # Sender filter (FR-N1):
+    # review_requested 는 Phase 1 auto-assign 결과로만 발화 (학생 수동 reviewer 추가 skip).
+    # vars.AUTO_ASSIGN_PAT_USER 는 Org-level variable (운영 token owner github username).
+    # pull_request_review.submitted 는 모든 케이스 발화 (FR-N2).
+    if: |
+      github.event_name == 'pull_request_review' ||
+      (github.event_name == 'pull_request' &&
+       github.event.sender.login == vars.AUTO_ASSIGN_PAT_USER)
+    steps:
+      - name: Checkout mapping data
+        uses: actions/checkout@v4
+        with:
+          repository: kakaotechcampus-4/pr-pipeline
+          token: ${{ secrets.AUTO_ASSIGN_PAT }}
+          path: mapping
+          sparse-checkout: |
+            data
+            workflows/scripts
+
+      - name: Resolve target + send Discord mention
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_ASSIGN_PAT }}
+          DISCORD_WEBHOOK_KANGWON: ${{ secrets.DISCORD_WEBHOOK_KANGWON }}
+          DISCORD_WEBHOOK_CHUNGNAM: ${{ secrets.DISCORD_WEBHOOK_CHUNGNAM }}
+          DISCORD_WEBHOOK_KYUNGPOOK: ${{ secrets.DISCORD_WEBHOOK_KYUNGPOOK }}
+          DISCORD_WEBHOOK_CHONNAM: ${{ secrets.DISCORD_WEBHOOK_CHONNAM }}
+          DISCORD_WEBHOOK_PUSAN: ${{ secrets.DISCORD_WEBHOOK_PUSAN }}
+          REPO: ${{ github.repository }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          EVENT_TYPE: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          REVIEW_STATE: ${{ github.event.review.state }}
+          REVIEWER: ${{ github.event.sender.login }}
+        run: bash mapping/workflows/scripts/notify.sh
+
+      - name: Notify ops on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_ASSIGN_PAT }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SOURCE_REPO: ${{ github.repository }}
+          EVENT_TYPE: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+        run: |
+          set -euo pipefail
+          BODY=$(cat <<EOF
+          **PR**: $PR_URL
+          **Author**: $PR_AUTHOR
+          **Source repo**: $SOURCE_REPO
+          **Event**: $EVENT_TYPE / $ACTION
+          **Workflow run**: $RUN_URL
+
+          ---
+
+          Discord 알림 발사 실패. Workflow 로그에서 \`::error::\` 줄을 확인하세요.
+
+          가능한 원인:
+          - 학교 webhook secret (DISCORD_WEBHOOK_*) 누락 또는 잘못된 URL
+          - Discord webhook 4xx/5xx 응답 (rate limit, 채널 삭제 등)
+          - notify.sh 의 awk lookup 실패 (매핑 누락 등)
+
+          처리: 로그 확인 → 원인별 처리 (secret 갱신 / 채널 복구 / roster 보정) → 이 이슈 close.
+          EOF
+          )
+          gh issue create \
+            -R kakaotechcampus-4/pr-pipeline \
+            -t "[ops-alert] notify-discord failed: $EVENT_TYPE on $SOURCE_REPO" \
+            -b "$BODY" \
+            -l "ops-alert"
