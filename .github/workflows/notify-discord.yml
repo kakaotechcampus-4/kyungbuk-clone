@@ -21,14 +21,19 @@ permissions:
 jobs:
   notify:
     runs-on: ubuntu-latest
-    # Sender filter (FR-N1):
-    # review_requested 는 Phase 1 auto-assign 결과로만 발화 (학생 수동 reviewer 추가 skip).
+    # Sender filter (FR-N1, 2026-06-22 완화):
+    # review_requested 발화 허용 케이스:
+    #   (a) sender == 봇(AUTO_ASSIGN_PAT_USER): Phase 1 auto-assign 결과 (최초 멘토 지정)
+    #   (b) sender == PR author: 학생이 수정 후 ↻ "Re-request review" 클릭 (재리뷰 요청)
+    # → 두 경우 모두 통과시키되, "요청된 reviewer 가 담당 멘토인지" 최종 검증은 notify.sh 가 수행
+    #   (엉뚱한 사람 reviewer 추가는 거기서 skip — 노이즈 차단).
     # vars.AUTO_ASSIGN_PAT_USER 는 Org-level variable (운영 token owner github username).
     # pull_request_review.submitted 는 모든 케이스 발화 (FR-N2).
     if: |
       github.event_name == 'pull_request_review' ||
       (github.event_name == 'pull_request' &&
-       github.event.sender.login == vars.AUTO_ASSIGN_PAT_USER)
+       (github.event.sender.login == vars.AUTO_ASSIGN_PAT_USER ||
+        github.event.sender.login == github.event.pull_request.user.login))
     steps:
       - name: Checkout mapping data
         uses: actions/checkout@v4
@@ -56,6 +61,7 @@ jobs:
           ACTION: ${{ github.event.action }}
           REVIEW_STATE: ${{ github.event.review.state }}
           REVIEWER: ${{ github.event.sender.login }}
+          REQUESTED_REVIEWER: ${{ github.event.requested_reviewer.login }}
         run: bash mapping/workflows/scripts/notify.sh
 
       - name: Notify ops on failure
