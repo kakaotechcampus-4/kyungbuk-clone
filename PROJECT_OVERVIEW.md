@@ -1,113 +1,66 @@
-# Kanana Schedule Agent 프로젝트 전체 구조
+# Kanana 프로젝트 구조 안내
 
-이 문서는 수강생이 프로젝트를 처음 열었을 때 전체 구조와 학습 흐름을 빠르게 파악하기 위한 지도입니다. 실행 방법과 검증 명령은 [README.md](README.md)를 기준으로 보고, 이 문서는 "어느 파일이 어떤 역할을 하는지"를 이해하는 데 집중합니다.
+이 문서는 학생들이 Week 1 main 브랜치를 처음 열었을 때 전체 흐름을 빠르게 파악하기 위한 지도입니다. 실행 방법은 [README.md](README.md)를 기준으로 보고, 이 문서는 "어느 파일이 어떤 역할을 하는지"를 이해하는 데 집중합니다.
+
+Week 1-6 전체 프로젝트는 `week_1_to_6f` 브랜치에 보존되어 있습니다.
 
 ## 30초 요약
 
-| 경로 | 한 줄 역할 |
+| 경로 | 역할 |
 | --- | --- |
-| `app.py` | Gradio 기반 채팅 UI 진입점입니다. |
-| `CURRICULUM.md` | 6주 / 12차시 수업 운영안과 확장 미션을 정리합니다. |
-| `fixed/agent_runtime.py` | 대화 저장과 prompt-driven LangChain agent 실행을 담당하는 얇은 런타임입니다. |
-| `student_parts/` | 수강생이 주차별로 구현 흐름을 확인하고 수정하는 핵심 폴더입니다. |
-| `fixed/stores.py` | SQLite, 외부 대화 DB, Chroma 개인 참고자료 저장소를 제공합니다. |
-| `golden_cases.py`, `tests/`, `run_golden.py` | 프롬프트 하네스와 전체 시나리오가 기대대로 동작하는지 검증합니다. |
+| `app.py` | Gradio 채팅 UI와 상세 trace 화면을 구성합니다. |
+| `student_parts/week01_wake_up_nana.py` | 학생이 Week 1 핵심 tool 함수를 구현하는 파일입니다. |
+| `fixed/` | 설정, 런타임, 저장소, trace, LLM 연결 등 기준 코드입니다. |
+| `static/` | UI 스타일과 Kanana 브랜드 이미지입니다. |
+| `run.sh` | 설치와 Week 1 앱 실행을 담당하는 runner입니다. |
 
 ## 전체 실행 흐름
 
-```mermaid
-flowchart TD
-    A["사용자 입력"] --> B["app.py<br>Gradio 채팅 UI"]
-    B --> C["AgentRuntime<br>fixed/agent_runtime.py"]
-    C --> S["LangChain supervisor prompt<br>build_langchain_supervisor_agent"]
-    O["golden_cases.py<br>Prompt harness examples"] --> S
-    S -->|"tool call"| N["nana_agent<br>personal sub-agent"]
-    S -->|"tool call"| K["kana_agent<br>group sub-agent"]
-    N --> D["Week 1<br>Personal schedule tools"]
-    N --> E["Week 2<br>Structured output tool"]
-    N --> F["Week 3<br>SQLite persistence"]
-    N --> G["Week 4<br>Agentic RAG"]
-    K --> E
-    K --> H["Week 5<br>MCP SQLite tools"]
-    K --> I["Week 6<br>Availability/proposal tools"]
-    D --> J["data/kanana_app.sqlite3"]
-    E --> J
-    F --> J
-    G --> J
-    G --> CH["data/chroma/"]
-    H --> L["data/kanana_external_people.sqlite3"]
-    C --> M["Trace payload"]
-    M --> U["앱의 상세 탭"]
-```
+1. 사용자가 `./run.sh` 또는 `./run.sh --week1`으로 앱을 실행합니다.
+2. `app.py`가 Gradio UI를 띄우고 `fixed/agent_runtime.py`가 사용자 메시지를 저장합니다.
+3. `fixed/week_agent_registry.py`가 `student_parts/week01_wake_up_nana.py`의 `build_week_agent()`를 호출합니다.
+4. Week 1 agent가 prompt와 tool 목록을 보고 필요한 tool을 호출합니다.
+5. tool call/result는 상세 탭의 trace JSON으로 표시됩니다.
 
-메인 채팅 화면의 런타임은 주차나 tool을 고르지 않습니다. `.env`에 `OPENAI_API_KEY`가 있으면 LangChain supervisor agent가 사용자 프롬프트와 `golden_cases.py`의 하네스 예시를 읽고 `nana_agent` 또는 `kana_agent` tool을 직접 호출합니다. 각 sub-agent도 자기 prompt와 tool 목록을 기준으로 structured output, 일정 CRUD, SQLite 저장/조회, RAG 검색, MCP 검색, 그룹 일정 제안을 수행합니다. 코드가 의미 판단을 선점하지 않고, 저장소와 MCP는 LLM이 고른 tool 호출을 실행하는 얇은 실행 계층으로 둡니다. `run_golden.py`는 API key 없이도 하네스 프롬프트가 agent prompt와 tool wiring에 연결되어 있는지 검증합니다.
+초기 배포 상태에서 학생 구현 대상 tool 본문은 `# TODO`와 빈칸으로 남아 있습니다. 학생은 가이드를 읽고 함수 본문을 하나씩 완성한 뒤 trace에서 입력값과 결과 payload를 확인합니다.
 
-## 폴더 지도
+## Week 1 학습 흐름
 
-| 경로 | 역할 | 수강생이 봐야 할 포인트 | 직접 수정 여부 |
+| 주차 | 파일 | 핵심 개념 | 구현 포인트 |
 | --- | --- | --- | --- |
-| `README.md` | 실행법, 환경 변수, 검증 명령 안내 | 프로젝트를 처음 실행할 때 먼저 확인합니다. | 보통 수정하지 않음 |
-| `CURRICULUM.md` | 6주 / 12차시 수업 계획 | 각 차시의 목표, 활동, 확장 미션을 확인합니다. | 문서 개선 시 수정 가능 |
-| `PROJECT_OVERVIEW.md` | 전체 구조와 학습 흐름 안내 | 파일 간 관계를 파악할 때 봅니다. | 문서 개선 시 수정 가능 |
-| `app.py` | Gradio UI, 채팅/상세 탭, trace 표시 | 입력이 런타임으로 들어가고 결과가 화면에 나오는 흐름을 확인합니다. | 보통 수정하지 않음 |
-| `student_parts/` | Week 1-6 수강생 구현 파일 | `# [WEEK NN][STUDENT TODO]` 주석 아래 구현 흐름을 봅니다. | 예 |
-| `fixed/agent_runtime.py` | prompt-driven agent 런타임 | 채팅 입력이 supervisor agent로 들어가고 trace가 수집되는 흐름을 확인합니다. | 보통 수정하지 않음 |
-| `fixed/stores.py` | SQLite/Chroma 저장소 구현 | 데이터가 어디에 저장되고 어떻게 조회되는지 확인합니다. | 보통 수정하지 않음 |
-| `fixed/config.py` | `.env`, DB 경로, 모델 설정 | 실행 환경 설정이 어디에서 로드되는지 확인합니다. | 필요 시 강사와 함께 수정 |
-| `fixed/trace.py` | tool call/result trace 수집 | 상세 탭에 표시되는 trace 구조를 확인합니다. | 보통 수정하지 않음 |
-| `mcp_server/` | Week 5 MCP SQLite server | 외부 대화 검색 tool이 MCP로 노출되는 방식을 봅니다. | Week 5 심화 시 수정 가능 |
-| `data/` | 앱 DB, 외부 인물 DB, Chroma 데이터 | SQLite/Chroma 저장 결과를 이해할 때 참고합니다. | 직접 편집하지 않음 |
-| `static/` | CSS와 Kanana 브랜드 이미지 | 화면 스타일과 브랜드 자산을 확인합니다. | UI 수업이 아니면 수정하지 않음 |
-| `tests/` | pytest 하네스/agent 테스트 | 프롬프트 하네스와 prompt-driven agent trace 형식을 확인합니다. | 테스트 추가 시 수정 가능 |
-| `run_golden.py`, `golden_cases.py` | 전체 golden scenario 검증 | 핵심 프롬프트 하네스가 통과하는지 확인합니다. | 보통 수정하지 않음 |
-| `run.sh` | 설치, 실행, 테스트 명령 래퍼 | 수업 중 사용하는 표준 실행 명령을 확인합니다. | 보통 수정하지 않음 |
+| Week 1 | `student_parts/week01_wake_up_nana.py` | LangChain tool 기초 | 현재 대화 전용 개인 일정 생성/조회/삭제 |
 
-## 주차별 학습 흐름
+## 추천 탐색 순서
 
-| 주차 | 파일 | 핵심 개념 | 구현/확인 포인트 |
-| --- | --- | --- | --- |
-| Week 1 | `student_parts/week01_tools.py` | LangChain tool 기초 | LLM이 개인 일정 생성, 조회, 삭제 tool을 고릅니다. |
-| Week 2 | `student_parts/week02_structured_output.py` | Structured output | LLM structured output이 자연어 요청을 `StructuredRequest` schema로 바꿉니다. |
-| Week 3 | `student_parts/week03_sqlite_store.py` | SQLite persistence | LLM이 저장/조회 의도를 판단하고 SQLite tool을 호출합니다. |
-| Week 4 | `student_parts/week04_agentic_rag.py` | Agentic RAG | LLM이 Chroma와 SQLite 검색 tool을 조합해 근거를 만듭니다. |
-| Week 5 | `student_parts/week05_mcp_sqlite.py`, `mcp_server/sqlite_mcp_server.py` | MCP tool 연결 | LLM이 외부 대화 검색, 메시지 로드, 일정 추출 MCP tool을 조합합니다. |
-| Week 6 | `student_parts/week06_subagents.py` | Supervisor / sub-agent | `nana_agent`, `kana_agent`가 prompt-driven tool delegation으로 전체 주차 tool chain을 구성합니다. |
-
-주차가 올라갈수록 앞 주차의 결과를 재사용합니다. 예를 들어 Week 6의 `kana_agent`는 Week 5의 외부 일정 검색 결과를 사용하고, `nana_agent`는 Week 1/3의 개인 일정 생성과 저장 흐름을 사용합니다.
-
-각 주차는 2차시로 운영합니다. 1차시는 기준 구현을 따라가고, 2차시는 payload, trace, test를 읽으며 결과를 확인한 뒤 작은 확장 미션을 정합니다. 자세한 운영안은 [CURRICULUM.md](CURRICULUM.md)를 봅니다.
-
-## 처음 보는 수강생의 추천 탐색 순서
-
-1. [README.md](README.md)에서 실행 방법과 환경 변수를 확인합니다.
-2. 이 문서의 "30초 요약"과 "전체 실행 흐름"을 먼저 봅니다.
-3. `student_parts/weekXX_*.py` 파일을 열고 `# [WEEK NN][STUDENT TODO]` 주석을 찾습니다.
-4. 각 TODO 바로 아래의 `# [REFERENCE ANSWER]` 코드를 보며 기대 구현 방향을 확인합니다.
-5. `./run.sh --test` 또는 `./run.sh --golden`으로 현재 구현이 통과하는지 확인합니다.
-6. 앱을 실행한 뒤 "상세" 탭에서 마지막 Agent 실행 trace를 확인합니다.
+1. [README.md](README.md)로 실행 방법과 `.env` 설정을 확인합니다.
+2. `student_parts/week01_wake_up_nana.py`를 열어 `[수강생 구현 가이드]`를 읽습니다.
+3. `week01_tools()`가 어떤 tool을 agent에 공개하는지 확인합니다.
+4. `./run.sh --week1`로 앱을 실행하고 샘플 요청을 입력합니다.
+5. 상세 trace에서 호출된 `tool_name`, 입력값, 결과 payload를 확인합니다.
+6. 해당 함수 본문을 구현한 뒤 다시 실행해 trace 결과가 어떻게 바뀌는지 비교합니다.
 
 ## 자주 쓰는 명령
 
 ```bash
-./run.sh
+./run.sh --install
 ```
 
-Gradio 앱을 실행합니다.
+처음 의존성을 설치하고 Week 1 앱을 실행합니다.
 
 ```bash
-./run.sh --test
+./run.sh --week1
 ```
 
-pytest 단위 테스트를 실행한 뒤 golden scenario를 이어서 확인합니다.
+Week 1 agent로 앱을 실행합니다.
 
 ```bash
-./run.sh --golden
+./run.sh --help
 ```
 
-수업 검증용 prompt harness wiring만 실행합니다.
+runner에서 지원하는 옵션을 확인합니다.
 
 ## 읽는 팁
 
-- 먼저 `student_parts/`를 보고, 더 깊은 동작이 궁금할 때 `fixed/`를 따라가면 됩니다.
-- 앱 화면에서 어떤 tool이 호출됐는지 궁금하면 "상세" 탭의 trace를 보면 됩니다.
-- DB를 직접 고치기보다는 tool과 store 함수가 어떤 데이터를 읽고 쓰는지 코드로 추적하는 편이 안전합니다.
+- 학생 구현 범위는 `student_parts/week01_wake_up_nana.py` 파일 상단의 `[수강생 구현 가이드]`가 기준입니다.
+- `fixed/`는 기준 구현을 이해하기 위한 참고 코드이며, 수업에서 별도 지시가 없으면 수정하지 않습니다.
+- 앱 화면에서 어떤 tool이 호출됐는지 궁금하면 상세 탭의 trace를 확인하세요.

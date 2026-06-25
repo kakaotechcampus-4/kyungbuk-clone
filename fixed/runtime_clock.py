@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""앱 실행 시점을 기준으로 한 날짜/시간 헬퍼입니다.
+
+테스트와 수업 데모에서 "오늘", "다음 주 화요일" 같은 상대 날짜가 실행 중에
+흔들리지 않도록 import 시점의 OS 날짜를 고정해서 사용합니다.
+"""
+
 from datetime import date, datetime, timedelta
 
 

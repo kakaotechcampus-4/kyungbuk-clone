@@ -17,4 +17,3 @@ dependencies:
       - pydantic>=2.7
       - chromadb>=0.5
       - numpy>=1.26
-      - pytest>=8.0

@@ -1,74 +1,74 @@
-# Kanana Schedule Agent 1-6주차 모범 답안
+# Kanana Schedule Agent
 
-Kanana 강의용 일정 Agent 프로젝트입니다. 메인 채팅 화면은 prompt-driven supervisor agent가 사용자 프롬프트를 보고 `nana_agent` 또는 `kana_agent` tool을 직접 호출하며, tool/trace는 상세 탭에서 확인합니다.
+Kanana 강의용 일정 Agent 실습 프로젝트의 Week 1 main 브랜치입니다. 학생들은 `student_parts/week01_wake_up_nana.py`를 열고, 파일 상단의 `[수강생 구현 가이드]`가 지정한 함수와 tool 본문을 직접 완성합니다.
 
-처음 프로젝트 구조를 훑는 수강생은 [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)를 먼저 보면 전체 흐름을 빠르게 잡을 수 있습니다.
+Week 1-6 전체 자료는 `week_1_to_6f` 브랜치에 보존되어 있습니다.
 
-6주 / 12차시 수업 운영안은 [CURRICULUM.md](CURRICULUM.md)를 기준으로 진행합니다.
+처음 구조를 볼 때는 [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)를 먼저 읽고, 수업 흐름은 [CURRICULUM.md](CURRICULUM.md)를 기준으로 따라가면 됩니다.
 
 ## 실행
 
+기본 Python 패키지 관리는 `uv`를 사용합니다.
+
 ```bash
-cd kakao_clone_coding_projects
+cd kakao_clone_coding_projects_q
 ./run.sh --install
 ```
 
-설치가 끝난 뒤에는 아래 명령만 실행하면 됩니다.
+설치 후에는 아래 명령으로 Week 1 앱을 실행합니다.
 
 ```bash
 ./run.sh
 ```
 
-`.env`는 repo 루트의 파일을 읽습니다. `.env.example`을 복사해서 개인 키를 채워 넣으세요.
+명시적으로 Week 1을 선택할 수도 있습니다.
 
 ```bash
-OPENAI_API_KEY=your_openai_api_key
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+./run.sh --week1
+```
+
+`.env`는 repo 루트의 파일을 읽습니다. `.env.example`을 복사해 개인 키를 채워 넣으세요.
+
+```bash
+PROXY_TOKEN=여기에 api key 입력
+CHAT_PROXY_URL=https://mlapi.run/4bbd0c4d-bf02-4e59-a635-457b1c30c56a/v1
+EMBEDDING_PROXY_URL=https://mlapi.run/b54ff33e-6d14-42df-93f9-0f1132160ee8/v1
+OPENAI_MODEL=openai/gpt-4.1-mini
+OPENAI_EMBEDDING_MODEL=openai/text-embedding-3-small
+KANANA_ACTIVE_WEEK=1
 KANANA_USE_LLM=1
 KANANA_LLM_ASSIST=1
 ```
 
-메인 채팅 화면은 `OPENAI_API_KEY`가 있어야 동작합니다. 메인 런타임은 주차나 tool을 고르지 않고, LangChain supervisor prompt가 `golden_cases.py`의 하네스 예시를 참고해 `nana_agent` 또는 `kana_agent` tool을 호출합니다. 각 sub-agent도 자기 prompt와 tool 목록을 기준으로 structured output, 일정 CRUD, SQLite 저장/조회, RAG 검색, MCP 검색, 그룹 일정 제안을 수행합니다. Week 2 structured output tool은 조건문 분류기 없이 LangChain/OpenAI structured output 경로를 사용합니다.
+`PROXY_TOKEN`이 없으면 프롬프트 기반 agent는 실행되지 않고 안내 메시지가 표시됩니다. 키를 넣으면 Week 1 agent가 prompt와 tool 목록을 보고 직접 tool을 고릅니다.
 
-## 주차별 구현 포인트
+### Conda fallback
 
-- Week 1: `student_parts/week01_tools.py`
-  - `personal_create_schedule`, `personal_list_schedules`, `personal_delete_schedule`
-  - 생성 tool은 DB 저장 도구에 바로 넘길 수 있는 `structured_request`를 함께 반환합니다.
-  - 검증은 개별 tool을 직접 호출하기보다 하네스 프롬프트를 채팅 런타임에 넣고 LLM이 어떤 tool을 골랐는지 trace를 확인하는 방식이 기본입니다.
-- Week 2: `student_parts/week02_structured_output.py`
-  - LLM structured output + Pydantic `StructuredRequest`
-- Week 3: `student_parts/week03_sqlite_store.py`
-  - LLM이 저장/조회 의도를 판단하고 SQLite tool로 structured output을 저장/조회
-- Week 4: `student_parts/week04_agentic_rag.py`
-  - LLM이 ChromaDB 개인 참고자료와 SQLite structured data 검색 tool을 조합
-- Week 5: `student_parts/week05_mcp_sqlite.py`, `mcp_server/sqlite_mcp_server.py`
-  - LLM이 MCP SQLite 이전 대화 검색, 메시지 로드, 일정 추출 tool을 조합
-- Week 6: `student_parts/week06_subagents.py`
-  - prompt-driven supervisor, `nana_agent`, `kana_agent`, tool 기반 sub-agent
-
-각 수강생 구현 구간은 `# [WEEK NN][STUDENT TODO]` 주석으로 표시했고, 바로 아래에 실행 가능한 `# [REFERENCE ANSWER]` 코드를 넣었습니다.
-
-## 검증
+conda 환경이 필요한 경우 `environment.yml` 기반 runner를 사용할 수 있습니다.
 
 ```bash
-./run.sh --golden
+./run.sh --conda --install
+./run.sh --conda
 ```
 
-모든 케이스의 `passed`가 `true`면 하네스 프롬프트가 supervisor/sub-agent prompt에 포함되어 있고, 기대 agent와 tool이 해당 agent의 tool 목록에 노출된 것입니다.
+## Week 1 구현 포인트
 
-pytest 기반 하네스 테스트까지 함께 확인하려면 아래 명령을 실행합니다.
+- 파일: `student_parts/week01_wake_up_nana.py`
+- 구현 대상: `personal_create_schedule`, `personal_list_schedules`, `personal_delete_schedule`
+- 목표: 현재 대화 전용 임시 개인 일정 CRUD tool을 완성합니다.
+
+## 구현 확인
+
+이 학생용 repo에는 자동 테스트 하네스가 포함되어 있지 않습니다. 앱을 실행한 뒤 채팅을 입력하고, 화면의 상세 trace에서 어떤 tool이 호출됐는지와 tool 결과 JSON에 어떤 값이 들어왔는지 확인하세요.
+
+초기 배포 상태의 구현 대상 함수 본문에는 `# TODO`와 빈칸이 들어 있습니다. 학생이 함수를 완성하면 상세 trace에서 실제 결과 JSON을 확인할 수 있어야 합니다.
+
+## 패키지 관리
+
+새 의존성의 기준 파일은 `pyproject.toml`과 `uv.lock`입니다. `requirements.txt`와 `environment.yml`은 기존 수강생 환경을 위한 fallback 파일입니다.
 
 ```bash
-./run.sh --test
+uv add "package-name>=1.0"
+uv remove package-name
+uv lock
 ```
-
-`--test`는 pytest가 하네스 프롬프트, agent prompt/tool wiring, prompt-driven runtime trace 형식을 확인한 뒤 golden harness 검증을 이어서 실행합니다.
-
-## 공식 문서 기준
-
-- LangChain v1 agents/tools/structured output/subagents 패턴
-- LangChain MCP adapters
-- Gradio `Blocks(css_paths=...)`, `Chatbot(type="messages")`
-- Kanana 공식 로고/브랜드 자산은 강의 목적으로 UI에 사용합니다.

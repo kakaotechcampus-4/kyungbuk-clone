@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import sys
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,17 @@ from fixed.agent_runtime import AgentRuntime
 runtime = AgentRuntime()
 CSS_PATH = STATIC_DIR / "app.css"
 MAX_CONVERSATION_BUTTONS = 12
+DEFAULT_PENDING_STATUS = "답변을 진행중입니다"
 ENTER_TO_SEND_HEAD = """
+<style>
+@media (min-width: 981px) {
+  html,
+  body {
+    height: 100dvh !important;
+    overflow-y: hidden !important;
+  }
+}
+</style>
 <script>
 function setKananaTextareaValue(textarea, value) {
   const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
@@ -26,14 +37,89 @@ function setKananaTextareaValue(textarea, value) {
   textarea.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+(function setupKananaPendingCleanup() {
+  if (window.__kananaPendingCleanupReady) return;
+  window.__kananaPendingCleanupReady = true;
+
+  function isKananaPendingMessage(message) {
+    const small = message?.querySelector("small");
+    const status = (small?.textContent || "").trim();
+    return status === "답변을 진행중입니다" || (status.startsWith("현재 ") && status.endsWith(" 실행 중"));
+  }
+
+  function hideKananaPendingPanel(panel) {
+    panel.dataset.kananaHiddenPending = "true";
+    panel.hidden = true;
+    panel.style.display = "none";
+    panel.setAttribute("aria-hidden", "true");
+  }
+
+  function revealKananaMessagePanel(panel) {
+    if (panel.dataset.kananaHiddenPending !== "true") return;
+    panel.hidden = false;
+    panel.style.display = "";
+    panel.removeAttribute("aria-hidden");
+    delete panel.dataset.kananaHiddenPending;
+  }
+
+  window.cleanupKananaPendingMessages = function cleanupKananaPendingMessages() {
+    const chatbot = document.querySelector("#kanana-chatbot");
+    if (!chatbot) return;
+
+    const messageGroups = new Set();
+    chatbot.querySelectorAll("[data-testid='bot']").forEach((botMessage) => {
+      const messagePanel = botMessage.closest(".message");
+      if (messagePanel?.parentElement) {
+        messageGroups.add(messagePanel.parentElement);
+      }
+    });
+
+    messageGroups.forEach((group) => {
+      const panels = Array.from(group.children).filter((child) => child.classList?.contains("message"));
+      panels.forEach(revealKananaMessagePanel);
+      const pendingPanels = panels.filter(isKananaPendingMessage);
+      const finalPanels = panels.filter((panel) => !isKananaPendingMessage(panel) && (panel.textContent || "").trim());
+
+      if (finalPanels.length > 0) {
+        pendingPanels.forEach(hideKananaPendingPanel);
+        return;
+      }
+
+      pendingPanels.slice(0, -1).forEach(hideKananaPendingPanel);
+    });
+  };
+
+  function observeKananaPendingMessages() {
+    if (!document.body) return;
+    const observer = new MutationObserver(window.cleanupKananaPendingMessages);
+    observer.observe(document.body, { childList: true, characterData: true, subtree: true });
+    window.cleanupKananaPendingMessages();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", observeKananaPendingMessages, { once: true });
+  } else {
+    observeKananaPendingMessages();
+  }
+})();
+
 document.addEventListener("keydown", function(event) {
   const target = event.target;
   if (!(target instanceof HTMLTextAreaElement)) return;
   if (!target.closest("#kanana-input")) return;
-  if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+  if (event.key !== "Enter" || event.isComposing) return;
 
   event.preventDefault();
   event.stopPropagation();
+
+  if (event.shiftKey) {
+    const start = target.selectionStart ?? target.value.length;
+    const end = target.selectionEnd ?? target.value.length;
+    const nextValue = `${target.value.slice(0, start)}\n${target.value.slice(end)}`;
+    setKananaTextareaValue(target, nextValue);
+    target.setSelectionRange(start + 1, start + 1);
+    return;
+  }
 
   const sendRoot = document.querySelector("#kanana-send");
   const sendButton =
@@ -48,6 +134,16 @@ document.addEventListener("keydown", function(event) {
   }
 }, true);
 </script>
+"""
+DELETE_CONVERSATION_CONFIRM_JS = """
+function(conversationId) {
+  if (!conversationId) {
+    alert("삭제할 저장된 대화를 먼저 선택해 주세요.");
+    return [""];
+  }
+  const confirmed = confirm("선택한 저장된 대화를 영구 삭제할까요?\\n이 작업은 되돌릴 수 없습니다.");
+  return [confirmed ? conversationId : ""];
+}
 """
 
 
@@ -64,8 +160,17 @@ def _trace_message(trace: dict[str, Any]) -> str:
     return "\n".join(lines) if lines else "- trace 없음"
 
 
+def _sqlite_schedule_memory_enabled() -> bool:
+    return int(getattr(runtime, "active_week", CONFIG.active_week) or 1) >= 3
+
+
 def _saved_schedule_lines(limit: int = 8) -> list[str]:
-    rows = runtime.app_store.list_schedules(limit=limit)
+    if not _sqlite_schedule_memory_enabled():
+        return []
+    list_schedules = getattr(runtime.app_store, "list_schedules", None)
+    if list_schedules is None:
+        return []
+    rows = list_schedules(limit=limit, kind="personal_schedule")
     lines: list[str] = []
     for row in rows:
         date = row.get("date") or "날짜 미정"
@@ -79,8 +184,52 @@ def _saved_schedule_lines(limit: int = 8) -> list[str]:
     return lines
 
 
+def _saved_schedule_markdown(limit: int = 8) -> str:
+    if not _sqlite_schedule_memory_enabled():
+        return "Week 1 main 브랜치에서는 현재 대화 안의 임시 일정만 사용합니다."
+    lines = _saved_schedule_lines(limit=limit)
+    if not lines:
+        return "저장된 일정이 아직 없습니다."
+    return "\n".join(lines)
+
+
 def _chat_notice() -> list[dict[str, str]]:
     return []
+
+
+def _pending_assistant_message(status_text: str = DEFAULT_PENDING_STATUS) -> dict[str, str]:
+    return {"role": "assistant", "content": f"...\n\n<small>{html.escape(status_text)}</small>"}
+
+
+def _is_pending_assistant_message(message: dict[str, Any] | None) -> bool:
+    if not message or message.get("role") != "assistant":
+        return False
+    content = str(message.get("content") or "").strip()
+    has_default_status = DEFAULT_PENDING_STATUS in content
+    has_tool_status = "현재 " in content and " 실행 중" in content
+    return content.startswith("...") and (has_default_status or has_tool_status)
+
+
+def _replace_pending_status(history: list[dict[str, Any]], status_text: str) -> list[dict[str, Any]]:
+    pending_message = _pending_assistant_message(status_text)
+    if history and _is_pending_assistant_message(history[-1]):
+        return [*history[:-1], pending_message]
+    return [*history, pending_message]
+
+
+def _replace_pending_with_answer(history: list[dict[str, Any]], answer: str) -> list[dict[str, Any]]:
+    assistant_message = {"role": "assistant", "content": answer}
+    if history and _is_pending_assistant_message(history[-1]):
+        return [*history[:-1], assistant_message]
+    return [*history, assistant_message]
+
+
+def _saved_chatbot_history(conversation_id: str) -> list[dict[str, str]]:
+    return [
+        message
+        for message in runtime.load_messages_for_chatbot(conversation_id)
+        if not _is_pending_assistant_message(message)
+    ]
 
 
 def _conversation_rows() -> list[dict[str, str]]:
@@ -125,6 +274,7 @@ def queue_user_message(
             gr.update(value="", interactive=True),
             "",
             gr.update(interactive=True),
+            _saved_schedule_markdown(),
             *_conversation_button_updates(conversation_id),
         )
 
@@ -132,6 +282,7 @@ def queue_user_message(
     history = [
         *history,
         {"role": "user", "content": message},
+        _pending_assistant_message(),
     ]
     return (
         history,
@@ -140,6 +291,7 @@ def queue_user_message(
         gr.update(value="", interactive=False),
         message,
         gr.update(interactive=False),
+        _saved_schedule_markdown(),
         *_conversation_button_updates(active_conversation_id),
     )
 
@@ -148,46 +300,75 @@ def finish_agent_response(
     pending_message: str,
     history: list[dict[str, Any]] | None,
     conversation_id: str | None,
-) -> tuple:
+) -> Any:
     history = history or []
     pending_message = (pending_message or "").strip()
     if not pending_message:
-        return (
+        yield (
             history,
             {},
             conversation_id or "",
             gr.update(interactive=True),
             "",
             gr.update(interactive=True),
+            _saved_schedule_markdown(),
             *_conversation_button_updates(conversation_id),
         )
+        return
 
-    result = runtime.run_agent(pending_message, conversation_id or None)
-    history = [*history, {"role": "assistant", "content": result.answer}]
-    return (
-        history,
-        result.trace,
-        result.conversation_id,
-        gr.update(interactive=True),
-        "",
-        gr.update(interactive=True),
-        *_conversation_button_updates(result.conversation_id),
-    )
+    active_conversation_id = conversation_id or None
+    for event in runtime.stream_agent(pending_message, active_conversation_id):
+        if event.status_text:
+            history = _replace_pending_status(history, event.status_text)
+            yield (
+                history,
+                {"mode": "pending", "status": event.status_text},
+                conversation_id or "",
+                gr.update(interactive=False),
+                pending_message,
+                gr.update(interactive=False),
+                _saved_schedule_markdown(),
+                *_conversation_button_updates(conversation_id),
+            )
+        if event.result:
+            history = _replace_pending_with_answer(history, event.result.answer)
+            yield (
+                history,
+                event.result.trace,
+                event.result.conversation_id,
+                gr.update(interactive=True),
+                "",
+                gr.update(interactive=True),
+                _saved_schedule_markdown(),
+                *_conversation_button_updates(event.result.conversation_id),
+            )
+            return
 
 
 def new_chat() -> tuple:
-    return (_chat_notice(), {}, "", *_conversation_button_updates(None))
+    return (_chat_notice(), {}, "", _saved_schedule_markdown(), *_conversation_button_updates(None))
 
 
 def load_chat(conversation_id: str | None) -> tuple:
     if not conversation_id:
-        return (_chat_notice(), "", *_conversation_button_updates(None))
-    return (runtime.load_messages_for_chatbot(conversation_id), conversation_id, *_conversation_button_updates(conversation_id))
+        return (_chat_notice(), "", _saved_schedule_markdown(), *_conversation_button_updates(None))
+    return (
+        _saved_chatbot_history(conversation_id),
+        conversation_id,
+        _saved_schedule_markdown(),
+        *_conversation_button_updates(conversation_id),
+    )
 
 
 def archive_chat(conversation_id: str | None) -> tuple:
     runtime.archive_conversation(conversation_id)
-    return (_chat_notice(), {}, "", *_conversation_button_updates(None))
+    return (_chat_notice(), {}, "", _saved_schedule_markdown(), *_conversation_button_updates(None))
+
+
+def delete_chat(conversation_id: str | None) -> tuple:
+    if conversation_id:
+        runtime.delete_conversation(conversation_id)
+    return (_chat_notice(), {}, "", _saved_schedule_markdown(), *_conversation_button_updates(None))
 
 
 def conversation_id_at(index: int) -> str:
@@ -199,7 +380,7 @@ def conversation_id_at(index: int) -> str:
 
 def build_demo() -> gr.Blocks:
     with gr.Blocks(title="Kanana Schedule Agent") as demo:
-        conversation_id = gr.State("")
+        conversation_id = gr.Textbox(value="", visible=False, elem_id="selected-conversation-id", container=False)
         pending_message = gr.State("")
         gr.HTML(
             f"""
@@ -224,18 +405,26 @@ def build_demo() -> gr.Blocks:
                             )
                             for _ in range(MAX_CONVERSATION_BUTTONS)
                         ]
+                        gr.HTML("<div class='conversation-list-title'>저장된 일정</div>", container=False)
+                        saved_schedules = gr.Markdown(
+                            value=_saved_schedule_markdown(),
+                            show_label=False,
+                            elem_id="saved-schedule-list",
+                            elem_classes=["saved-schedule-list"],
+                        )
                         archive_btn = gr.Button("현재 대화 보관", elem_classes=["ghost-action"])
+                        delete_btn = gr.Button("저장된 대화 삭제", elem_classes=["danger-action"])
                     with gr.Column(scale=4, min_width=560, elem_classes=["chat-panel"]):
                         chatbot = gr.Chatbot(
                             value=_chat_notice(),
                             height=680,
                             show_label=False,
                             elem_id="kanana-chatbot",
-                            placeholder="무엇을 도와드릴까요?",
+                            placeholder="",
                         )
                         with gr.Row(elem_classes=["composer"]):
                             textbox = gr.Textbox(
-                                placeholder="팀원 A/B/C와 다음 주 회의 시간을 잡아줘",
+                                placeholder="",
                                 show_label=False,
                                 lines=2,
                                 elem_id="kanana-input",
@@ -254,8 +443,26 @@ def build_demo() -> gr.Blocks:
                             max_height=780,
                         )
 
-        send_outputs = [chatbot, trace_json, conversation_id, textbox, pending_message, send_btn, *conversation_buttons]
-        finish_outputs = [chatbot, trace_json, conversation_id, textbox, pending_message, send_btn, *conversation_buttons]
+        send_outputs = [
+            chatbot,
+            trace_json,
+            conversation_id,
+            textbox,
+            pending_message,
+            send_btn,
+            saved_schedules,
+            *conversation_buttons,
+        ]
+        finish_outputs = [
+            chatbot,
+            trace_json,
+            conversation_id,
+            textbox,
+            pending_message,
+            send_btn,
+            saved_schedules,
+            *conversation_buttons,
+        ]
         send_btn.click(
             queue_user_message,
             inputs=[textbox, chatbot, conversation_id],
@@ -265,10 +472,21 @@ def build_demo() -> gr.Blocks:
             finish_agent_response,
             inputs=[pending_message, chatbot, conversation_id],
             outputs=finish_outputs,
-            show_progress="minimal",
+            show_progress="hidden",
         )
-        new_btn.click(new_chat, outputs=[chatbot, trace_json, conversation_id, *conversation_buttons])
-        archive_btn.click(archive_chat, inputs=[conversation_id], outputs=[chatbot, trace_json, conversation_id, *conversation_buttons])
+        new_btn.click(new_chat, outputs=[chatbot, trace_json, conversation_id, saved_schedules, *conversation_buttons])
+        archive_btn.click(
+            archive_chat,
+            inputs=[conversation_id],
+            outputs=[chatbot, trace_json, conversation_id, saved_schedules, *conversation_buttons],
+        )
+        delete_btn.click(
+            delete_chat,
+            inputs=[conversation_id],
+            outputs=[chatbot, trace_json, conversation_id, saved_schedules, *conversation_buttons],
+            js=DELETE_CONVERSATION_CONFIRM_JS,
+            queue=False,
+        )
         for index, conversation_button in enumerate(conversation_buttons):
             conversation_button.click(
                 lambda idx=index: conversation_id_at(idx),
@@ -277,14 +495,17 @@ def build_demo() -> gr.Blocks:
             ).then(
                 load_chat,
                 inputs=[conversation_id],
-                outputs=[chatbot, conversation_id, *conversation_buttons],
+                outputs=[chatbot, conversation_id, saved_schedules, *conversation_buttons],
                 show_progress="hidden",
             )
-        demo.load(lambda: _conversation_button_updates(None), outputs=conversation_buttons)
+        demo.load(
+            lambda: (_saved_schedule_markdown(), *_conversation_button_updates(None)),
+            outputs=[saved_schedules, *conversation_buttons],
+        )
     return demo
 
 
 if __name__ == "__main__":
     if not CONFIG.has_openai_key:
-        print("주의: 프롬프트 기반 에이전트 채팅에는 .env의 OPENAI_API_KEY가 필요합니다.")
+        print("주의: 프롬프트 기반 에이전트 채팅에는 .env의 PROXY_TOKEN이 필요합니다.")
     build_demo().launch(css_paths=[str(CSS_PATH)], head=ENTER_TO_SEND_HEAD)
