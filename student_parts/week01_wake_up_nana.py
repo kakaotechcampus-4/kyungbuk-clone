@@ -197,7 +197,19 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
 
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
     ...
+    tmp_schedules = _current_session_schedules()
 
+    for schedule in tmp_schedules:
+        if date_from and schedule["date"] < date_from:
+            tmp_schedules.remove(schedule)
+        elif date_to and schedule["date"] > date_to:
+            tmp_schedules.remove(schedule)
+    
+    return json.dumps({
+        "ok" : True,
+        "tool_name" : "personal_list_schedules",
+        "schedules" : tmp_schedules
+    })
 
 @tool
 def personal_delete_schedule(schedule_id: str) -> str:
