@@ -170,24 +170,68 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
-    # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+    if attendees is None:
+        attendees = []
+    schedule = {
+        "id": _new_personal_id(),
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "attendees": attendees,
+        "created_at": _now_iso(),
+        "session_id": current_session_scope(),
+    }
+    PERSONAL_SCHEDULES.append(schedule)
+    return _json({
+        "ok": True,
+        "tool_name": "personal_create_schedule",
+        "created_schedule": schedule,
+    })
 
 
 @tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
-    # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    schedules = _current_session_schedules()
+
+    if date_from is not None:
+        schedules = [schedule for schedule in schedules if schedule["date"] >= date_from]
+
+    if date_to is not None:
+        schedules = [schedule for schedule in schedules if schedule["date"] <= date_to]
+
+    return _json({
+        "ok": True,
+        "tool_name": "personal_list_schedules",
+        "schedules": schedules,
+    })
 
 
 @tool
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
-    # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
-    ...
+    session_id = current_session_scope()
+    before_count = len(PERSONAL_SCHEDULES)
+
+    PERSONAL_SCHEDULES[:] = [
+        schedule
+        for schedule in PERSONAL_SCHEDULES
+        if not (
+            _schedule_scope(schedule) == session_id
+            and schedule["id"] == schedule_id
+        )
+    ]
+
+    deleted = len(PERSONAL_SCHEDULES) < before_count
+
+    return _json({
+        "ok": True,
+        "tool_name": "personal_delete_schedule",
+        "deleted": deleted,
+    })
 
 
 def week01_tools() -> list[Any]:
