@@ -168,7 +168,7 @@ def personal_create_schedule(
     end_time: str = "미정",
     attendees: list[str] | None = None,
 ) -> str:
-    """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
+    """사용자의 개인 일정을 생성한다. date는 YYYY-MM-DD, start_time은 HH:MM 형식이다."""
 
     if attendees is None:
         attendees = []
@@ -188,7 +188,7 @@ def personal_create_schedule(
 
 @tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
-    """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
+    """사용자의 개인 일정 목록을 조회한다. date_from/date_to는 YYYY-MM-DD 형식이다."""
 
     schedules = _current_session_schedules()
     if date_from is not None:
@@ -200,7 +200,7 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
 
 @tool
 def personal_delete_schedule(schedule_id: str) -> str:
-    """일정 ID에 해당하는 개인 일정을 삭제합니다."""
+    """schedule_id와 일치하는 사용자의 개인 일정을 삭제한다."""
 
     session_id = current_session_scope()
     before = len(PERSONAL_SCHEDULES)
@@ -228,10 +228,10 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
-        f"너는 개인 일정 메이트 나나다. "
+        f"너는 일정 관리자 NaNa다. "
         f"오늘은 {current_app_date_iso()}이다. "
         "상대적 날짜 표현(내일, 다음 주 등)은 이 날짜 기준으로 YYYY-MM-DD로 변환한다. "
-        "일정 생성·조회·삭제가 필요하면 반드시 알맞은 tool을 호출한 뒤 짧게 답한다."
+        "일정 생성·조회·삭제가 필요하면 반드시 알맞은 tool을 호출한 뒤 답한다."
     ]
 
 
