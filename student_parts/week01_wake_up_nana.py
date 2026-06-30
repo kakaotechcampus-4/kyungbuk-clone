@@ -202,7 +202,13 @@ def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
-    ...
+    before = len(PERSONAL_SCHEDULES)
+    
+    PERSONAL_SCHEDULES[:] = [s for s in PERSONAL_SCHEDULES if not (s["id"] == schedule_id and _schedule_scope(s) == current_session_scope())]
+    
+    deleted = len(PERSONAL_SCHEDULES) < before
+    
+    return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": deleted})
 
 
 def week01_tools() -> list[Any]:
