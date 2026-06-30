@@ -170,8 +170,18 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
-    # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+    schedule = {
+        "id": _new_personal_id(),
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "attendees": attendees or [],
+        "created_at": _now_iso(),
+        "session_id": current_session_scope(),
+    }
+    PERSONAL_SCHEDULES.append(schedule)
+    return _json({"ok": True, "tool_name": "personal_create_schedule", "created_schedule": schedule})
 
 
 @tool
