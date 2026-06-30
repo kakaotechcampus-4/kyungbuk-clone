@@ -195,7 +195,6 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
     if date_from:
         schedules = [s for s in schedules if s["date"] >= date_from]
     
-
     if date_to:
         schedules = [s for s in schedules if s["date"] <= date_to]
 
@@ -242,6 +241,13 @@ def week01_prompt_parts() -> list[str]:
 
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+            f"""
+    당신은 개인 일정을 관리하는 AI 비서 Nana입니다.
+    오늘 날짜는 {current_app_date_iso()}입니다.
+
+    일정 생성/조회/삭제 요청이 들어오면 반드시 tool을 사용하세요.
+    답변은 항상 한국어로 합니다.
+""",
     ]
 
 
