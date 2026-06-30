@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Annotated
 
 from langchain.agents import create_agent
 from langchain.tools import tool
@@ -167,11 +167,11 @@ def _current_session_schedules() -> list[dict[str, Any]]:
 
 @tool
 def personal_create_schedule(
-    title: str, # 일정 제목
-    date: str, # 날짜
-    start_time: str, # 시작 시간
-    end_time: str = "미정", # 종료 시간
-    attendees: list[str] | None = None, #참석자 목록--> 없으면 <널> 반환
+    title: Annotated[str,"일정 제목"], # 일정 제목
+    date: Annotated[str,"날짜 (YYYY-MM-DD)"], # 날짜
+    start_time: Annotated[str, "시작 시간 (HH:MM)"], # 시작 시간
+    end_time: Annotated[str, "종료 시간 (HH:MM)"] = "미정", # 종료 시간
+     attendees: Annotated[list[str] | None, "참석자 목록"] = None, #참석자 목록--> 없으면 <널> 반환
 ) -> str: # JSON 으로 반환하지만 취급은 문자열로 된다
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
