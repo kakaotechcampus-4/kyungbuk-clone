@@ -27,7 +27,11 @@ PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+CHAT_MEMORY_PROMPT = """
+    너는 Nana야. 사용자의 개인 일정을 관리해주는 친절한 assistant야.
+    일정 생성, 조회, 삭제 요청을 받으면 적절한 tool을 골라서 처리해줘.
+    날짜는 YYYY-MM-DD, 시간은 HH:MM 형식으로 처리해.
+    """
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -228,6 +232,7 @@ def week01_prompt_parts() -> list[str]:
 
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        CHAT_MEMORY_PROMPT,
     ]
 
 
