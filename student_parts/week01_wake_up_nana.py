@@ -171,7 +171,6 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
-    global next_schedule_number
     schedule = {
         "id": _new_personal_id(),
         "title": title,
@@ -184,15 +183,18 @@ def personal_create_schedule(
     }
     PERSONAL_SCHEDULES.append(schedule)
 
-    return json.dumps({"ok": True, "tool_name": "personal_create_schedule", "created_schedule": schedule}, ensure_ascii=False)
+    return _json({"ok": True, "tool_name": "personal_create_schedule", "created_schedule": schedule})
 
 
-@tool
+@tool("personal_list_schedules", description="개인 일정을 조회한다. date_from은 조회 시작일이며 그 날짜 이상의 일정만 포함하고, date_to는 조회 종료일이며 그 날짜 이하의 일정만 포함한다. 둘 다 YYYY-MM-DD 형식이다. date_from을 비워두면 시작일 제한 없이, date_to를 비워두면 종료일 제한 없이 조회하며, 둘 다 비워두면 전체 일정을 조회한다.")
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
-    # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    schedules = _current_session_schedules()
+    schedules = [schedule for schedule in schedules if date_from is None or schedule["date"] >= date_from]
+    schedules = [schedule for schedule in schedules if date_to is None or schedule["date"] <= date_to]
+
+    return _json({"ok": True, "tool_name": "personal_list_schedules", "schedules": schedules})
 
 
 @tool
