@@ -64,7 +64,7 @@ def join_system_prompt(parts: list[str]) -> str:
 #        PERSONAL_SCHEDULES에 append합니다.
 #      - 반환 JSON에는 ok, tool_name, created_schedule을 넣습니다.
 #      - Week 1 반환에는 structured_request나 sqlite_save를 넣지 않습니다.
-#
+#   
 #   2. personal_list_schedules
 #      - PERSONAL_SCHEDULES를 직접 수정하지 않고 현재 대화 범위의 일정만 조회합니다.
 #      - date_from이 있으면 그 날짜 이상, date_to가 있으면 그 날짜 이하만 남깁니다.
@@ -162,16 +162,26 @@ def _current_session_schedules() -> list[dict[str, Any]]:
 
 @tool
 def personal_create_schedule(
-    title: str,
-    date: str,
-    start_time: str,
-    end_time: str = "미정",
-    attendees: list[str] | None = None,
-) -> str:
+    title: str, # 일정 제목
+    date: str, # 날짜
+    start_time: str, # 시작 시간
+    end_time: str = "미정", # 종료 시간
+    attendees: list[str] | None = None, #참석자 목록--> 없으면 <널> 반환
+) -> str: # JSON 으로 반환하지만 취급은 문자열로 된다
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
-
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+    schedule = {
+        "id": _new_personal_id(),
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "attendees": attendees if attendees is not None else [],
+        "created_at": _now_iso(),
+        "session_id": current_session_scope(),
+    }
+    PERSONAL_SCHEDULES.append(schedule)
+    return _json({"ok": True, "tool_name": "personal_create_schedule", "created_schedule": schedule})
 
 
 @tool
