@@ -26,8 +26,10 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
-# TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+CHAT_MEMORY_PROMPT = (
+    "대화 중 사용자가 언급한 이름, 장소, 선호 시간대를 기억하고 이후 답변에 자연스럽게 반영한다. "
+    "같은 대화 안에서 앞서 나온 일정 정보를 참고해 중복 생성이나 누락이 없도록 한다."
+)
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -226,6 +228,7 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
+        CHAT_MEMORY_PROMPT,
         f"""당신은 Nana, 개인 일정을 관리하는 AI 어시스턴트입니다.
 오늘 날짜는 {current_app_date_iso()}입니다.
 
