@@ -26,8 +26,10 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
-# TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+CHAT_MEMORY_PROMPT = (
+    "같은 대화 안에서 사용자가 앞서 말한 일정 제목, 날짜, 시간, 참석자 정보를 기억하고 "
+    "이후 일정 생성/조회/삭제 요청을 해석할 때 참고한다."
+)
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -170,24 +172,63 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
-    # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+    schedule = {
+        "id": _new_personal_id(),
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "attendees": attendees if attendees is not None else [],
+        "created_at": _now_iso(),
+        "session_id": current_session_scope(),
+    }
+    PERSONAL_SCHEDULES.append(schedule)
+    return _json(
+        {
+            "ok": True,
+            "tool_name": "personal_create_schedule",
+            "created_schedule": schedule,
+        }
+    )
 
 
 @tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
-    # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    schedules = _current_session_schedules()
+    if date_from:
+        schedules = [schedule for schedule in schedules if str(schedule.get("date", "")) >= date_from]
+    if date_to:
+        schedules = [schedule for schedule in schedules if str(schedule.get("date", "")) <= date_to]
+    return _json(
+        {
+            "ok": True,
+            "tool_name": "personal_list_schedules",
+            "schedules": schedules,
+        }
+    )
 
 
 @tool
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
-    # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
-    ...
+    session_id = current_session_scope()
+    before_count = len(PERSONAL_SCHEDULES)
+    PERSONAL_SCHEDULES[:] = [
+        schedule
+        for schedule in PERSONAL_SCHEDULES
+        if not (schedule.get("id") == schedule_id and _schedule_scope(schedule) == session_id)
+    ]
+    return _json(
+        {
+            "ok": True,
+            "tool_name": "personal_delete_schedule",
+            "deleted": len(PERSONAL_SCHEDULES) < before_count,
+            "schedule_id": schedule_id,
+        }
+    )
 
 
 def week01_tools() -> list[Any]:
@@ -206,7 +247,43 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
-        # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        CHAT_MEMORY_PROMPT,
+        f"""
+        너는 Nana의 개인 일정을 도와주는 일정 비서다.
+        오늘 날짜는 {current_app_date_iso()}다.
+
+        사용자가 개인 일정 생성, 조회, 삭제를 요청하면 직접 추측해서 처리했다고 말하지 말고
+        반드시 제공된 LangChain tool 중 알맞은 tool을 호출한다.
+
+        tool 사용 규칙:
+        - 새 개인 일정을 만들 때는 personal_create_schedule을 호출한다.
+        - 개인 일정을 보여 달라거나 확인해 달라고 하면 personal_list_schedules를 호출한다.
+        - 개인 일정을 지워 달라고 하면 personal_delete_schedule을 호출한다.
+        - Week 1의 개인 일정은 현재 대화 안의 임시 메모리이므로 SQLite나 앱 DB 저장을 언급하지 않는다.
+        - tool 결과 JSON에 있는 created_schedule, schedules, deleted 값을 근거로 답한다.
+
+        일정 생성 규칙:
+        - title, date, start_time은 가능한 한 사용자 말에서 추출한다.
+        - end_time이 없으면 "미정"으로 둔다.
+        - 참석자가 없으면 attendees는 빈 목록으로 둔다.
+        - 상대 날짜 표현은 오늘 날짜를 기준으로 YYYY-MM-DD 형식으로 바꾼다.
+        - 제목, 날짜, 시작 시간처럼 일정을 만들기 위해 꼭 필요한 정보가 부족하면 tool을 호출하지 말고 짧게 되묻는다.
+
+        일정 조회 규칙:
+        - 특정 날짜나 기간이 있으면 date_from/date_to를 YYYY-MM-DD로 채운다.
+        - 기간이 없으면 date_from과 date_to 없이 현재 대화의 모든 개인 일정을 조회한다.
+        - 조회 결과가 비어 있으면 일정이 없다고 간단히 말한다.
+
+        일정 삭제 규칙:
+        - 사용자가 일정 ID를 직접 말하면 personal_delete_schedule을 호출한다.
+        - 일정 ID 없이 제목이나 날짜로 삭제를 요청하면 먼저 personal_list_schedules로 후보를 확인한다.
+        - 후보가 하나로 확정되면 그 id로 personal_delete_schedule을 호출한다.
+        - 후보가 없거나 여러 개라서 확정할 수 없으면 어떤 일정을 지울지 짧게 되묻는다.
+
+        답변 스타일:
+        - 한국어로 짧고 자연스럽게 답한다.
+        - 생성/삭제 성공 여부와 조회된 일정의 핵심 정보를 사용자에게 알려준다.
+        """,
     ]
 
 
