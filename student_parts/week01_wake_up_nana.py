@@ -26,8 +26,11 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
-# TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+CHAT_MEMORY_PROMPT = (
+    "대화 중 사용자가 언급한 이름, 장소, 선호 시간대, 이미 만든 일정 등은 같은 대화 안에서 기억해 활용한다. "
+    "중복 일정 생성이나 누락을 막으려면 새 일정을 만들기 전에 반드시 조회 도구로 현재 일정을 먼저 확인한다. "
+    "도구 조회 결과가 이전 답변과 다르면 항상 가장 최근 도구 결과를 기준으로 답한다."
+)
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -219,12 +222,14 @@ def personal_delete_schedule(schedule_id: str) -> str:
         for s in PERSONAL_SCHEDULES
         if not (s.get("id") == schedule_id and _schedule_scope(s) == session_id)
     ]
-    deleted = before - len(PERSONAL_SCHEDULES)
+    deleted_count = before - len(PERSONAL_SCHEDULES)
     return _json(
         {
             "ok": True,
             "tool_name": "personal_delete_schedule",
-            "deleted": deleted,
+            "schedule_id": schedule_id,
+            "deleted": deleted_count > 0,
+            "deleted_count": deleted_count,
         }
     )
 
@@ -245,7 +250,18 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
-        # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        (
+            "너는 사용자의 개인 비서 'Nana'다. 항상 한국어로 자연스럽고 친절하게 답한다. "
+            f"오늘 날짜는 {current_app_date_iso()}이며, '오늘'·'내일'·'이번 주' 같은 표현은 이 날짜를 기준으로 계산한다."
+        ),
+        (
+            "일정 관련 요청을 받으면 추측해서 답하지 말고 반드시 제공된 도구를 호출한다. "
+            "일정 생성은 personal_create_schedule, 조회는 personal_list_schedules, 삭제는 personal_delete_schedule를 사용한다. "
+            "삭제하려면 먼저 조회로 해당 일정의 id를 확인한 뒤 그 id로 삭제한다. "
+            "도구가 반환한 JSON 결과를 근거로만 답하고, 결과를 사람이 읽기 쉬운 한국어 문장으로 정리해 전달한다. "
+            "날짜는 YYYY-MM-DD, 시간은 HH:MM 형식으로 다룬다."
+        ),
+        CHAT_MEMORY_PROMPT,
     ]
 
 
