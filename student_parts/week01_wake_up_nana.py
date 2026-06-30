@@ -27,7 +27,7 @@ PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+CHAT_MEMORY_PROMPT = "이전 대화 내용을 기억하고 문맥을 유지하며 답변하라."
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -171,7 +171,18 @@ def personal_create_schedule(
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+    schedule = {
+        "id": _new_personal_id(), #이 일정의 고유 식별자
+        "title": title, #일정 제목
+        "date": date, #일정 날짜
+        "start_time": start_time, #시작 시간
+        "end_time": end_time, #종료 시간
+        "attendees": attendees or [], #참석자 목록
+        "created_at": _now_iso(), #이 일정이 생성된 시각
+        "session_id": current_session_scope(), #어느 대화창에서 만든 일정인지 (대화 범위 분리용)
+    }
+    PERSONAL_SCHEDULES.append(schedule)
+    return _json({"ok": True, "tool_name": "personal_create_schedule", "created_schedule": schedule})
 
 
 @tool
@@ -179,7 +190,12 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    filtered = [
+        s for s in _current_session_schedules()
+        if (date_from is None or s["date"] >= date_from)
+        and (date_to is None or s["date"] <= date_to)
+    ]
+    return _json({"ok": True,  "tool_name": "personal_list_schedule", "schedules": filtered})
 
 
 @tool
@@ -187,7 +203,10 @@ def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
-    ...
+    before = len(PERSONAL_SCHEDULES)
+    PERSONAL_SCHEDULES[:] = [s for s in PERSONAL_SCHEDULES if s["id"] != schedule_id or _schedule_scope(s) != current_session_scope()]
+    deleted = len(PERSONAL_SCHEDULES) < before
+    return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": deleted})
 
 
 def week01_tools() -> list[Any]:
@@ -207,6 +226,11 @@ def week01_prompt_parts() -> list[str]:
 
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        f"""
+        오늘 날짜는 {current_app_date_iso()}이다.
+        항상 한국어로 답변한다.
+        일정 요청에는 반드시 tool 사용한다.
+        """
     ]
 
 
