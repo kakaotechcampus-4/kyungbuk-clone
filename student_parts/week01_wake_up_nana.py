@@ -28,7 +28,7 @@ _WEEK01_AGENT: Any | None = None
 
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+CHAT_MEMORY_PROMPT = f"오늘 날짜는 {current_app_date_iso()}입니다."
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -229,6 +229,7 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
+        CHAT_MEMORY_PROMPT,
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
     ]
 
