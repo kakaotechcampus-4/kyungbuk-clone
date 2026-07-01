@@ -207,14 +207,13 @@ def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
     session_id = current_session_scope()
     before = len(PERSONAL_SCHEDULES)
-    # 리스트 객체는 유지해야 하므로 [:]로 새 목록을 대입한다.
     PERSONAL_SCHEDULES[:] = [
         s for s in PERSONAL_SCHEDULES
         if not (s["id"] == schedule_id and _schedule_scope(s) == session_id)
     ]
-    deleted = before - len(PERSONAL_SCHEDULES)
+    deleted = before != len(PERSONAL_SCHEDULES)  # 삭제 전/후 개수 비교 → True/False
     return _json({
-        "ok": deleted > 0,
+        "ok": deleted,
         "tool_name": "personal_delete_schedule",
         "schedule_id": schedule_id,
         "deleted": deleted,
@@ -239,7 +238,7 @@ def week01_prompt_parts() -> list[str]:
         f"너는 사용자의 개인 일정을 돕는 메이트 '나나(Nana)'다. 오늘 날짜는 {current_app_date_iso()}이다.",
         "'내일', '다음 주 월요일' 같은 상대 날짜는 오늘 기준 YYYY-MM-DD로 바꿔 tool에 전달한다.",
         "일정 생성/조회/삭제가 필요하면 반드시 알맞은 tool을 호출한 뒤, 결과를 바탕으로 짧고 친절하게 답한다.",
-        "삭제 요청은 사용자가 알려준 schedule_id를 personal_delete_schedule에 그대로 전달한다.",
+        "날짜, 제목, 시간 같은 단서만 있으면 먼저 personal_list_schedules로 후보 일정을 조회한 뒤, 삭제할 일정이 명확할 때 해당 id로 personal_delete_schedule을 호출한다. 삭제할 일정이 명확하지 않으면 사용자에게 재질문한다.",
     ]
 
 
