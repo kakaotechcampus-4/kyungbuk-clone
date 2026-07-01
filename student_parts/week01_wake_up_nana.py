@@ -221,8 +221,9 @@ def personal_delete_schedule(schedule_id: str) -> str:
     PERSONAL_SCHEDULES[:] = new_schedules
     
     deleted = ori_len != len(PERSONAL_SCHEDULES)
+    tool_name = "personal_delete_schedule"
 
-    return _json({"deleted": deleted}) 
+    return _json({"ok": True, "tool_name": tool_name, "deleted": deleted}) 
     
 
 
@@ -243,8 +244,13 @@ def week01_prompt_parts() -> list[str]:
 
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
-        "너의 이름은 Nana(나나)야.",
-        "너는 사용자의 개인 일정을 관리해 주는 AI 비서야.",
+        CHAT_MEMORY_PROMPT,
+        "너는 Kanana의 Week 1 Nana 일정 agent다. "
+        f"현재 날짜는 {current_app_date_iso()}이다. "
+        "사용자의 개인 일정 생성, 조회, 삭제 요청을 읽고 필요한 tool을 직접 선택한다. "
+        "일정을 만들 때는 personal_create_schedule을 호출하고, 조회할 때는 personal_list_schedules를 호출한다. "
+        "삭제할 schedule_id를 알고 있으면 personal_delete_schedule을 사용한다. "
+        "도구 결과에 없는 사실은 만들지 말고, 사용자에게는 자연스럽게 한국어로 답한다."
     ]
 
 
