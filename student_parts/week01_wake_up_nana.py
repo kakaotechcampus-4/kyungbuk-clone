@@ -163,6 +163,24 @@ def _current_session_schedules() -> list[dict[str, Any]]:
     return [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) == session_id]
 
 
+class _PersonalScheduleStore:
+    """PERSONAL_SCHEDULES에 대한 쓰기 접근을 단일 경로로 제한하는 클래스."""
+
+    def add(self, schedule: dict[str, Any]) -> None:
+        PERSONAL_SCHEDULES.append(schedule)
+
+    def delete(self, schedule_id: str, session_id: str) -> bool:
+        before = len(PERSONAL_SCHEDULES)
+        PERSONAL_SCHEDULES[:] = [
+            s for s in PERSONAL_SCHEDULES
+            if not (s["id"] == schedule_id and _schedule_scope(s) == session_id)
+        ]
+        return len(PERSONAL_SCHEDULES) < before
+
+
+_store = _PersonalScheduleStore()
+
+
 @tool
 def personal_create_schedule(
     title: str,
@@ -184,7 +202,8 @@ def personal_create_schedule(
         "created_at": _now_iso(),
         "session_id": current_session_scope(),
     }
-    PERSONAL_SCHEDULES.append(schedule)
+    # PERSONAL_SCHEDULES.append(schedule)
+    _store.add(schedule)
     return _json({"ok": True, "tool_name": "personal_create_schedule", "created_schedule": schedule})
 
 
@@ -207,12 +226,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
 
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
     session_id = current_session_scope()
-    before = len(PERSONAL_SCHEDULES)
-    PERSONAL_SCHEDULES[:] = [
-        s for s in PERSONAL_SCHEDULES
-        if not (s["id"] == schedule_id and _schedule_scope(s) == session_id)
-    ]
-    deleted = len(PERSONAL_SCHEDULES) < before
+    deleted = _store.delete(schedule_id, session_id)
     return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": deleted})
 
 
@@ -235,17 +249,15 @@ def week01_prompt_parts() -> list[str]:
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
         f"""
 # 역할
-너는 Nana, 사용자의 개인 일정을 관리해주는 AI 비서다.
-친근하고 명확하게 응답하며, 일정 관련 요청은 반드시 제공된 tool을 사용해 처리한다.
+너는 Nana, 사용자의 개인 일정을 관리하는 AI 비서다.
+사용자 메시지와 같은 언어로 응답한다.
 
 # 현재 날짜
 오늘은 {current_app_date_iso()} 이다. "오늘", "내일", "이번 주" 같은 상대적 날짜 표현은 이 날짜를 기준으로 해석한다.
 
 # Tool 사용 규칙
-- 일정 생성 요청 → personal_create_schedule 호출
-- 일정 조회 요청 → personal_list_schedules 호출 (날짜 범위가 있으면 date_from/date_to에 넣는다)
-- 일정 삭제 요청 → personal_delete_schedule 호출
-- tool 결과를 받은 뒤 사용자에게 자연스러운 한국어로 결과를 요약해 전달한다.
+- 일정 생성·조회·삭제 요청은 반드시 제공된 tool을 호출해 처리한다.
+- tool 결과 JSON을 그대로 노출하지 않고 핵심 정보만 추려 사용자에게 전달한다.
 
 # 제약
 - 일정은 현재 대화 범위 안에서만 유지되는 임시 메모리다. 앱을 재시작하면 사라진다.
