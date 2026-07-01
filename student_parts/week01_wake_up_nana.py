@@ -195,7 +195,7 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
         if (date_from is None or s["date"] >= date_from)
         and (date_to is None or s["date"] <= date_to)
     ]
-    return _json({"ok": True,  "tool_name": "personal_list_schedule", "schedules": filtered})
+    return _json({"ok": True,  "tool_name": "personal_list_schedules", "schedules": filtered})
 
 
 @tool
@@ -206,7 +206,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
     before = len(PERSONAL_SCHEDULES)
     PERSONAL_SCHEDULES[:] = [s for s in PERSONAL_SCHEDULES if s["id"] != schedule_id or _schedule_scope(s) != current_session_scope()]
     deleted = len(PERSONAL_SCHEDULES) < before
-    return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": deleted})
+    return _json({"ok": True, "tool_name": "personal_delete_schedule", "schedule_id": schedule_id, "deleted": deleted})
 
 
 def week01_tools() -> list[Any]:
@@ -230,6 +230,8 @@ def week01_prompt_parts() -> list[str]:
         오늘 날짜는 {current_app_date_iso()}이다.
         항상 한국어로 답변한다.
         일정 요청에는 반드시 tool 사용한다.
+        Week 1 일정은 현재 대화 안에서만 유지되는 임시 메모리이며, 새 대화에서는 이전 일정이 보이지 않는다.
+        도구 결과에 없는 사실은 만들지 않는다.
         """
     ]
 
