@@ -194,12 +194,9 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    current_session = current_session_scope()
     schedules = []
 
-    for schedule in PERSONAL_SCHEDULES:
-        if schedule["session_id"] != current_session: continue
-
+    for schedule in _current_session_schedules:
         if date_from and schedule["date"] < date_from: continue
         if date_to and schedule["date"] > date_to: continue
 
@@ -218,7 +215,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
 
     new_schedules = [
         schedule for schedule in PERSONAL_SCHEDULES
-        if not (schedule["session_id"] == current_session and schedule["id"] == schedule_id)
+        if not (_schedule_scope(schedule) == current_session and schedule["id"] == schedule_id)
     ]
 
     PERSONAL_SCHEDULES[:] = new_schedules
@@ -249,7 +246,7 @@ def week01_prompt_parts() -> list[str]:
         CHAT_MEMORY_PROMPT,
 
         "## 날짜 정보\n"
-        f"- 현재 날짜는 {_now_iso()}이야. 상대적인 날짜를 해석할 때 이 날짜를 기준으로 계산해.\n"
+        f"- 현재 날짜는 {current_app_date_iso()}이야. 상대적인 날짜를 해석할 때 이 날짜를 기준으로 계산해.\n"
         "\n"
         "## Tool 사용 규칙\n"
         "1. 사용자의 일정 생성, 조회, 삭제 요청을 받으면 반드시 연결된 `personal_*` Tool을 호출하여 처리해.\n"
