@@ -26,10 +26,6 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
-# TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
-
-
 def join_system_prompt(parts: list[str]) -> str:
     """주차별 prompt 조각을 읽기 쉬운 누적 system prompt로 합칩니다."""
 
@@ -170,7 +166,6 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
-    # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
     schedule = {
         "id": _new_personal_id(),
         "title": title,
@@ -210,7 +205,6 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
-    # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
     session_id = current_session_scope()
     before = len(PERSONAL_SCHEDULES)
     remaining =  []
@@ -240,7 +234,6 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
-        # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
             f"""
     당신은 개인 일정을 관리하는 AI 비서 Nana입니다.
     오늘 날짜는 {current_app_date_iso()}입니다.
