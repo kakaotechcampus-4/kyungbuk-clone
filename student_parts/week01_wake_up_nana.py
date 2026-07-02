@@ -242,7 +242,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
         if _schedule_scope(schedule) != session_id or schedule["id"] != schedule_id
     ]
 
-    deleted = before_length - len(PERSONAL_SCHEDULES)
+    deleted = before_length != len(PERSONAL_SCHEDULES)
 
     return _json({
         "ok": True,
@@ -266,8 +266,7 @@ def week01_system_prompt() -> str:
 
 
 def week01_prompt_parts() -> list[str]:
-    """1주차부터 누적되는 system pro
-    mpt 조각입니다."""
+    """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
