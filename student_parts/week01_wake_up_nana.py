@@ -27,10 +27,11 @@ PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
 # 수동 테스트 메모
-# - prompt 추가 전: CRUD tool 구현 뒤 상세 trace에서 created_schedule 반환까지 확인했지만,
-#   system prompt 작성 영역이 비어 있어 agent의 도구 선택 기준이 명시되어 있지 않았다.
-# - prompt 추가 후: 현재 대화 범위, Week 1 tool 선택 기준, 결과 기반 응답 규칙이 포함됨을 확인했고,
-#   직접 tool smoke test도 통과했다.
+# - Before: CRUD tool 구현 뒤 상세 trace에서 personal_create_schedule 호출과
+#   created_schedule 반환은 확인했지만, system prompt 작성 영역이 비어 있어
+#   agent의 tool 선택 기준과 응답 규칙이 코드에 명시되어 있지 않았다.
+# - After: system prompt에 현재 대화 범위, Week 1 tool 선택 기준, 결과 기반 응답 규칙을
+#   추가했고, prompt 내용 확인과 직접 tool smoke test를 통과했다.
 CHAT_MEMORY_PROMPT = """
 너는 Nana의 개인 일정을 도와주는 일정 에이전트다.
 Week 1에서는 현재 대화 안에서 만든 임시 개인 일정만 기억하고 사용한다.
