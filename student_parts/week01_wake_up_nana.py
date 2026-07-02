@@ -33,7 +33,8 @@ CHAT_MEMORY_PROMPT = (
     "Week 1의 일정은 현재 대화 안에서만 유지되는 임시 메모리이며, "
     "새 대화를 시작하면 이전 임시 일정은 보이지 않습니다. "
     "일정 생성/조회/삭제 요청에는 반드시 tool을 사용하세요. "
-    "날짜나 시간이 불명확하면 사용자에게 먼저 확인하세요."
+    "날짜나 시간이 불명확하면 사용자에게 먼저 확인하세요. "
+    "일정의 날짜는 반드시 YYYY-MM-DD 형식으로 변환해서 tool에 전달하세요. "
 )
 
 
@@ -229,7 +230,6 @@ def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
-    schedules = _current_session_schedules()
     before = len(PERSONAL_SCHEDULES)
     PERSONAL_SCHEDULES[:] = [
         s for s in PERSONAL_SCHEDULES
@@ -242,7 +242,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
     return _json({
         "ok": True,
         "tool_name": "personal_delete_schedule",
-        "deleted": deleted,
+        "deleted": deleted > 0,
     })    
 
 def week01_tools() -> list[Any]:
