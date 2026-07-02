@@ -209,7 +209,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
         if not (_schedule_scope(s) == session_id and s["id"] == schedule_id)
     ]
     deleted = len(PERSONAL_SCHEDULES) < before
-    return _json({"ok": deleted, "tool_name": "personal_delete_schedule", "deleted": deleted, "schedule_id": schedule_id})
+    return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": deleted, "schedule_id": schedule_id})
 
 
 def week01_tools() -> list[Any]:
