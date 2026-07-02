@@ -5,8 +5,8 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from langchain.agents import create_agent
 from langchain.tools import tool
-from langgraph.prebuilt import create_react_agent
 
 from fixed.config import CONFIG
 from fixed.langchain_trace import (
@@ -268,10 +268,10 @@ def build_week01_agent() -> object:
         raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
     global _WEEK01_AGENT
     if _WEEK01_AGENT is None:
-        _WEEK01_AGENT = create_react_agent(
+        _WEEK01_AGENT = create_agent(
             model=chat_model(),
             tools=week01_tools(),
-            prompt=week01_system_prompt(),
+            system_prompt=week01_system_prompt(),
         )
     return _WEEK01_AGENT
 
