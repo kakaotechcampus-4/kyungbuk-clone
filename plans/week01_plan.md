@@ -51,7 +51,7 @@ def personal_delete_schedule(schedule_id: str):
 - `before = len(PERSONAL_SCHEDULES)`
 - `PERSONAL_SCHEDULES[:] = [새 리스트]` — 리스트 객체 유지
 - `deleted = len(PERSONAL_SCHEDULES) < before`
-- 반환: `_json({"ok": deleted, "tool_name": "personal_delete_schedule", "deleted": deleted, "schedule_id": schedule_id})`
+- 반환: `_json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": deleted, "schedule_id": schedule_id})`
 
 ### 4. `week01_prompt_parts` — system prompt 추가
 
