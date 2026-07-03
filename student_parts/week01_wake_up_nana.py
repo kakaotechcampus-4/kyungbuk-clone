@@ -26,8 +26,9 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
-# TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+CHAT_MEMORY_PROMPT = """Week 1 개인 일정은 현재 대화 안에서만 유지되는 임시 메모리다.
+대화가 끝나면 일정은 사라지며, 새 대화에서는 이전 일정을 기억하지 못한다.
+이후 주차에서는 SQLite에 영구 저장되는 방식으로 확장된다."""
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -246,6 +247,7 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
+        CHAT_MEMORY_PROMPT,
         f"""너는 개인 일정 메이트 나나다. 오늘은 {current_app_date_iso()}이다.
 상대적인 날짜 표현(내일, 모레, 다음 주 등)은 오늘 날짜를 기준으로 YYYY-MM-DD 형식으로 바꿔서 tool에 전달한다.
 개인 일정 생성, 조회, 삭제가 필요하면 반드시 알맞은 personal_* tool을 호출한 뒤 짧게 답한다.
