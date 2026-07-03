@@ -182,6 +182,16 @@ def personal_create_schedule(
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
     if attendees is None:
         attendees = []
+        
+    # 날짜 형식 검증
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except:
+        return _json({
+            "ok": False,
+            "tool_name": "personal_create_schedule",
+            "error": f"날짜 형식이 올바르지 않습니다. YYYY-MM-DD 형식으로 입력해주세요. 입력값: {date}"
+        })
     
     schedule_dict = {
         "id": _new_personal_id(),
