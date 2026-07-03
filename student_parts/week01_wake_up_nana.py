@@ -213,7 +213,7 @@ def personal_delete_schedule(schedule_id: str) -> str:
         for schedule in PERSONAL_SCHEDULES
         if not (schedule.get("id") == schedule_id and _schedule_scope(schedule) == session_id)
     ]
-    deleted = before - len(PERSONAL_SCHEDULES)
+    deleted = len(PERSONAL_SCHEDULES) != before
     return _json(
         {
             "ok": True,
