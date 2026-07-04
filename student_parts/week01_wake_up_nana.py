@@ -238,13 +238,13 @@ def personal_delete_schedule(schedule_id: str) -> str:
     # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
     session_id = current_session_scope()
     new_schedules = [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) != session_id or schedule.get("id") != schedule_id]
-    deleted = len(PERSONAL_SCHEDULES) - len(new_schedules)
+    deleted_count = len(PERSONAL_SCHEDULES) - len(new_schedules)
     PERSONAL_SCHEDULES[:] = new_schedules
     return _json(
         {
             "ok": True,
             "tool_name": "personal_delete_schedule",
-            "deleted": deleted
+            "deleted_count": deleted_count
         }
     )
 
@@ -264,10 +264,13 @@ def week01_system_prompt() -> str:
 def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
+    now_iso = _now_iso()
+
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
-        "사용자가 일정을 추가하거나 조회, 삭제를 원하는 채팅을 쳤을떄, tool을 사용해서 일정을 추가(personal_create_schedule), 일정 조회(personal_list_schedules), 일정 삭제(personal_delete_schedule)를 진행하라.",
+        "사용자가 일정을 추가하거나 조회, 삭제를 원하는 채팅을 쳤을때, tool을 사용해서 일정을 추가(personal_create_schedule), 일정 조회(personal_list_schedules), 일정 삭제(personal_delete_schedule)를 진행하라.",
         "날짜는 YYYY-MM-DD 문자열. 시간은 HH:MM 24시간 체계로 작성하라."
+        f"현재 시각은 {now_iso}이다. 사용자가 오늘, 내일과 같은 시간 지시어를 사용 했을때, 현재 시간을 기준으로 계산하라."
     ]
 
 
