@@ -102,6 +102,14 @@ class StructuredRequest(BaseModel):
 
         요청의 유형, 일정의 제목, 날짜, 일정의 시작 날짜, 종료 날짜, 일정에 포함되는 사람들의 이름, 일정의 우선순위,
         일정의 우선순위 지정 이유, 요청받은 원본 텍스트를 필드 형태로 표현합니다.
+
+        kind 같은 경우 RequestKind Literal에 정의된 값만 허용하며, '
+        "개인적" 표현이 들어가거나 혼자만의 일이라면 personal_schedule, "그룹" 표현이 들어가거나 다른 사람이 언급된 일이라면 group_schedule, 
+        "할 일" 표현이 들어간다면 todo, "알림" 표현이 들어간다면 reminder, 그 외에는 unknown으로 채웁니다 
+        
+        priority 같은 경우 일정의 중요도를 평가하며, "중요하다"와 유사한 표현이 들어간다면 high, "보통이다"와 유사한 표현이 들어간다면 medium, "중요하지 않다"와 유사한 표현이 들어간다면 low, 
+        그 외에는 None으로 채웁니다.
+        
         확실하지 않을경우 억지로 채우려 하지말고, default값을 담습니다.
     """
 
@@ -169,6 +177,48 @@ def week02_system_prompt() -> str:
 def week02_prompt_parts() -> list[str]:
     """2주차 structured output agent가 따르는 system prompt 조각입니다."""
 
+    FEW_SHOT_EXAMPLES = """
+    예시 1.
+        "다음 주 화요일 오후 3시에 철수랑 회의 잡아줘"
+        -> structured_response
+        {
+            "requests": [
+                {
+                    "kind": "group_schedule",
+                    "title": "회의",
+                    "date": "2026-07-07",
+                    "start_time": "15:00",
+                    "end_time": null,
+                    "members": ["철수"],
+                    "priority": null,
+                    "reason": null,
+                    "original_text": "다음 주 화요일 오후 3시에 철수랑 회의 잡아줘"
+                }
+            ],
+            "base_date": "2026-07-01"
+        },
+
+    예시 2.
+        "다음주 화요일 오전 10시에 IT1호관에서 철수랑 영희랑 동아리 스터디 일정 잡아줘. 중요한거니깐 잊으면 안돼"
+        -> structured_response
+        {
+            "requests": [
+                {
+                    "kind": "group_schedule",
+                    "title": "동아리 스터디",
+                    "date": "2026-07-07",
+                    "start_time": "10:00",
+                    "end_time": null,
+                    "members": ["철수","영희"],
+                    "priority": "high",
+                    "reason": ""중요한" 표현이 포함되어, 중요한 일정으로 판단됨",
+                    "original_text": "다음주 화요일 오전 10시에 IT1호관에서 철수랑 영희랑 동아리 스터디 일정 잡아줘. 중요한거니깐 잊으면 안돼"
+                }
+            ],
+            "base_date": "2026-07-01"
+        }
+
+    """
     return [
         *week01_prompt_parts(),
         """사용자의 자연어 요청을 StructuredRequest 스키마에 맞게 구조화하세요.""",
@@ -178,13 +228,15 @@ def week02_prompt_parts() -> list[str]:
             - SQLite 저장
             - RAG 검색
             - 외부 멤버 일정 조율,조회
-        """        
+        """,
+        FEW_SHOT_EXAMPLES
     ]
 
 
 def build_week02_agent() -> object:
     """Week 2 대화에서 structured_response를 직접 반환하는 단일 LangChain agent를 만듭니다."""
 
+    global _WEEK02_AGENT
     if not CONFIG.has_openai_key:
         raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
     if not _WEEK02_AGENT : 
