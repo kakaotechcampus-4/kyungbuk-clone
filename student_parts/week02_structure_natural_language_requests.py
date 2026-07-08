@@ -158,20 +158,21 @@ def extract_schedule_request(query: str) -> str:
 def week02_tools() -> list[Any]:
     """Week 2 agent에 Week 1 도구를 노출해 tool JSON을 structured_response 근거로 씁니다."""
 
-    return week01_tools
+    return week01_tools()
 
 
 def week02_system_prompt() -> str:
     """2주차 agent가 따르는 시스템 프롬프트입니다."""
 
-    return join_system_prompt(week02_prompt_parts(),
+    return join_system_prompt([
+        *week02_prompt_parts(),
         """
         최종 응답형태인 structured_response는 반드시 StructuredRequestBatch 형태로 작성해야합니다.
         요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담아야합니다.
 
         일정 생성 tool을 사용한 결과, JSON의 created_schedule 값을 읽어 StructuredRequest의 필드를 채우세요.
-        """         
-   )
+        """
+    ])
 
 
 def week02_prompt_parts() -> list[str]:
