@@ -105,7 +105,16 @@ class StructuredRequest(BaseModel):
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
-    ...
+    
+    kind : RequestKind = Field(description="요청 type 종류 지정")
+    title : str | None = Field(description="일정 제목", default = None)
+    date : str | None = Field(description="YYYY-MM-DD", default = None)
+    start_time : str | None = Field(description="HH:MM", default = None)
+    end_time : str | None = Field(description="HH:MM", default = None)
+    members : list[str] = Field(description="멤버들의 이름을 list로 저장", default_factory=list)
+    priority : str | None = Field(description="우선순위 지정", default=None)
+    reason : str | None = Field(description="우선순위 지정 이유", default=None)
+    original_text : str = Field(description="원본 프롬프트 저장", default = "")
 
 
 class StructuredRequestBatch(BaseModel):
@@ -114,7 +123,7 @@ class StructuredRequestBatch(BaseModel):
     # TODO: requests 필드를 list[StructuredRequest] 타입으로 선언하고 default_factory=list를 사용하세요.
     # TODO: base_date 필드를 str 타입으로 선언하고 default_factory=current_app_date_iso를 사용하세요.
     # TODO: 각 필드에는 Week 2 구조화 결과와 상대 날짜 기준일을 설명하는 한국어 description을 달아주세요.
-    ...
+
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
