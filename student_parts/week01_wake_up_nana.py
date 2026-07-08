@@ -112,11 +112,42 @@ def personal_delete_schedule(schedule_id: str) -> str:
     deleted = len(PERSONAL_SCHEDULES) < before
     return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": deleted})
 
+@tool
+def personal_update_schedule(
+    schedule_id: str,
+    title: str | None = None,
+    date: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    attendees: list[str] | None = None,
+) -> str:
+    """일정 ID에 해당하는 개인 일정의 항목을 수정합니다. 전달한 항목만 변경됩니다."""
+
+    session_id = current_session_scope()
+    updated = None
+    for schedule in PERSONAL_SCHEDULES:
+        if schedule["id"] == schedule_id and _schedule_scope(schedule) == session_id:
+            if title is not None:
+                schedule["title"] = title
+            if date is not None:
+                schedule["date"] = date
+            if start_time is not None:
+                schedule["start_time"] = start_time
+            if end_time is not None:
+                schedule["end_time"] = end_time
+            if attendees is not None:
+                schedule["attendees"] = attendees
+            updated = schedule
+            break
+    if updated is None:
+        return _json({"ok": False, "tool_name": "personal_update_schedule", "updated_schedule": None})
+    return _json({"ok": True, "tool_name": "personal_update_schedule", "updated_schedule": updated})
+
 
 def week01_tools() -> list[Any]:
     """1주차에서 직접 구현한 개인 일정 CRUD 도구 목록입니다."""
 
-    return [personal_create_schedule, personal_list_schedules, personal_delete_schedule]
+    return [personal_create_schedule, personal_list_schedules, personal_delete_schedule, personal_update_schedule]
 
 
 def week01_system_prompt() -> str:
@@ -132,13 +163,15 @@ def week01_prompt_parts() -> list[str]:
         f"""[Week 1] 당신은 개인 일정 관리를 돕는 AI 어시스턴트 Nana입니다.
 오늘 날짜: {current_app_date_iso()}
 
-사용자가 개인 일정 생성/조회/삭제를 요청하면 반드시 다음 도구를 사용하세요:
+사용자가 개인 일정 생성/조회/수정/삭제를 요청하면 반드시 다음 도구를 사용하세요:
 - 일정 생성: personal_create_schedule
 - 일정 조회: personal_list_schedules
+- 일정 수정: personal_update_schedule
 - 일정 삭제: personal_delete_schedule
 
 날짜는 YYYY-MM-DD 형식, 시간은 HH:MM 형식을 사용합니다.
 도구 호출 없이 직접 답변하지 마세요. 반드시 적절한 도구를 호출한 뒤 결과를 바탕으로 답변하세요.""",
+        CHAT_MEMORY_PROMPT,
     ]
 
 
