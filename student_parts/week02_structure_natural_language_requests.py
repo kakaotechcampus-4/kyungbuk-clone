@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import json
 from typing import Any, Literal
 
@@ -98,14 +97,15 @@ _WEEK02_AGENT: Any | None = None
 
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
-
-    # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
-    # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
-    # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
-    # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
-    ...
+    kind : RequestKind = Field(default="unknown", description="personal_schedule, group_schedule, todo, reminder, unknown 중 하나")
+    title: str | None = Field(default = None, description="일정 제목, 모르면 None")
+    date: str | None = Field(default = None, description="일정 날짜 YYYY-MM-DD 형식, 모르면 None")
+    start_time: str | None = Field(default = None, description="일정 시작 시간 HH:MM 형식, 모르면 None")
+    end_time: str | None = Field(default = None, description="일정 종료 시간 HH:MM 형식, 모르면 None")
+    members: list[str] = Field(default_factory=list, description="참석자 / 관련 멤버 목록")
+    priority: str | None = Field(default = None, description="일정 우선 순위, 모르면 None")
+    reason: str | None = Field(default = None, description="판단 근거, 모르면 None")
+    original_text: str = Field(default = "", description="원문 보존, 모르면 \"\"")
 
 
 class StructuredRequestBatch(BaseModel):
