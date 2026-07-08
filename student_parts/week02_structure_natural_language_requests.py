@@ -103,9 +103,9 @@ class StructuredRequest(BaseModel):
     start_time: str | None = Field(default = None, description="일정 시작 시간 HH:MM 형식, 모르면 None")
     end_time: str | None = Field(default = None, description="일정 종료 시간 HH:MM 형식, 모르면 None")
     members: list[str] = Field(default_factory=list, description="참석자 / 관련 멤버 목록")
-    priority: str | None = Field(default = None, description="일정 우선 순위, 모르면 None")
+    priority: str | None = Field(default = None, description="일정 우선 순위 : 높음 / 보통 / 낮음, 모르면 None")
     reason: str | None = Field(default = None, description="판단 근거, 모르면 None")
-    original_text: str = Field(default = "", description="원문 보존, 모르면 \"\"")
+    original_text: str = Field(default = "", description="원문 보존 그대로")
 
 
 class StructuredRequestBatch(BaseModel):
@@ -114,7 +114,9 @@ class StructuredRequestBatch(BaseModel):
     # TODO: requests 필드를 list[StructuredRequest] 타입으로 선언하고 default_factory=list를 사용하세요.
     # TODO: base_date 필드를 str 타입으로 선언하고 default_factory=current_app_date_iso를 사용하세요.
     # TODO: 각 필드에는 Week 2 구조화 결과와 상대 날짜 기준일을 설명하는 한국어 description을 달아주세요.
-    ...
+    requests: list[StructuredRequest] = Field(default_factory=list, description = "자연어에서 추출된 StructuredRequest 목록 (요청이 하나여도 리스트로 유지)" )
+    base_date: str = Field(default_factory=current_app_date_iso, description = "상대 날짜 해석 기준일 (YYYY-MM-DD)")
+    
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
