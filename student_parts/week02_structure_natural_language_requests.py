@@ -98,6 +98,15 @@ _WEEK02_AGENT: Any | None = None
 
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
+    kind: RequestKind = Field(default="unknown", description="요청 종류입니다. personal_schedule, group_schedule, todo, reminder, unknown 중 하나입니다.")
+    title: str | None = Field(default=None, description="일정 제목입니다.")
+    date: str | None = Field(default=None, description="일정 날짜입니다.")
+    start_time: str | None = Field(default=None, description="시작 시간입니다.")
+    end_time: str | None = Field(default=None, description="종료 시간입니다.")
+    members: list[str] = Field(default_factory=list, description="참석자 또는 관련 멤버 목록입니다.")
+    priority: str | None = Field(default=None, description="할 일 우선순위입니다.")
+    reason: str | None = Field(default=None, description="판단 근거입니다.")
+    original_text: str = Field(default="", description="원문 보존용 필드입니다.")
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
@@ -140,7 +149,7 @@ def week02_tools() -> list[Any]:
     """Week 2 agent에 Week 1 도구를 노출해 tool JSON을 structured_response 근거로 씁니다."""
 
     # TODO: Week 1에서 구현한 tool 목록을 그대로 반환하세요.
-    ...
+    return week01_tools()
 
 
 def week02_system_prompt() -> str:
