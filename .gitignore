@@ -23,7 +23,6 @@ node_modules/
 dist/
 
 # Keep later-week student files local on the Week 1 main branch.
-student_parts/week02_structure_natural_language_requests.py
 student_parts/week03_build_nanas_logbook.py
 student_parts/week04_retrieve_nanas_memory.py
 student_parts/week05_load_kanas_past_conversations.py
