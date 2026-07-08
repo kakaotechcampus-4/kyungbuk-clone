@@ -26,8 +26,12 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
-# TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+CHAT_MEMORY_PROMPT = """
+현재 대화에 이미 나온 사용자 요청과 Nana의 답변을 문맥으로 활용한다.
+사용자가 "방금 일정", "그 일정", "내 일정"처럼 앞선 대화를 가리키면
+현재 대화 기록과 tool 조회 결과를 근거로 이해한다.
+단, 개인 일정의 실제 생성/조회/삭제 상태는 추측하지 말고 반드시 tool 결과를 기준으로 답한다.
+"""
 
 
 def join_system_prompt(parts: list[str]) -> str:
