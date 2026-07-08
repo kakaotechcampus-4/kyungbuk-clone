@@ -97,7 +97,12 @@ _WEEK02_AGENT: Any | None = None
 
 
 class StructuredRequest(BaseModel):
-    """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
+    """
+        사용자의 요청을 구조화된 결과를 담는 스키마입니다.
+
+        요청의 유형, 일정의 제목, 날짜, 일정의 시작 날짜, 종료 날짜, 일정에 포함되는 사람들의 이름, 일정의 우선순위,
+        일정의 우선순위 지정 이유, 요청받은 원본 텍스트를 필드 형태로 표현합니다.
+    """
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
     # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
@@ -106,7 +111,7 @@ class StructuredRequest(BaseModel):
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
     
-    kind : RequestKind = Field(description="요청 type 종류 지정")
+    kind : RequestKind = Field(description="요청의 유형 지정")
     title : str | None = Field(description="일정 제목", default = None)
     date : str | None = Field(description="YYYY-MM-DD", default = None)
     start_time : str | None = Field(description="HH:MM", default = None)
