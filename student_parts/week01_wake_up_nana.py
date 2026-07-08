@@ -27,8 +27,7 @@ PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT =  
-"""
+CHAT_MEMORY_PROMPT = """
     현재 대화에서 생성한 개인 일정 정보를 기억하세요.
     일정 생성, 조회, 삭제 요청이 있으면 적절한 tool을 사용하세요.
     직접 일정을 지어내지 말고 반드시 tool 결과를 기반으로 답변하세요.
