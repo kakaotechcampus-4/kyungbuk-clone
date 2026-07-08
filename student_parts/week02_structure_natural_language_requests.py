@@ -116,7 +116,7 @@ class StructuredRequest(BaseModel):
                                 - unknown: 요청 종류를 알 수 없는 경우
                               """)
     title: str | None = Field(default=None, description="""
-                               요청의 제목을 나타냅니다:
+                               요청의 제목을 명사형으로 나타냅니다.:
                                 - personal_schedule/group_schedule: 일정 제목
                                 - todo: 할 일 제목
                                 - reminder: 알림 제목
