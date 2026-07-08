@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
+from textwrap import dedent
 from typing import Any
 
 from langchain.agents import create_agent
@@ -26,8 +27,19 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
-# TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = ""
+# 수동 테스트 메모
+# - Before: CRUD tool 구현 뒤 상세 trace에서 personal_create_schedule 호출과
+#   created_schedule 반환은 확인했지만, system prompt 작성 영역이 비어 있어
+#   agent의 tool 선택 기준과 응답 규칙이 코드에 명시되어 있지 않았다.
+# - After: system prompt에 현재 대화 범위, Week 1 tool 선택 기준, 결과 기반 응답 규칙을
+#   추가했고, prompt 내용 확인과 직접 tool smoke test를 통과했다.
+CHAT_MEMORY_PROMPT = dedent(
+    """
+    너는 Nana의 개인 일정을 도와주는 일정 에이전트다.
+    Week 1에서는 현재 대화 안에서 만든 임시 개인 일정만 기억하고 사용한다.
+    다른 대화의 일정, SQLite 저장소, 외부 캘린더 정보가 있는 것처럼 답하지 않는다.
+    """
+).strip()
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -170,24 +182,68 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
-    # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+    if attendees is None:
+        attendees = []
+    schedule = {
+        "id": _new_personal_id(),
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "attendees": attendees,
+        "created_at": _now_iso(),
+        "session_id": current_session_scope(),
+    }
+    PERSONAL_SCHEDULES.append(schedule)
+    return _json({
+        "ok": True,
+        "tool_name": "personal_create_schedule",
+        "created_schedule": schedule,
+    })
 
 
 @tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
-    # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    schedules = _current_session_schedules()
+
+    if date_from is not None:
+        schedules = [schedule for schedule in schedules if schedule["date"] >= date_from]
+
+    if date_to is not None:
+        schedules = [schedule for schedule in schedules if schedule["date"] <= date_to]
+
+    return _json({
+        "ok": True,
+        "tool_name": "personal_list_schedules",
+        "schedules": schedules,
+    })
 
 
 @tool
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
-    # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
-    ...
+    session_id = current_session_scope()
+    before_count = len(PERSONAL_SCHEDULES)
+
+    PERSONAL_SCHEDULES[:] = [
+        schedule
+        for schedule in PERSONAL_SCHEDULES
+        if not (
+            _schedule_scope(schedule) == session_id
+            and schedule["id"] == schedule_id
+        )
+    ]
+
+    deleted = len(PERSONAL_SCHEDULES) < before_count
+
+    return _json({
+        "ok": True,
+        "tool_name": "personal_delete_schedule",
+        "deleted": deleted,
+    })
 
 
 def week01_tools() -> list[Any]:
@@ -206,7 +262,40 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
-        # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        CHAT_MEMORY_PROMPT,
+        dedent(
+            f"""
+            오늘 날짜는 {current_app_date_iso()}이다.
+
+            너의 역할은 사용자의 개인 일정 요청을 이해하고, 필요한 경우 제공된 tool을 직접 호출하는 것이다.
+
+            도구 선택 규칙:
+            - 개인 일정을 새로 만들라는 요청이면 personal_create_schedule tool을 사용한다.
+            - 개인 일정을 보여 달라거나 확인해 달라는 요청이면 personal_list_schedules tool을 사용한다.
+            - 개인 일정을 삭제하거나 취소해 달라는 요청이면 personal_delete_schedule tool을 사용한다.
+
+            일정 생성 규칙:
+            - title, date, start_time은 사용자 요청에서 최대한 추출한다.
+            - date는 가능한 한 YYYY-MM-DD 형식으로 변환해서 전달한다.
+            - end_time이 명확하지 않으면 tool의 기본값을 사용한다.
+            - attendees가 명확하지 않으면 비워 둔다.
+            - 필수 정보가 너무 부족해서 일정을 특정할 수 없으면 tool을 호출하지 말고 필요한 정보를 짧게 물어본다.
+
+            일정 조회 규칙:
+            - 사용자가 특정 날짜나 기간을 말하면 date_from, date_to를 적절히 채워 조회한다.
+            - 날짜 조건이 없으면 현재 대화 범위의 개인 일정을 전체 조회한다.
+
+            일정 삭제 규칙:
+            - 삭제할 일정 ID나 삭제 대상이 명확하면 personal_delete_schedule tool을 사용한다.
+            - 삭제 대상이 모호하면 먼저 personal_list_schedules tool로 현재 대화의 일정을 확인하거나,
+              사용자에게 어떤 일정을 삭제할지 물어본다.
+
+            응답 규칙:
+            - 일정을 생성, 조회, 삭제했다고 말할 때는 반드시 tool 결과를 확인한 뒤 답한다.
+            - tool 결과에 포함된 title, date, start_time, end_time, deleted 값을 바탕으로 간단하고 자연스럽게 한국어로 답한다.
+            - tool 결과에 없는 정보를 지어내지 않는다.
+            """
+        ).strip(),
     ]
 
 
