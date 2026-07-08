@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """현재 활성 주차에 맞는 student_parts agent를 찾아 실행하는 registry입니다.
 
-main 브랜치는 Week 1 학생 문제만 공개하므로 이 registry도 Week 1 agent만
+main 브랜치는 Week 1-2 학생 문제를 공개하므로 이 registry도 Week 1-2 agent를
 매핑합니다. 전체 Week 1-6 흐름은 `week_1_to_6f` 브랜치에 보존되어 있습니다.
 """
 
@@ -23,6 +23,7 @@ from fixed.langchain_trace import (
 
 WEEK_AGENT_MODULES = {
     1: "student_parts.week01_wake_up_nana",
+    2: "student_parts.week02_structure_natural_language_requests",
 }
 
 
@@ -43,7 +44,7 @@ class ActiveWeekAgentStreamEvent:
 
 
 def normalize_active_week(active_week: int | str | None) -> int:
-    """main 브랜치에서는 legacy week 값이 들어와도 Week 1로 정규화합니다."""
+    """main 브랜치 허용 범위를 벗어난 legacy week 값은 Week 1로 정규화합니다."""
 
     try:
         week = int(active_week or 1)
