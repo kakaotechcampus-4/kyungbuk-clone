@@ -102,6 +102,7 @@ class StructuredRequest(BaseModel):
 
         요청의 유형, 일정의 제목, 날짜, 일정의 시작 날짜, 종료 날짜, 일정에 포함되는 사람들의 이름, 일정의 우선순위,
         일정의 우선순위 지정 이유, 요청받은 원본 텍스트를 필드 형태로 표현합니다.
+        확실하지 않을경우 억지로 채우려 하지말고, default값을 담습니다.
     """
 
     # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
@@ -160,7 +161,7 @@ def week02_tools() -> list[Any]:
     """Week 2 agent에 Week 1 도구를 노출해 tool JSON을 structured_response 근거로 씁니다."""
 
     # TODO: Week 1에서 구현한 tool 목록을 그대로 반환하세요.
-    ...
+    return week01_tools
 
 
 def week02_system_prompt() -> str:
@@ -170,6 +171,14 @@ def week02_system_prompt() -> str:
     # TODO: StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담도록 지시하세요.
     # TODO: personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 필드를 채우도록 지시하세요.
     ...
+    return join_system_prompt(week02_prompt_parts(),
+        """
+        최종 응답형태인 structured_response는 반드시 StructuredRequestBatch 형태로 작성해야합니다.
+        요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담아야합니다.
+
+        일정 생성 tool을 사용한 결과, JSON의 created_schedule 값을 읽어 StructuredRequest의 필드를 채우세요.
+        """         
+   )
 
 
 def week02_prompt_parts() -> list[str]:
@@ -181,6 +190,14 @@ def week02_prompt_parts() -> list[str]:
         # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
+        """사용자의 자연어 요청을 StructuredRequest 스키마에 맞게 구조화하세요.""",
+        """각 필드의 작성기준은 StructuredRequest의 docstring과 Field description을 따르세요.""",
+        """ Week 1 tool 실행 결과로 JSON이 이미 주어진 경우에는 같은 도구를 다시 호출하지 않으며, payload를 읽어 structured_response 스키마에 맞춰만듭니다.""",
+        """ Week 2에서 다음 작업은 수행하지 않습니다.
+            - SQLite 저장
+            - RAG 검색
+            - 외부 멤버 일정 조율,조회
+        """        
     ]
 
 
@@ -192,7 +209,16 @@ def build_week02_agent() -> object:
     # TODO: create_agent에는 model=chat_model(), tools=week02_tools(), response_format=StructuredRequestBatch,
     #       system_prompt=week02_system_prompt()를 연결하세요.
     # TODO: 생성 또는 재사용한 _WEEK02_AGENT를 반환하세요.
-    ...
+    if not CONFIG.has_openai_key:
+        raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
+    if not _WEEK02_AGENT : 
+        _WEEK02_AGENT = create_agent(
+            model = chat_model(),
+            tools = week02_tools(),
+            response_format=StructuredRequestBatch,
+            system_prompt=week02_system_prompt(),
+        )
+    return _WEEK02_AGENT
 
 
 def build_week_agent() -> object:
