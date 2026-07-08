@@ -257,10 +257,13 @@ def week02_prompt_parts() -> list[str]:
 
     return [
         *week01_prompt_parts(),
-        # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
-        # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
-        # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
-        # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
+        f"너는 사용자의 자연어 요청을 구조화하는 Week 2 에이전트야. 오늘 날짜는 {current_app_date_iso()}이고, "
+        "'내일'이나 '다음 주 화요일' 같은 상대 날짜는 이 날짜를 기준으로 계산해.",
+        "사용자의 요청을 StructuredRequest 필드(kind/title/date/start_time/end_time/members/priority/reason/original_text)로 "
+        "구조화해. 확실하지 않은 값은 억지로 만들지 말고 None이나 빈 목록으로 둬.",
+        "Week 1 tool이 만든 JSON(created_schedule 등)을 받은 경우에는 tool을 다시 호출하지 말고, "
+        "그 payload를 읽어서 필드를 채워 structured_response로 변환해.",
+        "Week 2에서는 SQLite 저장, RAG 검색, 외부 멤버 일정 조율은 하지 않아. 오직 요청을 구조화하는 것까지만 한다.",
     ]
 
 
