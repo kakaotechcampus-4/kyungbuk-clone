@@ -105,10 +105,8 @@ class StructuredRequest(BaseModel):
     start_time: str | None = Field(default=None, description="HH:MM 형식의 시작 시간, 확실하지 않으면 None")
     end_time: str| None = Field(default=None, description="HH:MM 형식의 종료 시간, 확실하지 않으면 None")
     members: list[str] = Field(default_factory=list, description="참석자 멤버 목록, 모르면 빈 리스트")
-    # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     priority: str | None = Field(default=None, description="할 일의 우선순위(높음/보통/낮음), 명확한 근거가 없으면 None")
     reason: str | None = Field(default=None, description="kind나 priority를 판단한 근거, 특별한 근거가 없으면 None")
-    # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     original_text: str = Field(default="", description="사용자가 입력한 원문 텍스트")
 
 
