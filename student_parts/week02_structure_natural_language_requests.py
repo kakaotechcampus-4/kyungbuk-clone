@@ -154,13 +154,45 @@ _WEEK02_AGENT: Any | None = None
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
-    # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
-    # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
-    # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
-    # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
-    ...
+    # 'str | None' = 문자열이거나 None. 사용자가 해당 정보를 입력하지 않을 시
+    # None(값 없음/모름)으로 둔다. 예: "내일 회의" 만 말하면 end_time은 None 값으로 배정된다.
+    kind: RequestKind = Field(
+        description="요청 종류. personal_schedule(개인 일정), group_schedule(여러 명이 함께하는 일정), "
+        "todo(할 일), reminder(알림), unknown(판단 불가) 중 하나로만 분류합니다."
+    )
+    title: str | None = Field(
+        default=None,
+        description="일정이나 할 일의 제목. 예: '팀 회의', '치과 예약'. 확실하지 않으면 None으로 둡니다.",
+    )
+    date: str | None = Field(
+        default=None,
+        description="YYYY-MM-DD 형식의 날짜. '내일', '다음 주 화요일' 등은 base_date를 기준으로 계산합니다. "
+        "확실하지 않으면 None으로 둡니다.",
+    )
+    start_time: str | None = Field(
+        default=None,
+        description="HH:MM 형식의 시작 시각. 확실하지 않으면 None으로 둡니다.",
+    )
+    end_time: str | None = Field(
+        default=None,
+        description="HH:MM 형식의 종료 시각. 확실하지 않으면 None으로 둡니다.",
+    )
+    members: list[str] = Field(
+        default_factory=list,
+        description="참석자나 관련된 사람들의 이름 목록. 모르면 빈 목록으로 둡니다.",
+    )
+    priority: str | None = Field(
+        default=None,
+        description="할 일의 우선순위. 예: 'high', 'low'. 언급이 없으면 None으로 둡니다.",
+    )
+    reason: str | None = Field(
+        default=None,
+        description="이렇게 분류하거나 필드를 채운 판단 근거. 필요 없으면 None으로 둡니다.",
+    )
+    original_text: str = Field(
+        default="",
+        description="구조화의 근거가 된 사용자의 원문. 원본 보존용으로 그대로 담습니다.",
+    )
 
 
 class StructuredRequestBatch(BaseModel):
