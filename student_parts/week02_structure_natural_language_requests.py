@@ -147,12 +147,12 @@ def week02_tools() -> list[Any]:
 def week02_system_prompt() -> str:
     """2주차 agent가 따르는 시스템 프롬프트입니다."""
 
-    return join_system_prompt(
+    return join_system_prompt([
         *week02_prompt_parts(),
         "최종 답변은 반드시 StructuredRequestBatch 형식의 structured_response로 반환한다.",
         "요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담는다.",
         "personal_create_schedule tool을 호출했다면 그 결과 JSON의 created_schedule 값을 읽어 각 필드를 채운다.",
-    )
+    ])
 
 
 def week02_prompt_parts() -> list[str]:
