@@ -185,6 +185,9 @@ def week02_prompt_parts() -> list[str]:
         "StructuredRequest 하나를 담아 반환하라.",
         "personal_create_schedule tool의 결과 JSON에 담긴 created_schedule 필드를 참고해서 "
         "StructuredRequest의 값들을 채워라.",
+        "단, created_schedule의 end_time 값이 '미정'처럼 확정되지 않은 값이면 그대로 복사하지 말고 "
+        "StructuredRequest의 end_time을 None으로 남겨라. 사용자가 명시적으로 종료 시간을 말한 경우에만 "
+        "HH:MM 형식으로 채워라.",
     ]
 
 
