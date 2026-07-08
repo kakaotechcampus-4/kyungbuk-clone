@@ -99,13 +99,17 @@ _WEEK02_AGENT: Any | None = None
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
-    # TODO: kind 필드를 RequestKind 타입으로 선언하고 Field(description=...)를 붙이세요.
-    # TODO: title/date/start_time/end_time 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
-    # TODO: members 필드를 list[str] 타입으로 선언하고 default_factory=list를 사용하세요.
+    kind: RequestKind = Field(description="요청의 종류는 personal_schedule(개인 일정), group_schedule(그룹 일정), todo(할 일), reminder(리마인더), unknown(분류 불가) 중 하나")
+    title: str | None = Field(default=None, description="일정이나 할 일의 제목, 확실하지 않으면 None")
+    date: str | None = Field(default=None, description="YYYY-MM-DD 형식의 날짜, 확실하지 않으면 None")
+    start_time: str | None = Field(default=None, description="HH:MM 형식의 시작 시간, 확실하지 않으면 None")
+    end_time: str| None = Field(default=None, description="HH:MM 형식의 종료 시간, 확실하지 않으면 None")
+    members: list[str] = Field(default_factory=list, description="참석자 멤버 목록, 모르면 빈 리스트")
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
+    priority: str | None = Field(default=None, description="할 일의 우선순위(높음/보통/낮음), 명확한 근거가 없으면 None")
+    reason: str | None = Field(default=None, description="kind나 priority를 판단한 근거, 특별한 근거가 없으면 None")
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
-    # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
-    ...
+    original_text: str = Field(default="", description="사용자가 입력한 원문 텍스트")
 
 
 class StructuredRequestBatch(BaseModel):
