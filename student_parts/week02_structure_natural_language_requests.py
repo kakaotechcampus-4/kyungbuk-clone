@@ -183,18 +183,25 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
     """LangChain structured output 결과를 StructuredRequest로 정규화합니다."""
 
     # TODO: value가 이미 StructuredRequest이면 그대로 반환하세요.
+    if isinstance(value, StructuredRequest): 
+        return value
     # TODO: value가 dict이면 StructuredRequest.model_validate(...)로 검증해 반환하세요.
+    if isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
     # TODO: 예상한 형태가 아니면 RuntimeError를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 마세요.
-    ...
+    raise RuntimeError("잘못된 LLM 응답입니다.")
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
     """Week 3 이상에서 agent를 새로 띄우지 않고 자연어를 StructuredRequest로 바꿉니다."""
 
     # TODO: chat_model().with_structured_output(StructuredRequest, method="function_calling")로 structured LLM을 만드세요.
+    str_llm = chat_model().with_structured_output(StructuredRequest, method="function_calling")
     # TODO: system 메시지에는 join_system_prompt(week02_prompt_parts())를 넣고, user 메시지에는 text를 넣어 invoke하세요.
+    sys_msg = join_system_prompt(week02_prompt_parts())
+    res = str_llm.invoke([("system", sys_msg), ("user", text)])
     # TODO: LLM 결과를 _coerce_structured_request(...)로 정규화해 StructuredRequest 하나로 반환하세요.
-    ...
+    return _coerce_structured_request(res)
 
 
 @tool
@@ -202,9 +209,16 @@ def extract_schedule_request(query: str) -> str:
     """Week 3 이상 agent가 저장/조율 전에 호출하는 구조화 bridge tool입니다."""
 
     # TODO: extract_structured_request(query)를 호출해 자연어 또는 Week 1 JSON payload를 구조화하세요.
+    req = extract_structured_request(query)
     # TODO: ok/tool_name/base_date/structured_request 키를 가진 dict를 만들고 structured_request에는 model_dump() 결과를 넣으세요.
+    res = {
+        "ok": True,
+        "tool_name": "extract_schedule_request",
+        "base_date": current_app_date_iso(),
+        "structured_request": req.model_dump()
+    }
     # TODO: json.dumps(..., ensure_ascii=False)로 JSON 문자열을 반환하세요.
-    ...
+    return json.dumps(res, ensure_ascii=False)
 
 
 def week02_tools() -> list[Any]:
