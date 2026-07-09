@@ -212,7 +212,7 @@ def week02_prompt_parts() -> list[str]:
                     "end_time": null,
                     "members": ["철수","영희"],
                     "priority": "high",
-                    "reason": ""중요한" 표현이 포함되어, 중요한 일정으로 판단됨",
+                    "reason": "\"중요한\" 표현이 포함되어, 중요한 일정으로 판단됨",
                     "original_text": "다음주 화요일 오전 10시에 IT1호관에서 철수랑 영희랑 동아리 스터디 일정 잡아줘. 중요한거니깐 잊으면 안돼"
                 }
             ],
