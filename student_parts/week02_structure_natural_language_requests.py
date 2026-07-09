@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -14,7 +15,11 @@ from student_parts.week01_wake_up_nana import join_system_prompt, week01_prompt_
 
 
 RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
+PriorityLevel = Literal["low", "medium", "high"]
 _WEEK02_AGENT: Any | None = None
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_TIME_RE = re.compile(r"^\d{2}:\d{2}$")
 
 
 # [2주차 수강생 구현 가이드]
@@ -164,9 +169,25 @@ class StructuredRequest(BaseModel):
     start_time: str | None = Field(default=None, description="HH:MM 형식의 시작 시간. 확실하지 않으면 None.")
     end_time: str | None = Field(default=None, description="HH:MM 형식의 종료 시간. 확실하지 않으면 None.")
     members: list[str] = Field(default_factory=list, description="참석자/관련 멤버 목록. 모르면 빈 리스트.")
-    priority: str | None = Field(default=None, description="할 일/알림의 우선순위. 확실하지 않으면 None.")
+    priority: PriorityLevel | None = Field(
+        default=None, description="할 일/알림의 우선순위. low/medium/high 중 하나. 확실하지 않으면 None."
+    )
     reason: str | None = Field(default=None, description="이 kind/필드로 판단한 근거.")
     original_text: str = Field(default="", description="구조화 이전의 원문 텍스트.")
+
+    @field_validator("date")
+    @classmethod
+    def _validate_date_format(cls, value: str | None) -> str | None:
+        if value is not None and not _DATE_RE.match(value):
+            raise ValueError(f"date는 YYYY-MM-DD 형식이거나 None이어야 합니다: {value!r}")
+        return value
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def _validate_time_format(cls, value: str | None) -> str | None:
+        if value is not None and not _TIME_RE.match(value):
+            raise ValueError(f"시간 필드는 HH:MM 형식이거나 None이어야 합니다: {value!r}")
+        return value
 
 
 class StructuredRequestBatch(BaseModel):
@@ -231,7 +252,9 @@ def week02_prompt_parts() -> list[str]:
             "StructuredRequestBatch 형식의 structured_response로 최종 반환하세요. "
             "requests의 각 항목은 kind/title/date/start_time/end_time/members/priority/reason/original_text "
             "필드로 구조화하고, date/start_time/end_time은 확실할 때만 YYYY-MM-DD, HH:MM 형식으로 채우며 "
-            "확실하지 않은 값은 None 또는 빈 리스트로 둡니다. "
+            "확실하지 않은 값은 None 또는 빈 리스트로 둡니다. 이 형식을 지키지 않으면 스키마 검증에서 거부됩니다. "
+            "priority는 low/medium/high 중 하나로만 채우고, '매우 높음'처럼 자유 표현이 들어오면 "
+            "가장 가까운 low/medium/high로 매핑하며 확실하지 않으면 None으로 둡니다. "
             "요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담습니다. "
             "한 문장에 여러 일정/할 일/알림 의도가 섞여 있으면 각각을 별도의 StructuredRequest로 나눕니다. "
             "personal_create_schedule tool을 호출해 created_schedule JSON을 이미 받았다면 다시 tool을 호출하지 말고 "
