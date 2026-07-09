@@ -103,12 +103,19 @@ class StructuredRequest(BaseModel):
         요청의 유형, 일정의 제목, 날짜, 일정의 시작 날짜, 종료 날짜, 일정에 포함되는 사람들의 이름, 일정의 우선순위,
         일정의 우선순위 지정 이유, 요청받은 원본 텍스트를 필드 형태로 표현합니다.
 
-        kind 같은 경우 RequestKind Literal에 정의된 값만 허용하며, '
-        "개인적" 표현이 들어가거나 혼자만의 일이라면 personal_schedule, "그룹" 표현이 들어가거나 다른 사람이 언급된 일이라면 group_schedule, 
-        "할 일" 표현이 들어간다면 todo, "알림" 표현이 들어간다면 reminder, 그 외에는 unknown으로 채웁니다 
+        kind 같은 경우 RequestKind Literal에 정의된 값만 허용하며 다음 규칙을 따릅니다.
+
+        kind 결정 우선순위:
+        1. original_text에 다른 사람 이름이나 참석자가 있으면 group_schedule
+        2. 혼자 하는 일정이면 personal_schedule
+        3. 할 일이면 todo
+        4. 알림이면 reminder
+        5. 판단 불가하면 unknown
+
+        단, tool 호출 결과나 tool 이름은 kind 결정에 절대 사용하지 않습니다.
         
         priority 같은 경우 일정의 중요도를 평가하며, "중요하다"와 유사한 표현이 들어간다면 high, "보통이다"와 유사한 표현이 들어간다면 medium, "중요하지 않다"와 유사한 표현이 들어간다면 low, 
-        그 외에는 None으로 채웁니다.
+        그 외에는 None으로 채웁니다. priority 값은 "high","medium","low"중 하나만 허용하며, validate_priority validator를 통해 값을 필수적으로 검증합니다.
         
         확실하지 않을경우 억지로 채우려 하지말고, default값을 담습니다.
     """
