@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -123,6 +123,20 @@ class StructuredRequest(BaseModel):
     reason : str | None = Field(description="우선순위 지정 이유", default=None)
     original_text : str = Field(description="원본 프롬프트 저장", default = "")
 
+    @field_validator("priority")
+    @classmethod
+    def validate_priority(cls,value: str | None) -> str | None:
+        """priority 필드에 들어오는 값이 high, medium, low 중 하나인지 검증하는 validator입니다."""
+        if value is None:
+            return None
+        
+        allowed = {"high","medium","low"}
+
+        if value not in allowed :
+            raise ValueError(f"priority는 {allowed} 중 하나여야 합니다. 현재 값: {value}")
+            
+        return value
+
 
 class StructuredRequestBatch(BaseModel):
     """
@@ -181,13 +195,16 @@ def week02_prompt_parts() -> list[str]:
     FEW_SHOT_EXAMPLES = """
     예시 1.
         "다음 주 화요일 오후 3시에 철수랑 회의 잡아줘"
+        
+        오늘 날짜와 요일이 2026-07-09 목요일 이라면, 다음주 화요일은 5일 뒤인 2026-07-14 화요일입니다.
+        
         -> structured_response
         {
             "requests": [
                 {
                     "kind": "group_schedule",
                     "title": "회의",
-                    "date": "2026-07-07",
+                    "date": "2026-07-14",
                     "start_time": "15:00",
                     "end_time": null,
                     "members": ["철수"],
@@ -196,27 +213,28 @@ def week02_prompt_parts() -> list[str]:
                     "original_text": "다음 주 화요일 오후 3시에 철수랑 회의 잡아줘"
                 }
             ],
-            "base_date": "2026-07-01"
+            "base_date": "2026-07-09"
         },
 
     예시 2.
-        "다음주 화요일 오전 10시에 IT1호관에서 철수랑 영희랑 동아리 스터디 일정 잡아줘. 중요한거니깐 잊으면 안돼"
+        "다음주 수요일 오전 10시에 IT1호관에서 철수랑 영희랑 동아리 스터디 일정 잡아줘. 중요한거니깐 잊으면 안돼"
+        오늘 날짜와 요일이 2026-07-10 금요일 이라면, 다음주 수요일은 5일 뒤인 2026-07-15 수요일입니다.
         -> structured_response
         {
             "requests": [
                 {
                     "kind": "group_schedule",
                     "title": "동아리 스터디",
-                    "date": "2026-07-07",
+                    "date": "2026-07-15",
                     "start_time": "10:00",
                     "end_time": null,
                     "members": ["철수","영희"],
                     "priority": "high",
                     "reason": "\"중요한\" 표현이 포함되어, 중요한 일정으로 판단됨",
-                    "original_text": "다음주 화요일 오전 10시에 IT1호관에서 철수랑 영희랑 동아리 스터디 일정 잡아줘. 중요한거니깐 잊으면 안돼"
+                    "original_text": "다음주 수요일 오전 10시에 IT1호관에서 철수랑 영희랑 동아리 스터디 일정 잡아줘. 중요한거니깐 잊으면 안돼"
                 }
             ],
-            "base_date": "2026-07-01"
+            "base_date": "2026-07-10"
         }
 
     """
