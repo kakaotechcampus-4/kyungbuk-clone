@@ -182,7 +182,7 @@ def personal_create_schedule(
     # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
     if attendees is None:
         attendees = []
-        
+
     # 날짜 형식 검증
     try:
         datetime.strptime(date, "%Y-%m-%d")
@@ -192,7 +192,7 @@ def personal_create_schedule(
             "tool_name": "personal_create_schedule",
             "error": f"날짜 형식이 올바르지 않습니다. YYYY-MM-DD 형식으로 입력해주세요. 입력값: {date}"
         })
-    
+
     schedule_dict = {
         "id": _new_personal_id(),
         "title": title,
@@ -203,9 +203,9 @@ def personal_create_schedule(
         "attendees": attendees,
         "session_id": current_session_scope(),
     }
-    
+
     PERSONAL_SCHEDULES.append(schedule_dict)
-    
+
     # @tool의 권장형 반환값 -> JSON 문자열
     return _json({
         "ok": True,
@@ -219,15 +219,15 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
 
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
     schedules = _current_session_schedules()
-    
+
     # date_from 필터링
     if date_from:
         schedules = [s for s in schedules if s["date"] >= date_from]
-        
+
     # date_to 필터링
     if date_to:
         schedules = [s for s in schedules if s["date"] <= date_to]
-        
+
     return _json({
         "ok": True,
         "tool_name": "personal_list_schedules",
@@ -245,15 +245,15 @@ def personal_delete_schedule(schedule_id: str) -> str:
         s for s in PERSONAL_SCHEDULES
         if not (s["id"] == schedule_id and _schedule_scope(s) == current_session_scope())
     ]
-    
-    after = len(PERSONAL_SCHEDULES)    
+
+    after = len(PERSONAL_SCHEDULES)
     deleted = before - after
-    
+
     return _json({
         "ok": True,
         "tool_name": "personal_delete_schedule",
         "deleted": deleted > 0,
-    })    
+    })
 
 def week01_tools() -> list[Any]:
     """1주차에서 직접 구현한 개인 일정 CRUD 도구 목록입니다."""
