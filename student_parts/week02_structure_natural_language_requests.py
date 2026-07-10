@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 from typing import Any, Literal
+from datetime import datetime
 
 from langchain.agents import create_agent
 from langchain.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -151,11 +152,26 @@ _WEEK02_AGENT: Any | None = None
 #     이후 저장 tool이 structured_request 필드를 그대로 받을 수 있습니다.
 
 
+# 1. 사용자(유저)가 "내일 오후 3시에 회의 잡아줘"와 같이 자연어로 말하면, LLM 이 구조화된 데이터로 변경한다.
+# 위 같은 경우
+# kind = "personal_schedule"
+# title = "회의"
+# date = "2026-07-11"
+# start_time = "15:00"
+# members = ["철수"]
+# 같이 변경한다
+
+# 2. Field=(description ="") 을 사용하는 이유
+# Pydantic 이 스키마를 llm 에게 넘길 때, description 도 함께 llm 에 전달함.
+
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
 
     # 'str | None' = 문자열이거나 None. 사용자가 해당 정보를 입력하지 않을 시
     # None(값 없음/모름)으로 둔다. 예: "내일 회의" 만 말하면 end_time은 None 값으로 배정된다.
+
+    # kind 는 다른 변수와 다르게 반드시 값이 배정되어야 해 default 가 선언되지 않음.
+    # 반드시 배정되어야 하는 값은 RequestKind 값으로 배정됨
     kind: RequestKind = Field(
         description="요청 종류. personal_schedule(개인 일정), group_schedule(여러 명이 함께하는 일정), "
         "todo(할 일), reminder(알림), unknown(판단 불가) 중 하나로만 분류합니다."
@@ -178,6 +194,9 @@ class StructuredRequest(BaseModel):
         description="HH:MM 형식의 종료 시각. 확실하지 않으면 None으로 둡니다.",
     )
     members: list[str] = Field(
+        # default_factory=list 로 사용할 경우 매번 새로운 list 를 반환
+        # default_factory = [] 로 주면 파이썬에서는 모두 같은 리스트를 공유함
+        # 예를 들어 한 명한테 멤버를 추가하면 다른 리스트에도 멤버가 추가됨
         default_factory=list,
         description="참석자나 관련된 사람들의 이름 목록. 모르면 빈 목록으로 둡니다.",
     )
@@ -198,6 +217,7 @@ class StructuredRequest(BaseModel):
 class StructuredRequestBatch(BaseModel):
     """여러 자연어 의도를 StructuredRequest 목록으로 나누는 메인과제 스키마입니다."""
 
+    # StructuredRequest 를 list 로 저장
     requests: list[StructuredRequest] = Field(
         default_factory=list,
         description="구조화된 요청 목록. 요청이 하나뿐이어도 StructuredRequest 하나를 담은 목록으로 둡니다.",
@@ -215,7 +235,7 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
         return value
     if isinstance(value, dict):
         return StructuredRequest.model_validate(value)
-    # 예상 밖의 형태면 조용히 넘기지 않고 오류로 드러낸다.
+    # 예상 밖의 형태일 시  RuntimeError 발생
     raise RuntimeError(f"예상하지 못한 structured output 형태입니다: {type(value)!r}")
 
 
@@ -251,7 +271,7 @@ def extract_schedule_request(query: str) -> str:
 def week02_tools() -> list[Any]:
     """Week 2 agent에 Week 1 도구를 노출해 tool JSON을 structured_response 근거로 씁니다."""
 
-    # 개별 tool 함수는 이 파일에 import되어 있지 않으므로, 이미 import된 week01_tools()를 그대로 호출한다.
+    # 이미 import된 week01_tools()를 그대로 호출한다.
     return week01_tools()
 
 
@@ -265,7 +285,7 @@ def week02_system_prompt() -> str:
             "requests 목록 안에 StructuredRequest 하나를 담아야 해.",
             "여러 일정/할 일/알림 의도가 한 문장에 섞여 있으면 각각 별도의 StructuredRequest로 나눠서 requests에 담아.",
             "개인 일정 생성 요청이면 personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 "
-            "title/date/start_time 등 필드를 채워.",
+            "title/date/start_time 등 필드를 채워줘.",
         ]
     )
 
@@ -280,7 +300,7 @@ def week02_prompt_parts() -> list[str]:
         "사용자의 요청을 StructuredRequest 필드(kind/title/date/start_time/end_time/members/priority/reason/original_text)로 "
         "구조화해. 확실하지 않은 값은 억지로 만들지 말고 None이나 빈 목록으로 둬.",
         "Week 1 tool이 만든 JSON(created_schedule 등)을 받은 경우에는 tool을 다시 호출하지 말고, "
-        "그 payload를 읽어서 필드를 채워 structured_response로 변환해.",
+        "그 payload를 읽어서 필드를 채워 structured_response로 변환해야해.",
         "Week 2에서는 SQLite 저장, RAG 검색, 외부 멤버 일정 조율은 하지 않아. 오직 요청을 구조화하는 것까지만 한다.",
     ]
 
