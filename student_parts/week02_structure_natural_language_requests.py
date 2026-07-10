@@ -170,7 +170,7 @@ def week02_prompt_parts() -> list[str]:
         "최종 structured JSON은 정확히 한 번만 반환하라.",
         "요청을 따로 데이터베이스에 저장하거나, RAG로 저장하지 않고, 외부 멤버와의 일정 조율이 없을 예정이다.",
         # "tool의 반환 JSON을 받은 경우 payload를 읽어 structed_response로 만들어라.",
-        "만약 요청이 1개 뿐이라도, StructedRequestBatch를 사용해서 List에 하나를 담아라.",
+        "만약 요청이 1개 뿐이라도, StructuredRequestBatch를 사용해서 List에 하나를 담아라.",
         "일정 생성시 personal_create_schedule의 반환값중 실제 저장된 일정 데이터인 created_schedule을 읽어 필드를 채워라."
     ]
 
