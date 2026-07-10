@@ -134,6 +134,29 @@ def test_structured_request_all_fields_have_description():
         assert schema.get("description"), f"{field_name} has no description"
 
 
+def test_structured_request_date_rejects_malformed_value_as_none():
+    assert StructuredRequest(kind="personal_schedule", date="미정").date is None
+
+
+def test_structured_request_date_accepts_valid_format():
+    request = StructuredRequest(kind="personal_schedule", date="2026-07-11")
+    assert request.date == "2026-07-11"
+
+
+def test_structured_request_start_time_rejects_malformed_value_as_none():
+    assert StructuredRequest(kind="personal_schedule", start_time="미정").start_time is None
+
+
+def test_structured_request_end_time_rejects_malformed_value_as_none():
+    assert StructuredRequest(kind="personal_schedule", end_time="미정").end_time is None
+
+
+def test_structured_request_time_fields_accept_valid_format():
+    request = StructuredRequest(kind="personal_schedule", start_time="15:00", end_time="16:00")
+    assert request.start_time == "15:00"
+    assert request.end_time == "16:00"
+
+
 # --- StructuredRequestBatch ---
 
 def test_structured_request_batch_requests_defaults_to_empty_list():

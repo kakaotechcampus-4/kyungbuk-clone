@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -103,13 +104,31 @@ class StructuredRequest(BaseModel):
         description="요청 종류. personal_schedule/group_schedule/todo/reminder/unknown 중 하나."
     )
     title: str | None = Field(default=None, description="일정/할 일 제목. 확실하지 않으면 None.")
-    date: str | None = Field(default=None, description="YYYY-MM-DD 형식 날짜. 확실할 때만 채운다.")
-    start_time: str | None = Field(default=None, description="HH:MM 형식 시작 시각. 확실할 때만 채운다.")
-    end_time: str | None = Field(default=None, description="HH:MM 형식 종료 시각. 확실할 때만 채운다.")
+    date: str | None = Field(default=None, description="YYYY-MM-DD 형식 날짜. 확실하지 않으면 채우지 않고 None으로 둔다.")
+    start_time: str | None = Field(default=None, description="HH:MM 형식 시작 시각. 확실하지 않으면 채우지 않고 None으로 둔다.")
+    end_time: str | None = Field(default=None, description="HH:MM 형식 종료 시각. 확실하지 않으면 채우지 않고 None으로 둔다.")
     members: list[str] = Field(default_factory=list, description="참석자/관련 멤버 이름 목록. 모르면 빈 목록.")
     priority: str | None = Field(default=None, description="할 일 우선순위. 확실하지 않으면 None.")
     reason: str | None = Field(default=None, description="이 kind로 분류한 판단 근거.")
     original_text: str = Field(default="", description="이 요청에 해당하는 사용자 원문 문장 보존용 필드.")
+
+    @field_validator("date")
+    @classmethod
+    def _validate_date_format(cls, value: str | None) -> str | None:
+        """YYYY-MM-DD 형식이 아니면 확실하지 않은 값으로 보고 None으로 정규화합니다."""
+
+        if value is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            return None
+        return value
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def _validate_time_format(cls, value: str | None) -> str | None:
+        """HH:MM 형식이 아니면 확실하지 않은 값으로 보고 None으로 정규화합니다."""
+
+        if value is not None and not re.fullmatch(r"\d{2}:\d{2}", value):
+            return None
+        return value
 
 
 class StructuredRequestBatch(BaseModel):
@@ -157,8 +176,11 @@ def week02_system_prompt() -> str:
         *week02_prompt_parts(),
         "최종 답변은 항상 StructuredRequestBatch 형식이며, 요청이 하나뿐이어도 requests 리스트 안에 "
         "StructuredRequest 하나를 담아 반환한다.",
-        "personal_create_schedule tool을 호출했다면 그 결과 JSON의 created_schedule 필드(title/date/"
-        "start_time/end_time/attendees)를 읽어 StructuredRequest 필드를 채운다.",
+        "kind가 personal_schedule로 확정된 요청에 한해서만, personal_create_schedule tool 결과 JSON의 "
+        "created_schedule 필드(title/date/start_time/end_time/attendees)를 필드 채우기 근거로 쓴다. "
+        "tool을 호출했다는 사실 자체가 kind를 personal_schedule로 바꾸는 근거는 아니다.",
+        "created_schedule의 start_time/end_time이 '미정'이거나 원문에 명시적 근거가 없는 값이면, 그 필드는 "
+        "채우지 않고 None으로 남긴다.",
     ])
 
 
@@ -168,6 +190,14 @@ def week02_prompt_parts() -> list[str]:
     return [
         *week01_prompt_parts(),
         f"너는 이제 자연어 요청을 구조화하는 2주차 담당자다. 오늘은 {current_app_date_iso()}이다.",
+        "kind는 반드시 사용자 원문 문장의 의미만으로 먼저 판단한다. tool을 호출했는지 여부는 kind 판단의 "
+        "근거가 될 수 없다.",
+        "personal_create_schedule은 해당 일정이 여러 사람이 아니라 사용자 한 명만의 개인 일정이고, "
+        "날짜·시간이 문장에서 확인 가능할 때만 호출한다. '동아리', '팀', '같이' 등 여러 사람이 함께하는 "
+        "일정이거나 날짜·시간이 불명확하면 호출하지 않는다.",
+        "회의, 약속, 병원 예약처럼 특정 시각에 실제로 만나거나 참석해야 하는 이벤트에만 "
+        "personal_create_schedule을 호출한다. '장보기', '청소하기', '빨래하기'처럼 시간 표현이 있어도 "
+        "완료해야 할 작업(chore) 성격이면 kind는 todo이고, tool을 호출하지 않는다.",
         "사용자의 자연어 요청이나 Week 1 tool이 반환한 JSON을 kind/title/date/start_time/end_time/"
         "members/priority/reason/original_text 필드로 구조화한다.",
         "Week 1 tool(personal_create_schedule 등) 결과 JSON을 이미 받았다면 같은 tool을 다시 호출하지 않고, "
