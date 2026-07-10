@@ -213,6 +213,44 @@ class StructuredRequest(BaseModel):
         description="구조화의 근거가 된 사용자의 원문. 원본 보존용으로 그대로 담습니다.",
     )
 
+    # date 에 대해 검증 진행 --> 자바의 @Validator 느낌
+    # cls 는 자기 자신, v 는 검사 대상(date 에 들어온 값이 v 에 저장)
+    @field_validator("date")
+    @classmethod
+    def _validate_date(cls, v: str | None) -> str | None:
+        # v 가 None 일 경우 그냥 None 반환
+        if v is None:
+            return None
+        # normalize: 먼저 strip() 함수로 앞뒤 공백 제거
+        # 이후에 슬래시/점 구분자를 하이픈으로 통일
+        normalized = v.strip().replace("/", "-").replace(".", "-")
+        # validate: 정규화 이후에 실제 존재하는 YYYY-MM-DD 날짜인지 확인
+        try:
+            # strptime -> string parse time(문자열 -> 날짜)
+            # normalized 를 %Y-%m-%d 로 읽는 데 성공하면 날짜 객체 parsed 에 저장
+            parsed = datetime.strptime(normalized, "%Y-%m-%d")
+        # 읽는 데 실패하면(파싱 실패 시) ValueError 를 반환
+        except ValueError as e:
+            raise ValueError(f"date는 YYYY-MM-DD 형식이어야 합니다: {v!r}") from e
+        # 표준 형식(날짜 객체 -> 문자열)로 재출력
+        return parsed.strftime("%Y-%m-%d")
+
+    # start_time, end_time 에 대해 validator 로 검사 진행
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def _validate_time(cls, v: str | None) -> str | None:
+        # v 가 None 일 경우엔 그냥 None 반환
+        if v is None:
+            return None
+        try:
+            # 들어온 str v 형태를 %H:%M 형태로 parsed 객체에 저장
+            # ex) 오후 3시 같은 경우로 들어올 경우 통과 XX
+            parsed = datetime.strptime(v.strip(), "%H:%M")
+        except ValueError as e:
+            raise ValueError(f"시간은 HH:MM 형식이어야 합니다: {v!r}") from e
+        # 표준 형식으로 변환(시간 객체 -> str) 후 재출력
+        return parsed.strftime("%H:%M")
+
 
 class StructuredRequestBatch(BaseModel):
     """여러 자연어 의도를 StructuredRequest 목록으로 나누는 메인과제 스키마입니다."""
