@@ -152,7 +152,7 @@ _WEEK02_AGENT: Any | None = None
 
 class StructuredRequest(BaseModel):
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
-    kind : RequestKind = Field(default="unknown", description="personal_schedule, group_schedule, todo, reminder, unknown 중 하나")
+    kind : RequestKind = Field(description="personal_schedule, group_schedule, todo, reminder, unknown 중 하나, 분류된 요청 종류")
     title: str | None = Field(default = None, description="일정 제목, 모르면 None")
     date: str | None = Field(default = None, description="일정 날짜 YYYY-MM-DD 형식, 모르면 None")
     start_time: str | None = Field(default = None, description="일정 시작 시간 HH:MM 형식, 모르면 None")
@@ -166,7 +166,7 @@ class StructuredRequest(BaseModel):
 class StructuredRequestBatch(BaseModel):
     """여러 자연어 의도를 StructuredRequest 목록으로 나누는 메인과제 스키마입니다."""
 
-    requests: list[StructuredRequest] = Field(default_factory=list, description = "자연어에서 추출된 StructuredRequest 목록 (요청이 하나여도 리스트로 유지)" )
+    requests: list[StructuredRequest] = Field(default_factory=list, description = "사용자가 요청한 자연어에서 추출된 일정의 StructuredRequest 목록 저장 (요청이 하나여도 리스트로 유지)" )
     base_date: str = Field(default_factory=current_app_date_iso, description = "상대 날짜 해석 기준일 (YYYY-MM-DD)")
     
 
@@ -209,8 +209,8 @@ def week02_tools() -> list[Any]:
 def week02_system_prompt() -> str:
     """2주차 agent가 따르는 시스템 프롬프트입니다."""
     return join_system_prompt([
-        *week02_prompt_parts(), # *로 언패킹
-        "요청이 하나 뿐이어도 requests 리스트에 StructuredRequest 하나를 담으세요", #어투의 통일?
+        *week02_prompt_parts(),
+        "요청이 하나 뿐이어도 requests 리스트에 StructuredRequest 하나를 담으세요", 
         "personal_create_schedule tool 결과의 created_schedule을 읽어 필드를 채우세요"
     ])
 
