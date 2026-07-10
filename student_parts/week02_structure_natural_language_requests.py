@@ -216,7 +216,12 @@ def extract_structured_request(text: str) -> StructuredRequest:
     
     structured_agent = chat_model().with_structured_output(StructuredRequest, method="function_calling")
 
-    result = structured_agent.invoke([("system", join_system_prompt(week02_prompt_parts())), ("user", text),])
+    result = structured_agent.invoke(
+        [
+            {"role": "system", "content": join_system_prompt(week02_prompt_parts())}, 
+            {"role": "user", "content": text},
+        ]
+    )
 
     return _coerce_structured_request(result)
 
@@ -258,13 +263,9 @@ def week02_system_prompt() -> str:
 
     rules = [
         (
-            "structured_response 최종 답변 규칙: StructuredRequestBatch.requests는 항상 list이며,"
-            "요청이 하나뿐이어도 StructuredRequest 하나를 담아 반환하세요."
+            "structured_response 최종 답변 규칙: StructuredRequestBatch.requests는 항상 list이며, "
+            "요청이 하나뿐이어도 StructuredRequest 하나를 담아 반환하세요. "
             "여러 일정/할 일 등이 한 문장에 섞여있으면 각각 별도의 StructuredRequest로 나누어 담으세요."
-        ),
-        (
-            "personal_create_schedule tool을 호출했다면, 그 결과 JSON의 created_schedule 필드를 읽어, "
-            "title/date/start_time/end_time/members 같은 StructuredRequest 필드를 채우세요."
         ),
     ]
     return join_system_prompt([*week02_prompt_parts(), *rules])
@@ -289,7 +290,10 @@ def week02_prompt_parts() -> list[str]:
             "사용자의 자연어 요청을 kind/title/date/start_time/end_time/members/priority/reason/original_text 필드를 가진 StructuredRequest로 구조화하세요."
         ),
         (
-            "이미 tool 결과(JSON)이 입력으로 주어졌다면 다시 tool을 호출하지 말고 그 payload를 읽어 structured_response로 만드세요."
+            "이미 tool 결과(JSON)이 입력으로 주어졌다면 다시 tool을 호출하지 말고 그 payload를 읽어 structured_response로 만드세요. "
+            "Week 1 personal_create_schedule 결과 JSON에서는 "
+            "created_schedule.title/date/start_time/end_time을 같은 이름의 StructuredRequest 필드로 옮기고, "
+            "created_schedule.attendees는 StructuredRequest.members로 옮기세요."
         ),
         (
             "SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않습니다. 구조화 결과만 반환하세요."
