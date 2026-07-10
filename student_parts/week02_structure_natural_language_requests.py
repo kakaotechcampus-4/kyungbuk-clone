@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal
 
 from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
 from langchain.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -15,6 +17,9 @@ from student_parts.week01_wake_up_nana import join_system_prompt, week01_prompt_
 
 RequestKind = Literal["personal_schedule", "group_schedule", "todo", "reminder", "unknown"]
 _WEEK02_AGENT: Any | None = None
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+TIME_PATTERN = re.compile(r"^\d{2}:\d{2}$")
+UNKNOWN_TEXT_VALUES = {"", "미정", "모름", "알 수 없음", "unknown", "none", "null"}
 
 
 # [2주차 1회차 수강생 구현 가이드]
@@ -112,6 +117,34 @@ class StructuredRequest(BaseModel):
     reason: str | None = Field(default=None, description="필드를 이렇게 구조화한 짧은 판단 근거입니다.")
     original_text: str = Field(default="", description="구조화의 근거가 된 사용자 원문 또는 tool JSON 원문입니다.")
 
+    @field_validator("date")
+    @classmethod
+    def validate_date_format(cls, value: str | None) -> str | None:
+        """날짜는 알 수 없으면 None, 값이 있으면 YYYY-MM-DD만 허용합니다."""
+
+        if value is None:
+            return None
+        value = value.strip()
+        if value.lower() in UNKNOWN_TEXT_VALUES:
+            return None
+        if not DATE_PATTERN.fullmatch(value):
+            raise ValueError("date는 YYYY-MM-DD 형식이거나 None이어야 합니다.")
+        return value
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def validate_time_format(cls, value: str | None) -> str | None:
+        """시간은 알 수 없으면 None, 값이 있으면 HH:MM만 허용합니다."""
+
+        if value is None:
+            return None
+        value = value.strip()
+        if value.lower() in UNKNOWN_TEXT_VALUES:
+            return None
+        if not TIME_PATTERN.fullmatch(value):
+            raise ValueError("시간 필드는 HH:MM 형식이거나 None이어야 합니다.")
+        return value
+
 
 class StructuredRequestBatch(BaseModel):
     """여러 자연어 의도를 StructuredRequest 목록으로 나누는 2차 과제 스키마입니다."""
@@ -194,6 +227,8 @@ def week02_system_prompt() -> str:
             - base_date에는 상대 날짜 해석 기준일을 유지한다.
             - personal_create_schedule tool을 호출한 경우 tool 결과 JSON의 created_schedule을 읽어
               title/date/start_time/end_time/members 필드를 채운다.
+            - tool 이름이 personal_create_schedule이어도, 원문에 참석자/상대방/멤버가 있으면
+              kind는 personal_schedule이 아니라 group_schedule로 분류한다.
             - 사용자에게 별도 저장 완료, DB 반영, 외부 캘린더 연동을 약속하지 않는다.
             """,
         ]
@@ -218,8 +253,10 @@ def week02_prompt_parts() -> list[str]:
 
         Week 1 tool JSON 처리:
         - 개인 일정 생성처럼 Week 1 tool 호출이 필요한 요청은 personal_create_schedule을 사용할 수 있다.
+        - personal_create_schedule은 Week 1에서 만든 임시 tool 이름일 뿐이므로 kind 판단 근거로 삼지 않는다.
         - tool 결과 JSON을 받으면 다시 같은 tool을 호출하지 말고 created_schedule payload를 읽어 structured_response로 옮긴다.
         - attendees는 StructuredRequest.members로 변환한다.
+        - attendees/members가 비어 있지 않거나 원문에 함께할 사람이 있으면 kind는 group_schedule이다.
 
         Week 2 범위 제한:
         - 이번 주차는 자연어와 Week 1 tool JSON을 구조화하는 단계까지만 수행한다.
@@ -238,7 +275,7 @@ def build_week02_agent() -> object:
         _WEEK02_AGENT = create_agent(
             model=chat_model(),
             tools=week02_tools(),
-            response_format=StructuredRequestBatch,
+            response_format=ToolStrategy(StructuredRequestBatch),
             system_prompt=week02_system_prompt(),
         )
     return _WEEK02_AGENT
