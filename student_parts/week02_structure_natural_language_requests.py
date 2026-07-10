@@ -230,9 +230,3 @@ def build_week_agent() -> object:
     """active-week registry가 호출하는 표준 Week agent builder입니다."""
 
     return build_week02_agent()
-
-print(extract_schedule_request.invoke({"query": "내일 3시에 철수랑 회의 잡아줘"}))
-# {"ok": true, "structured_request": {"kind": "group_schedule", "title": "회의", ...}}
-
-print(extract_schedule_request.invoke({"query": ""}))
-# 빈 문자열을 넣었을 때 ok:true로 애매하게 나오는지, ok:false로 나오는지 확인해보세요
