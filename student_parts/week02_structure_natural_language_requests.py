@@ -177,13 +177,18 @@ def week02_prompt_parts() -> list[str]:
         f"현재 시간 및 상대 날짜의 기준이 되는 오늘 날짜는 {current_app_date_iso()}야.",
         # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
         "자연어 요청 혹은 tool 실행 결과에서 다음의 정보를 추출하여 아래의 StructuredRequest 필드로 구조화 해",
-        "- kind: personal_schedule, group_schedule, todo, reminder, unknown 중 하나.",
+        "- kind: 요청의 성격에 따라 다음 중 하나로 분류:",
+        " * group_schedule: 참석자가 본인 외에 1명 이상 존재하거나, '스터디', '회의', '미팅', '모임' 등 여러 사람이 공동으로 진행하는 일정.",
+        " * personal_schedule: 타인의 참여 없이 혼자 수행하는 개인 일정.",
+        " * todo: 마감 기한이 있거나 해야 할 일인 경우.",
+        " * reminder: 기억해야 할 메모나 알림인 경우.",
+        " * unknown: 분류하기 모호한 경우.",
         "- title: 일정의 핵심 제목.",
         "- date: 날짜는 YYYY-MM-DD 형식으로 변환하여 지정",
         "- start_time, end_time: 시간은 HH:MM 형식. 명시되지 않았다면 기본값인 None.",
         "- members: 참석자 목록을 리스트 형태로 저장. 없을 경우 빈 리스트.",
         "- priority, reason, original_text: 각각 할 일 우선순위, 판단 근거, 원문 보존용 필드. 필요시 활용",
-        "모르는 값을 억지로 만들지 말고, 확실하지 않으면 Nono 또는 빈 list로 안전을 확보해."
+        "모르는 값을 억지로 만들지 말고, 확실하지 않으면 None 또는 빈 list로 안전을 확보해.",
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
         "만약 입력으로 week 1 tool JSON을 받은 경우, tool을 다시 실행하지 마",
         "대신 전달받은 JSON payload 내부의 정보를 읽어서 structured_response로 만들어",
