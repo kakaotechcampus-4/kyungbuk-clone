@@ -117,21 +117,51 @@ class StructuredRequestBatch(BaseModel):
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
     """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
-
-    ...
+    if value is None:
+        raise ValueError("value가 None입니다.")
+    if isinstance(value, StructuredRequest):
+        return value
+    if isinstance(value, str):
+        value = json.loads(value)
+    if isinstance(value, dict) and "attendees" in value and "members" not in value:
+        value = {**value, "members": value["attendees"]}
+    
+    return StructuredRequest.model_validate(value)
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
     """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
 
-    ...
+    agent = create_agent(
+        model=chat_model(),
+        tools=[],
+        response_format=StructuredRequest,
+        system_prompt= (
+            f"오늘 날짜는 {current_app_date_iso()}이다. 상대 날짜는 이 날짜 기준으로 계산한다. "
+            "입력 문장 하나를 분석해 kind/title/date/start_time/end_time/members/priority/reason을 "
+            "채운 StructuredRequest 하나로 반환한다. "
+            "확실하지 않은 값은 None이나 빈 list로 남기고 지어내지 않는다. "
+        ),   
+    )
+    result = agent.invoke({"messages": [{"role": "user", "content": text}]})
+    return _coerce_structured_request(result["structured_response"])
 
 
 @tool
 def extract_schedule_request(query: str) -> str:
-    """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
+    """자연어 요청 하나를 구조화된 요청(JSON)으로 변환한다."""
+    try:
+        structured = extract_structured_request(query)
+        return json.dumps(
+            {"ok": True, "structured_request": structured.model_dump()},
+            ensure_ascii = False,
+        )
+    except Exception as exc:
+        return json.dumps(
+            {"ok": False, "error": str(exc), "query": query},
+            ensure_ascii = False,
+        )
 
-    ...
 
 
 def week02_tools() -> list[Any]:
@@ -200,3 +230,9 @@ def build_week_agent() -> object:
     """active-week registry가 호출하는 표준 Week agent builder입니다."""
 
     return build_week02_agent()
+
+print(extract_schedule_request.invoke({"query": "내일 3시에 철수랑 회의 잡아줘"}))
+# {"ok": true, "structured_request": {"kind": "group_schedule", "title": "회의", ...}}
+
+print(extract_schedule_request.invoke({"query": ""}))
+# 빈 문자열을 넣었을 때 ok:true로 애매하게 나오는지, ok:false로 나오는지 확인해보세요
