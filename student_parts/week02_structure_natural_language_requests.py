@@ -106,14 +106,14 @@ class StructuredRequest(BaseModel):
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
     ...
-    kind: RequestKind = Field(description=
+    kind: RequestKind = Field(default="unknown", description=
                               """
                               요청의 종류를 나타내며, 다음 중 하나의 값만 허용됩니다:
                                 - personal_schedule: 개인 일정 생성/조회/삭제/수정 요청
                                 - group_schedule: 그룹 일정 생성/조회/삭제/수정 요청
                                 - todo: 할 일 요청
                                 - reminder: 일정 알림 요청
-                                - unknown: 요청 종류를 알 수 없는 경우
+                                - unknown: 위의 어느 것에도 해당하지 않는 경우
                               """)
     title: str | None = Field(default=None, description="""
                                요청의 제목을 명사형으로 나타냅니다.:
@@ -192,10 +192,24 @@ def week02_prompt_parts() -> list[str]:
     -----------------------------------WEEK 2-----------------------------------
     너는 사용자의 자연어 요청을 StructuredRequestBatch로 구조화하는 역할을 수행하는 Week2 agent다.
     일정 관련 작업을 수행할 때, 오늘/내일과 같은 상대 날짜를 해석할 때는 base_date를 기준으로 한다.
-    personal_schedule에 대한 요청은 반드시 week01의 tools를 사용하여 personal_create_schedule tool을 호출한 뒤, tool 결과 JSON의 created_schedule을 읽어 StructuredRequest 필드를 채우도록 한다.
     StructuredRequestBatch에는 요청이 여러 개일 수 있으며, 각 요청은 StructuredRequest로 표현된다.
+    StructuredRequest의 kind는 다음의 기준으로 나눈다.
+        1. group_schedule: 그룹 일정 생성/조회/삭제/수정 요청으로, 반드시 '팀' 혹은 '그룹'과 관련된 단어가 포함되어야 한다.
+            '팀', '그룹' 과 같은 단어가 포함되면 personal_schedule보다 <반드시> 우선시 하여 group_schedule로 판단한다.
+            ex) "내일 오후 5시에 팀 회의 일정 잡아줘", "다음 주 금요일에 그룹 회식 일정 잡아줘."
+        2. personal_schedule: 개인 일정 생성/조회/삭제/수정 요청이다.
+            !!!!kind=group_schedule이라면 personal tools를 사용하지 않는다.!!!
+            personal_schedule에 대한 요청은 반드시 week01의 tool을 사용한다.
+            kind=group_schedule이라면 절대 personal tools를 사용하지 않는다.
+            ex) "내일 오후 3시에 회의 잡아줘", "오늘 8시에 철수랑 등산 일정 잡아줘."
+        3. todo: 할 일 요청으로, '할 일', 'Todo', '해야 할 일'과 같은 단어가 포함되어야 한다.
+            ex) "오늘 2시에 할 일로 '보고서 작성' 추가해줘", "내일 todo 목록 보여줘"
+        4. reminder: 일정 알림 요청으로, '알람', '리마인드', 'Remind'와 같은 단어가 포함되어야 한다.
+            ex) "오늘 2시 반에 알람 설정해줘.", "내일 10시에 발표 리마인드 해줘."
+        5. unknown: 위의 어느 것에도 해당하지 않는 경우이다.
+    kind를 제외한 StructuredRequest의 필드는, 명확하지 않은 경우 억지로 생성하지 말고 반드시 None 또는 빈 list로 두어야 한다.
+    
     StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담도록 한다.
-    Week1의 tool을 사용하여 JSON을 받은 경우, 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만든다.
     Week2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다.
     """
 
