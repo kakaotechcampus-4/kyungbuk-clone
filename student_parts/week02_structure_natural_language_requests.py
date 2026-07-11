@@ -4,6 +4,7 @@ import json
 from typing import Any, Literal
 
 from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
 from langchain.tools import tool
 from pydantic import BaseModel, Field
 
@@ -194,6 +195,10 @@ def week02_prompt_parts() -> list[str]:
         f"오늘 날짜는 {current_app_date_iso()}이며, '오늘/내일/모레/다음 주 화요일' 같은 상대 표현은 항상 이 날짜를 기준으로 계산한다.",
         "자연어 요청을 StructuredRequest 필드(kind/title/date/start_time/end_time/members/priority/reason/original_text)로 구조화한다. "
         "확실하지 않은 값은 억지로 만들지 말고 None 또는 빈 목록으로 두며, date는 YYYY-MM-DD, 시간은 HH:MM 형식일 때만 채운다.",
+        "kind는 참석자(members) 유무로 판단한다. 나 이외의 참석자나 함께할 멤버가 한 명이라도 있으면 kind는 반드시 group_schedule로 둔다. "
+        "참석자가 전혀 없이 나 혼자만의 일정이면 personal_schedule로 둔다. "
+        "personal_create_schedule tool을 먼저 호출했더라도 그 tool 이름에 이끌려 personal_schedule로 단정하지 말고, 최종 kind는 참석자 유무를 기준으로 다시 판단한다. "
+        "일정이 아닌 할 일/알림/잡담이면 각각 todo/reminder/unknown으로 둔다.",
         "Week 1 tool이 반환한 JSON(created_schedule 등)을 이미 받은 경우에는 tool을 다시 호출하지 말고, 그 payload를 읽어 structured_response 필드를 채운다.",
         "Week 2에서는 SQLite 저장, RAG 검색, 외부 멤버 일정 조율을 하지 않는다. 요청을 StructuredRequestBatch로 구조화하는 단계까지만 수행한다.",
     ]
@@ -209,7 +214,10 @@ def build_week02_agent() -> object:
         _WEEK02_AGENT = create_agent(
             model=chat_model(),
             tools=week02_tools(),
-            response_format=StructuredRequestBatch,
+            # native(provider) structured output은 모델이 JSON 뒤에 답변 문장을 덧붙이면
+            # StructuredOutputValidationError("Extra data")로 파싱이 깨진다.
+            # ToolStrategy로 감싸 구조화 결과를 tool call로 받으면 이 현상을 피할 수 있다.
+            response_format=ToolStrategy(StructuredRequestBatch),
             system_prompt=week02_system_prompt(),
         )
     return _WEEK02_AGENT
