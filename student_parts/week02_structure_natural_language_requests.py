@@ -161,11 +161,21 @@ class StructuredRequest(BaseModel):
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
-    kind: RequestKind = Field(description="사용자 요청의 종류를 분류한 값입니다.")
+    kind: RequestKind = Field(
+        description=(
+            "사용자 요청의 종류를 분류한 값입니다. 어떤 Tool을 호출했는지가 아니라 요청 내용으로 판단하세요. " 
+            "5가지 값 중 하나를 고릅니다.\n"
+            "- personal_schedule: members에 본인 한 명뿐인 개인 일정\n"
+            "- group_schedule: members에 본인 외 다른 사람이 1명 이상 포함된 일정\n"
+            "- todo: 특정 시각이 정해지지 않은 완료 여부만 중요한 할 일\n"
+            "- reminder: 특정 시점에 사용자에게 알려주기를 원하는 알림성 요청\n"
+            "- unknown: 위 4가지 중 어디에도 명확히 속하지 않거나 종류를 판단할 정보가 부족한 경우\n"
+        )
+    )
     title: str | None = Field(default=None, description="요청과 관련된 일정/할 일의 제목입니다. 언급되지 않았다면 None으로 둡니다.")
     date: str | None = Field(default=None, description="요청과 관련된 날짜입니다. 언급되지 않았다면 None으로 둡니다.")
-    start_time: str | None = Field(default=None, description="일정의 시작 시각입니다. 언급되지 않았다면 None으로 둡니다.")
-    end_time: str | None = Field(default=None, description="일정의 종료 시각입니다. 언급되지 않았다면 None으로 둡니다.")
+    start_time: str | None = Field(default=None, description="일정의 시작 시각입니다. 시각 형식은 (YYYY-MM-DD/HH:MM)입니다. 언급되지 않았다면 None으로 둡니다.")
+    end_time: str | None = Field(default=None, description="일정의 종료 시각입니다. 시각 형식은 (YYYY-MM-DD/HH:MM)입니다. 언급되지 않았다면 None으로 둡니다.")
     members: list[str] = Field(default_factory=list, description="일정에 참여하는 사람들의 이름 목록입니다. 언급되지 않았다면 빈 리스트로 둡니다.")
     priority: str | None = Field(default=None, description="요청의 우선순위입니다. 언급되지 않았다면 None으로 둡니다.")
     reason: str | None = Field(default=None, description="요청이나 일정의 목적 또는 이유입니다. 언급되지 않았다면 None으로 둡니다.")
@@ -188,7 +198,9 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
     # TODO: value가 이미 StructuredRequest이면 그대로 반환하세요.
     # TODO: value가 dict이면 StructuredRequest.model_validate(...)로 검증해 반환하세요.
     # TODO: 예상한 형태가 아니면 RuntimeError를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 마세요.
-    ...
+    if isinstance(value, StructuredRequest): return value
+    elif isinstance(value, dict): return StructuredRequest.model_validate(value)
+    else: raise RuntimeError(f"예상치 못한 Structed Output 형태입니다: {type(value)}")
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
@@ -197,7 +209,16 @@ def extract_structured_request(text: str) -> StructuredRequest:
     # TODO: chat_model().with_structured_output(StructuredRequest, method="function_calling")로 structured LLM을 만드세요.
     # TODO: system 메시지에는 join_system_prompt(week02_prompt_parts())를 넣고, user 메시지에는 text를 넣어 invoke하세요.
     # TODO: LLM 결과를 _coerce_structured_request(...)로 정규화해 StructuredRequest 하나로 반환하세요.
-    ...
+    structured_llm = chat_model().with_structured_output(
+        StructuredRequest, method="function_calling"
+    )
+    result = structured_llm.invoke(
+        [
+            {"role": "system", "content": join_system_prompt(week02_prompt_parts())},
+            {"role": "user", "content": text},
+        ]
+    )
+    return _coerce_structured_request(result)
 
 
 @tool
@@ -207,7 +228,14 @@ def extract_schedule_request(query: str) -> str:
     # TODO: extract_structured_request(query)를 호출해 자연어 또는 Week 1 JSON payload를 구조화하세요.
     # TODO: ok/tool_name/base_date/structured_request 키를 가진 dict를 만들고 structured_request에는 model_dump() 결과를 넣으세요.
     # TODO: json.dumps(..., ensure_ascii=False)로 JSON 문자열을 반환하세요.
-    ...
+    structured_request = extract_structured_request(query)
+    payload = {
+        "ok": True,
+        "tool_name": "extract_schedule_request",
+        "base_date": current_app_date_iso(),
+        "structured_request": structured_request.model_dump(),
+    }
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def week02_tools() -> list[Any]:
@@ -247,6 +275,10 @@ def week02_prompt_parts() -> list[str]:
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
         *week01_prompt_parts(),
+        "## Week1 지시 재정의\n"
+        "위의 'Tool 사용 규칙' 3번의 '처리 결과를 사용자에게 간결하게 답변해'는 이번 주차부터 적용하지 않아."
+        "이번 주차의 최종 답변은 자연어 요약이 아니라 StructuredRequestBatch 하나여야 하고 이 지시가 앞선 주차의 답변 형식 지시보다 우선이야.\n"
+        "\n"
         "- 너는 이제 사용자의 자연어 요청 또는 personal_* Tool이 반환한 JSON 결과를 StructuredRequest/StructuredRequestBatch 형태로 구조화하는 역할도 맡아.\n"
         f"- 위에서 안내한 현재 날짜({current_app_date_iso()})를 상대 날짜 해석 기준으로 계속 사용해.\n"
         "\n"
