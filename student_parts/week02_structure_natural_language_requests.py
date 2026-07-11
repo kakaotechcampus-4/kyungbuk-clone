@@ -191,7 +191,6 @@ def week02_prompt_parts() -> list[str]:
 Week 1 personal_create_schedule tool 결과 JSON을 이미 받은 경우 tool을 다시 호출하지 않고,
 created_schedule payload를 읽어 StructuredRequest 필드를 채운다.
 
-Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다.
 """,
     ]
 
