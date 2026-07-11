@@ -164,6 +164,7 @@ def week02_system_prompt() -> str:
     return join_system_prompt([
         *week02_prompt_parts(),
         "최종 답변은 항상 StructuredRequestBatch 형식의 structured_response로 반환한다. 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담는다.",
+        "한 입력에 여러 의도가 섞여 있으면(예: '회의 잡고 리마인더도 설정해줘') 각 의도를 별도의 StructuredRequest로 분리해 requests 목록에 나누어 담는다. 서로 다른 종류의 요청을 하나로 합치지 않는다.",
         "personal_create_schedule tool 결과 JSON의 created_schedule 필드를 읽어 title/date/start_time/end_time/members 같은 StructuredRequest 필드를 채운다.",
     ])
 
