@@ -116,7 +116,7 @@ _WEEK02_AGENT: Any | None = None
 #   - 추가 과제: Week 3을 실행한 뒤 trace에서 extract_schedule_request 이후
 #     save_structured_request가 호출되는지 봅니다. extract_schedule_request의 반환 JSON에
 #     ok/tool_name/base_date/structured_request가 들어 있는지 확인합니다.
-#
+#   
 # 함수별 동작 설명
 #   - StructuredRequest
 #     Week 2 structured output의 중심 스키마입니다. LLM이 자연어에서 뽑은 요청 종류, 제목, 날짜, 시간,
@@ -264,6 +264,8 @@ def week02_system_prompt() -> str:
         "## personal_create_schedule tool 사용 시\n"
         "- personal_create_schedule이 반환한 created_schedule JSON의 내용을 읽어\n"
         "  StructuredRequest의 각 필드(kind, title, date, start_time, end_time 등)를 채웁니다.\n"
+        "- created_schedule의 attendees 값은 StructuredRequest의 members 필드로 옮깁니다.\n"
+        "- original_text에는 이 요청을 발생시킨 사용자의 원래 발화를 그대로 채웁니다.\n"
     ]
 
     return join_system_prompt([*week02_prompt_parts(), *additional_rules])
