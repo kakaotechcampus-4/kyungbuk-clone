@@ -152,7 +152,9 @@ _WEEK02_AGENT: Any | None = None
 
 
 class StructuredRequest(BaseModel):
+    """사용자가 요청한 일정에서 필요한 데이터를 추출합니다."""
     """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
+
     kind: RequestKind = Field(default="unknown", description="요청 종류입니다. personal_schedule, group_schedule, todo, reminder, unknown 중 하나입니다.")
     title: str | None = Field(default=None, description="일정 제목입니다.")
     date: str | None = Field(default=None, description="일정 날짜입니다.")
@@ -175,6 +177,8 @@ class StructuredRequest(BaseModel):
 class StructuredRequestBatch(BaseModel):
     """여러 자연어 의도를 StructuredRequest 목록으로 나누는 메인과제 스키마입니다."""
 
+    requests: list[StructuredRequest] = Field(default_factory=list, description="자연어 요청을 분해한 StructuredRequest를 담는 list입니다. 요청이 하나뿐이어도 StructuredRequest 목록으로 담습니다.")
+    base_date: str = Field(default_factory=current_app_date_iso, description="상대 날짜 해석 기준일입니다. 오늘 날짜를 받아옵니다.")
     # TODO: requests 필드를 list[StructuredRequest] 타입으로 선언하고 default_factory=list를 사용하세요.
     # TODO: base_date 필드를 str 타입으로 선언하고 default_factory=current_app_date_iso를 사용하세요.
     # TODO: 각 필드에는 Week 2 구조화 결과와 상대 날짜 기준일을 설명하는 한국어 description을 달아주세요.
