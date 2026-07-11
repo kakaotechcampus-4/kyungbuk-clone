@@ -148,6 +148,8 @@ def week02_system_prompt() -> str:
     return join_system_prompt([
         *week02_prompt_parts(),
         "최종 답변은 반드시 StructuredRequestBatch 형태의 structured_response로 반환한다. "
+        "자연어 설명, 요약 문장, 인사말 등 JSON 이외의 텍스트는 앞뒤에 절대 추가하지 않는다. "
+        "특히 일정 조회 요청('이번 주 일정 알려줘' 등)에서도 결과를 글로 설명하려 하지 말고 오직 파싱 가능한 순수 StructuredRequestBatch 형태로만 출력한다. "
         "요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담는다. "
         "personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 필드를 채운다.",
     ])
@@ -166,6 +168,7 @@ def week02_prompt_parts() -> list[str]:
         f"모르는 값을 억지로 만들지 않는다. 확실하지 않으면 None 또는 빈 list가 안전하다.",
         "Week 1 personal_create_schedule tool 결과 JSON의 created_schedule을 받은 경우 "
         "다시 tool을 호출하지 않고 해당 payload를 읽어 StructuredRequestBatch의 structured_response로 만든다.",
+        "출력 시 JSON 앞뒤로 마크다운 코드 블록(```)이나 부연 설명 등의 자연어를 절대 붙이지 않고, 오직 요구된 스키마 구조만 정확히 반환한다.",
         "Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다.",
     ]
 

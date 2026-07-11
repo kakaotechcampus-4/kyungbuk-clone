@@ -26,8 +26,11 @@ from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
-# TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = "현재 대화에서 사용자가 언급한 정보를 기억하고 활용한다."
+CHAT_MEMORY_PROMPT = (
+    "대화 중 사용자가 언급한 이름, 장소, 선호 시간대, 이미 만든 일정 등은 같은 대화 안에서 기억해 활용한다. "
+    "중복 일정 생성이나 누락을 막으려면 새 일정을 만들기 전에 반드시 조회 도구로 현재 일정을 먼저 확인한다. "
+    "도구 조회 결과가 이전 답변과 다르면 항상 가장 최근 도구 결과를 기준으로 답한다."
+)
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -170,7 +173,6 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
 
-    # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
     schedule = {
         "id": _new_personal_id(),
         "title": title,
@@ -182,35 +184,54 @@ def personal_create_schedule(
         "session_id": current_session_scope(),
     }
     PERSONAL_SCHEDULES.append(schedule)
-    return _json({"ok": True, "tool_name": "personal_create_schedule", "created_schedule": schedule})
+    return _json(
+        {
+            "ok": True,
+            "tool_name": "personal_create_schedule",
+            "created_schedule": schedule,
+        }
+    )
 
 
 @tool
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
     """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
 
-    # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
     schedules = _current_session_schedules()
-    if date_from:
-        schedules = [s for s in schedules if s["date"] >= date_from]
-    if date_to:
-        schedules = [s for s in schedules if s["date"] <= date_to]
-    return _json({"ok": True, "tool_name": "personal_list_schedules", "schedules": schedules})
+    if date_from is not None:
+        schedules = [s for s in schedules if s.get("date", "") >= date_from]
+    if date_to is not None:
+        schedules = [s for s in schedules if s.get("date", "") <= date_to]
+    return _json(
+        {
+            "ok": True,
+            "tool_name": "personal_list_schedules",
+            "schedules": schedules,
+        }
+    )
 
 
 @tool
 def personal_delete_schedule(schedule_id: str) -> str:
     """일정 ID에 해당하는 개인 일정을 삭제합니다."""
 
-    # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
     session_id = current_session_scope()
     before = len(PERSONAL_SCHEDULES)
     PERSONAL_SCHEDULES[:] = [
-        s for s in PERSONAL_SCHEDULES
+        s
+        for s in PERSONAL_SCHEDULES
         if not (s.get("id") == schedule_id and _schedule_scope(s) == session_id)
     ]
-    deleted = before - len(PERSONAL_SCHEDULES)
-    return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": deleted, "schedule_id": schedule_id})
+    deleted_count = before - len(PERSONAL_SCHEDULES)
+    return _json(
+        {
+            "ok": True,
+            "tool_name": "personal_delete_schedule",
+            "schedule_id": schedule_id,
+            "deleted": deleted_count > 0,
+            "deleted_count": deleted_count,
+        }
+    )
 
 
 def week01_tools() -> list[Any]:
@@ -229,13 +250,17 @@ def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
     return [
-        # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
-        "너는 'Nana'라는 이름의 개인 일정 관리 비서이다. "
-        "사용자의 일정 생성, 조회, 삭제 요청을 도와준다.",
-        f"오늘 날짜: {current_app_date_iso()}.",
-        "일정 생성 요청 시 personal_create_schedule 도구를 사용한다. "
-        "일정 조회 요청 시 personal_list_schedules 도구를 사용한다. "
-        "일정 삭제 요청 시 personal_delete_schedule 도구를 사용한다.",
+        (
+            "너는 사용자의 개인 비서 'Nana'다. 항상 한국어로 자연스럽고 친절하게 답한다. "
+            f"오늘 날짜는 {current_app_date_iso()}이며, '오늘'·'내일'·'이번 주' 같은 표현은 이 날짜를 기준으로 계산한다."
+        ),
+        (
+            "일정 관련 요청을 받으면 추측해서 답하지 말고 반드시 제공된 도구를 호출한다. "
+            "일정 생성은 personal_create_schedule, 조회는 personal_list_schedules, 삭제는 personal_delete_schedule를 사용한다. "
+            "삭제하려면 먼저 조회로 해당 일정의 id를 확인한 뒤 그 id로 삭제한다. "
+            "도구가 반환한 JSON 결과를 근거로만 답하고, 결과를 사람이 읽기 쉬운 한국어 문장으로 정리해 전달한다. "
+            "날짜는 YYYY-MM-DD, 시간은 HH:MM 형식으로 다룬다."
+        ),
         CHAT_MEMORY_PROMPT,
     ]
 
