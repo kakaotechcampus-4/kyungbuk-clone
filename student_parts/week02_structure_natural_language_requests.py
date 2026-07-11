@@ -153,17 +153,22 @@ _WEEK02_AGENT: Any | None = None
 
 
 class StructuredRequest(BaseModel):
-    """LLM structured output으로 추출되는 2주차 요청 스키마입니다."""
+    """사용자가 요청한 일정에서 필요한 데이터를 추출합니다."""
 
     # kind를 먼저 보고 어떤 필드를 읽을지 결정한다. RequestKind Literal의 값만 허용한다.
     kind: RequestKind = Field(
-        description="요청 종류. personal_schedule, group_schedule, todo, reminder, unknown 중 하나."
+        description=(
+            "요청 종류. personal_schedule, group_schedule, todo, reminder, unknown 중 하나. "
+            "일정에 나 외의 다른 참석자·멤버가 함께하면(members가 비어있지 않으면) group_schedule, "
+            "참석자 없이 나 혼자만의 일정이면 personal_schedule로 분류한다. "
+            "할 일이면 todo, 알림 요청이면 reminder, 어디에도 해당하지 않으면 unknown."
+        )
     )
     title: str | None = Field(default=None, description="일정이나 할 일의 제목. 모르면 None.")
     date: str | None = Field(default=None, description="날짜. 확실할 때만 YYYY-MM-DD, 모르면 None.")
     start_time: str | None = Field(default=None, description="시작 시각. 확실할 때만 HH:MM, 모르면 None.")
     end_time: str | None = Field(default=None, description="종료 시각. 확실할 때만 HH:MM, 모르면 None.")
-    members: list[str] = Field(default_factory=list, description="참석자나 관련 멤버 이름 목록. 모르면 빈 목록.")
+    members: list[str] = Field(default_factory=list, description="참석자나   관련 멤버 이름 목록. 모르면 빈 목록.")
     priority: str | None = Field(default=None, description="할 일 우선순위(예: low/medium/high). 모르면 None.")
     reason: str | None = Field(default=None, description="이 kind로 판단한 근거. 모르면 None.")
     original_text: str = Field(default="", description="구조화 전 사용자 원문이나 tool payload 원본.")
@@ -174,7 +179,7 @@ class StructuredRequestBatch(BaseModel):
 
     requests: list[StructuredRequest] = Field(
         default_factory=list,
-        description="구조화된 요청 목록. 요청이 하나뿐이어도 StructuredRequest 하나를 담은 목록으로 반환한다.",
+        description="사용자가 요청한 일정의 StructuredRequest 리스트를 저장해주세요. 요청이 하나뿐이어도 StructuredRequest 하나를 담은 목록으로 반환한다.",
     )
     base_date: str = Field(
         default_factory=current_app_date_iso,
@@ -206,7 +211,11 @@ def extract_structured_request(text: str) -> StructuredRequest:
             {"role": "user", "content": text},
         ]
     )
-    return _coerce_structured_request(result)
+    structured = _coerce_structured_request(result)
+    # 원문 보존은 모델 판단에 맡기지 않고 입력 text로 확정해 채운다.
+    # (모델이 original_text를 비우거나 변형해도 Week 3 저장 단계가 원문을 잃지 않도록 보장)
+    structured.original_text = text
+    return structured
 
 
 @tool
@@ -252,8 +261,13 @@ def week02_prompt_parts() -> list[str]:
     week02_role = (
         "너는 사용자의 자연어 요청을 구조화하는 2주차 agent다. "
         f"오늘은 {today}이고, '내일'이나 '다음 주' 같은 상대 날짜는 이 날짜를 기준으로 YYYY-MM-DD로 바꾼다. "
-        "사용자 요청을 kind(personal_schedule/group_schedule/todo/reminder/unknown)로 분류하고 "
-        "title/date/start_time/end_time/members 필드로 구조화한다. "
+        "사용자 요청을 kind로 분류하고 "
+        "title/date/start_time/end_time/members/original_text 필드로 구조화한다. "
+        "kind 분류 기준: 일정에 나 외의 다른 참석자·멤버가 함께하면(members가 비어있지 않으면) group_schedule, "
+        "참석자 없이 나 혼자만의 일정이면 personal_schedule, 할 일이면 todo, 알림 요청이면 reminder, 애매하면 unknown이다. "
+        "'분류만 해줘'처럼 분류만 요청해도 실제로 일정을 만들지 말고 같은 기준으로 kind만 정한다. "
+        "original_text에는 사용자의 이번 요청 문장을 글자 그대로 담는다. 절대 비워두지 말고, 요약·수정하거나 이전 대화의 문장으로 바꾸지 않는다. "
+        "매 요청은 사용자의 가장 최근 메시지만을 기준으로 구조화하고, 이전 메시지의 값을 재사용하지 않는다. "
         "date/start_time/end_time은 확실할 때만 YYYY-MM-DD·HH:MM으로 채운다. "
         "모르는 값은 반드시 null(None)로 두고 '미정' 같은 문자열이나 빈 문자열을 채우지 않는다. "
         "Week 1 tool이 만든 JSON payload를 받은 경우에는 tool을 다시 호출하지 않고 그 payload를 읽어 구조화한다. "
