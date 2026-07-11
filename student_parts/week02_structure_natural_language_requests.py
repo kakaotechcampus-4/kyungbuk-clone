@@ -101,9 +101,12 @@ class StructuredRequest(BaseModel):
     kind: RequestKind = Field(
         default="unknown",
         description=(
-            "요청 종류입니다. personal_schedule은 나의 개인 일정, group_schedule은 다른 멤버와 함께하는 일정, "
-            "todo는 해야 할 일이나 마감 작업, reminder는 특정 시점에 알려 달라는 요청, "
-            "unknown은 어느 종류인지 확정하기 어려운 요청입니다."
+            "요청 종류입니다. "
+            "personal_schedule은 혼자 잡는 개인 일정이고, "
+            "group_schedule은 다른 사람과 함께 참여하는 공동 일정입니다. "
+            "todo는 완료해야 하는 할 일이나 과제, "
+            "reminder는 특정 시각에 알림이 필요한 요청, "
+            "unknown은 종류를 특정하기 어려운 경우입니다."
         ),
     )
     title: str | None = Field(
@@ -213,7 +216,7 @@ def week02_prompt_parts() -> list[str]:
         - 요청이 하나뿐이어도 반드시 StructuredRequestBatch.requests list 안에 담는다.
         - kind는 personal_schedule, group_schedule, todo, reminder, unknown 중 하나만 사용한다.
         - kind는 사용자의 원문 의도와 대화 맥락을 기준으로 판단한다.
-        - created_schedule.attendees 또는 members 값이 있다는 이유만으로 group_schedule이라고 판단하지 않는다.
+        - group_schedule은 원문에서 다른 사람과 함께한다는 표현("같이", "랑", "팀", "회의" 등)이 명시적으로 드러날 때 선택한다.
         - title/date/start_time/end_time은 확실할 때만 채운다.
         - date는 YYYY-MM-DD, start_time과 end_time은 HH:MM 형식을 사용한다.
         - 모르는 값은 추측하지 말고 None 또는 빈 list로 둔다.
