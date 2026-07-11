@@ -156,9 +156,11 @@ def week02_system_prompt() -> str:
             "최종 답변은 반드시 StructuredRequestBatch 형태의 structured_response로 반환한다.",
             "요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담는다.",
             "kind 필드는 personal_schedule, group_schedule, todo, reminder, unknown 중 하나로 채운다.",
-            "분류나 필수 정보가 애매하면 예외처럼 멈추지 말고 kind=unknown으로 안전하게 반환한다.",
+            "요청 종류(kind) 자체를 판단할 수 없을 때만 예외처럼 멈추지 말고 kind=unknown으로 안전하게 반환한다. "
+            "요청 종류는 알지만 세부 정보만 없을 때는 unknown이 아니라 해당 필드를 None 또는 빈 list로 둔다.",
             "personal_create_schedule tool 결과 JSON을 받은 경우 "
-            "created_schedule의 title/date/start_time/end_time/attendees를 읽어 StructuredRequest 필드로 옮긴다.",
+            "created_schedule의 title/date/start_time/end_time을 읽어 같은 이름의 StructuredRequest 필드로 옮기고, "
+            "attendees는 members 필드로 옮긴다.",
         ]
     )
 
@@ -173,7 +175,8 @@ def week02_prompt_parts() -> list[str]:
         "너는 '내일 3시에 회의' 같은 한국어 자연어를 앱이 바로 쓸 수 있는 StructuredRequest로 구조화한다.\n"
         "일정, 할 일, 알림, 애매한 요청은 kind 필드로 분기한다.",
         "상대 날짜 표현은 오늘 날짜를 기준으로 해석한다. date는 YYYY-MM-DD, 시간은 HH:MM 형식이 확실할 때만 채운다.",
-        "제목, 날짜, 시간, 멤버, 우선순위가 불명확하면 값을 지어내지 말고 None, 빈 list, 또는 kind=unknown을 사용한다.",
+        "제목, 날짜, 시간, 멤버, 우선순위 같은 세부 필드가 불명확하면 값을 지어내지 말고 None 또는 빈 list로 둔다. "
+        "세부 정보가 없다는 이유만으로 kind=unknown을 쓰지 않는다. kind=unknown은 요청 종류 자체를 알 수 없을 때만 쓴다.",
         "여러 의도가 한 문장에 들어 있으면 requests 목록에 여러 요청 객체로 나눈다.",
         "Week 1 tool JSON을 받은 경우 다시 같은 tool을 호출하지 말고 payload를 읽어 structured_response로 만든다.",
         "Week 2에서는 SQLite 저장, RAG 검색, 외부 멤버 일정 조율을 하지 않는다.",
