@@ -146,7 +146,11 @@ def week02_tools() -> list[Any]:
 def week02_system_prompt() -> str:
     """2주차 agent가 따르는 시스템 프롬프트입니다."""
 
-    return join_system_prompt(week02_prompt_parts())
+    return join_system_prompt([
+        *week02_prompt_parts(),
+        "요청이 하나뿐이어도 반드시 StructuredRequestBatch의 requests 리스트 안에 "
+        "StructuredRequest 하나를 담아 반환하라.",
+        ])
 
 
 def week02_prompt_parts() -> list[str]:
@@ -164,8 +168,6 @@ def week02_prompt_parts() -> list[str]:
         "structured_response로 변환하라.",
         "이 단계에서는 SQLite 저장, RAG 검색, 외부 멤버와의 일정 조율은 하지 않는다. "
         "구조화된 결과를 반환하는 것까지만 담당한다.",
-        "요청이 하나뿐이어도 반드시 StructuredRequestBatch의 requests 리스트 안에 "
-        "StructuredRequest 하나를 담아 반환하라.",
         "personal_create_schedule tool의 결과 JSON에 담긴 created_schedule 필드를 참고해서 "
         "StructuredRequest의 값들을 채워라.",
         "단, created_schedule의 end_time 값이 '미정'처럼 확정되지 않은 값이면 그대로 복사하지 말고 "
