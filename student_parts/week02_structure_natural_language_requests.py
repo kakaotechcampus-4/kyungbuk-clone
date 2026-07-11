@@ -199,7 +199,10 @@ def extract_structured_request(text: str) -> StructuredRequest:
     str_llm = chat_model().with_structured_output(StructuredRequest, method="function_calling")
     # TODO: system 메시지에는 join_system_prompt(week02_prompt_parts())를 넣고, user 메시지에는 text를 넣어 invoke하세요.
     sys_msg = join_system_prompt(week02_prompt_parts())
-    res = str_llm.invoke([("system", sys_msg), ("user", text)])
+    res = str_llm.invoke([
+        {"role": "system", "content": sys_msg},
+        {"role": "user", "content": text}
+    ])
     # TODO: LLM 결과를 _coerce_structured_request(...)로 정규화해 StructuredRequest 하나로 반환하세요.
     return _coerce_structured_request(res)
 
@@ -237,7 +240,9 @@ def week02_system_prompt() -> str:
     # TODO: personal_create_schedule tool 결과 JSON의 created_schedule을 읽어 필드를 채우도록 지시하세요.
     final_struct_inst = """
     StructuredRequestBatch에는 요청이 하나뿐이더라도 requests 목록에 StructuredRequest 하나를 담아 리스트로 만들도록 합니다.
+    여러 일정/할 일/알림 의도가 한 문장에 섞여 있으면 각 의도를 별도의 StructuredRequest로 나누도록 합니다.
     personal_create_schedule tool의 결과로 받은 JSON의 created_schedule을 읽어 필드를 채우도록 합니다.
+    이때 created_schedule의 attendees 필드는 StructuredRequest의 members 필드로 매핑합니다.
     """
     return week2_prom + final_struct_inst
 
@@ -248,13 +253,19 @@ def week02_prompt_parts() -> list[str]:
     return [
         *week01_prompt_parts(),
         # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
-        f"당신은 사용자의 요청을 정형화된 요청 데이터로 구조화합니다. 오늘 날짜는 {current_app_date_iso()}입니다. 오늘 날짜를 기준으로 상대적인 날짜를 계산하도록 합니다.",
         # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
-        "사용자의 자연어 요청을 StructuredRequest 클래스의 kind/title/date/start_time/end_time/members 등 필드 구조에 맞춰 구조화하도록 합니다.",
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
-        "Week 1 tool JSON을 받은 경우에는 다시 tool을 호출하지 않고, payload를 읽어 structured_response로 만들도록 합니다.",
         # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
-        "Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않도록 합니다."
+        f"당신은 사용자의 요청을 정형화된 요청 데이터로 구조화하는 Kanana의 Week 2 요청 구조화 agent입니다. 오늘 날짜는 앱 시작 시 기준인 {current_app_date_iso()}입니다. 모든 상대적인 날짜 계산은 이 날짜를 기준으로 하도록 합니다.",
+        "사용자의 한국어 자연어 요청을 꼼꼼히 읽고 날짜, 시간, 제목, 멤버, 종류 등의 필드를 StructuredRequest 구조에 맞춰 정확히 추출하도록 합니다.",
+        "Week 2 대화의 최종 구조화는 response_format으로 지정된 StructuredRequestBatch가 담당하게 됩니다.",
+        "정확히 알 수 없거나 모호한 값은 억지로 유추하여 만들지 말고, 안전하게 None이나 빈 list로 남겨두도록 합니다.",
+        "Week 1 개인 일정 도구는 이전 주차의 도구 동작을 확인하기 위한 목적으로 제공됩니다.",
+        "만약 사용자가 이미 Week 1 tool의 결과 JSON을 전달했다면, 절대로 tool을 다시 호출하지 말고 제공된 JSON payload를 읽어 곧바로 structured_response를 생성하도록 합니다.",
+        "개인 일정 생성 요청이 들어오면 personal_create_schedule을 호출하여 created_schedule JSON을 받은 뒤, 해당 값을 읽어 StructuredRequestBatch로 변환합니다.",
+        "할 일, 알림, 그룹 일정 등 Week 1의 도구로 처리할 수 없는 요청이 들어온다면, 원문 전체를 직접 분석하여 structured_response를 만들도록 합니다.",
+        "명심하세요. Week 1의 일반적인 tool 호출이나 자연어 답변 지시보다, Week 2의 structured output 계약 조건을 최우선으로 따르도록 합니다.",
+        "또한 Week 2 단계에서는 실제 SQLite 데이터베이스 저장이나 RAG 수행, 외부 멤버와의 일정 조율 등의 작업은 수행하지 않도록 합니다."
     ]
 
 
