@@ -23,7 +23,7 @@ node_modules/
 dist/
 
 PROJECT_ANALYSIS.md
-student_week_sync_CLAUDE.md
+student-week-sync-CLAUDE.md
 
 # Keep later-week student files local on the Week 1 main branch.
 student_parts/week02_structure_natural_language_requests.py
