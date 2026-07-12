@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
@@ -108,7 +109,20 @@ class StructuredRequest(BaseModel):
     priority: str | None = Field(default=None, description="할 일의 우선 순위")
     reason: str | None = Field(default=None, description="판단한 근거")
     original_text: str = Field(default="", description="원문 보존용 필드")
-    
+
+    @field_validator("date")
+    @classmethod
+    def _validate_date_format(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            return None
+        return value
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def _validate_time_format(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", value):
+            return None
+        return value
 
 
 class StructuredRequestBatch(BaseModel):
