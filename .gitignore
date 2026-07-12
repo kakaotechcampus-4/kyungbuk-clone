@@ -21,6 +21,7 @@ venv/
 .venv/
 node_modules/
 dist/
+CLAUDE.md
 
 # Keep later-week student files local on the Week 1 main branch.
 student_parts/week02_structure_natural_language_requests.py

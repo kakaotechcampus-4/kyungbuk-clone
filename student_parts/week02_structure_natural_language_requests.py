@@ -172,6 +172,8 @@ def week02_prompt_parts() -> list[str]:
 
         각 요청은 StructuredRequest의 kind/title/date/start_time/end_time/members/priority/reason/original_text 필드로 분류한다.
         - kind는 personal_schedule, group_schedule, todo, reminder, unknown 중 하나다.
+        - members(참석자)가 명시된 일정 요청은 group_schedule, 참석자 언급 없이 본인 일정만 다루면 personal_schedule로 분류한다.
+        - 완료해야 할 작업을 나열한 요청은 todo, 특정 시점에 알려/리마인드해 달라는 요청은 reminder로 분류, 위 기준으로도 판단이 어려우면 unknown으로 분류한다.
         - date는 YYYY-MM-DD, start_time/end_time은 HH:MM 형식으로 확실할 때만 채운다.
         - 모르는 값은 억지로 만들지 않고 None 또는 빈 리스트로 둔다.
 
