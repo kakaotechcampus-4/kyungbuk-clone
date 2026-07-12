@@ -1,0 +1,43 @@
+name: Notify convention violation
+# setup/22 §C-1. 학교 repo (kangwon-clone 등) 의 .github/workflows/notify-convention.yml 로 배포.
+# 학생 PR 의 base 브랜치가 '*/final' 이 아니면(예: main 오지정) → ops-alert 이슈 → MS Teams forward.
+#   배경: assign-reviewer 는 base=*/final 만 발화 → base=main PR 은 조용히 skip(reviewer·Discord·대시보드 누락).
+#         이 "조용한 누락" 을 감지해 운영진에 알린다.
+#
+# 얇은 YAML 원칙(2026-06-22): 판정은 전부 convention-check.sh (pr-pipeline 런타임 checkout=항상 최신).
+#   pull_request 이벤트는 PR 의 base 브랜치에서 YAML 을 읽으므로 — base=main PR 은 main 의 이 YAML 이
+#   실행되어 정상 감지된다. base=<user>/final(정상) PR 은 final 박제 YAML 이 실행되나 스크립트가 OK 로 no-op.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  issues: write  # ops-alert issue 발사용
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mapping data
+        uses: actions/checkout@v4
+        with:
+          repository: kakaotechcampus-4/pr-pipeline
+          token: ${{ secrets.AUTO_ASSIGN_PAT }}
+          path: mapping
+          sparse-checkout: |
+            data
+            workflows/scripts
+
+      - name: Convention check
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_ASSIGN_PAT }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          SOURCE_REPO: ${{ github.repository }}
+        run: bash mapping/workflows/scripts/convention-check.sh
