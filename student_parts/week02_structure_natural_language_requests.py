@@ -162,9 +162,10 @@ def week02_system_prompt() -> str:
         *week02_prompt_parts(),
         """
 # 최종 답변 규칙
-모든 응답은 StructuredRequestBatch 형식으로만 반환한다.
-요청이 하나뿐이어도 반드시 requests 목록에 StructuredRequest 하나를 담는다.
-personal_create_schedule tool 결과 JSON의 created_schedule 값을 읽어 StructuredRequest 필드를 채운다.
+- 모든 최종 응답은 StructuredRequestBatch 형식 하나만 반환한다.
+- 요청이 하나뿐이어도 반드시 requests 목록에 StructuredRequest 하나를 담는다.
+- tool을 호출한 경우 tool 결과 JSON(created_schedule)을 읽어 StructuredRequest 필드를 채운다.
+- tool 결과 JSON, 설명 텍스트, 중간 요약을 최종 응답에 포함하지 않는다. StructuredRequestBatch 외 어떤 JSON도 출력하지 않는다.
 """,
     ])
 
@@ -177,7 +178,6 @@ def week02_prompt_parts() -> list[str]:
         # TODO: Week 2 요청 구조화 agent 역할과 현재 날짜(current_app_date_iso()) 기준을 추가하세요.
         # TODO: 자연어를 StructuredRequest 필드(kind/title/date/start_time/end_time/members 등)로 구조화하도록 지시하세요.
         # TODO: Week 1 tool JSON을 받은 경우 다시 tool을 호출하지 않고 payload를 읽어 structured_response로 만들도록 지시하세요.
-        # TODO: Week 2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다고 명시하세요.
         f"""
 # Week 2 구조화 지시
 오늘 날짜는 {current_app_date_iso()} 이다. "오늘", "내일", "다음 주" 같은 상대 날짜 표현은 이 날짜를 기준으로 절대 날짜로 변환한다.
