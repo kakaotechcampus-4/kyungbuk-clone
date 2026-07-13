@@ -226,6 +226,7 @@ def week01_prompt_parts() -> list[str]:
 
     return [
         # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        CHAT_MEMORY_PROMPT,
         f"""
         오늘 날짜는 {current_app_date_iso()}이다.
         항상 한국어로 답변한다.
