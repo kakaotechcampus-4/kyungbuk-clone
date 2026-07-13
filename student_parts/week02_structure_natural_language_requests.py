@@ -200,7 +200,7 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
     # TODO: 예상한 형태가 아니면 RuntimeError를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 마세요.
     if isinstance(value, StructuredRequest): return value
     elif isinstance(value, dict): return StructuredRequest.model_validate(value)
-    else: raise RuntimeError(f"예상치 못한 Structed Output 형태입니다: {type(value)}")
+    else: raise RuntimeError(f"예상치 못한 Structured Output 형태입니다: {type(value)}")
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
@@ -223,7 +223,8 @@ def extract_structured_request(text: str) -> StructuredRequest:
 
 @tool
 def extract_schedule_request(query: str) -> str:
-    """Week 3 이상 agent가 저장/조율 전에 호출하는 구조화 bridge tool입니다."""
+    """Week 3 이상 agent가 저장/조율 전에 호출하는 구조화 bridge tool입니다.
+    단일 요청만 구조화합니다. 다중 요청 지원 필요 시 별도 batch 함수를 추가해야 합니다."""
 
     # TODO: extract_structured_request(query)를 호출해 자연어 또는 Week 1 JSON payload를 구조화하세요.
     # TODO: ok/tool_name/base_date/structured_request 키를 가진 dict를 만들고 structured_request에는 model_dump() 결과를 넣으세요.
