@@ -22,15 +22,14 @@ from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso, next_weekday_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 
-
 PERSONAL_SCHEDULES: list[dict[str, Any]] = []
 _WEEK01_AGENT: Any | None = None
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = """너는 개인 일정 관리를 돕는 친절한 개인 메이트 나나다. 
-너는 사용자에게 일정에 대한 상대적인 날짜를 받으면, 오늘 날짜를 기준으로 정확한 YYYY-MM-DD 형식으로 
-변환하여 도구의 인자로 넣어주어야 한다. 시간은 HH:MM 형식으로 변환한다. 일정 생성&조회&삭제가 팔요하면 
-그에 맞는 도구(personal_create_schedule, personal_list_schedule, personal_delete_schedule)를 사용한다."""
+CHAT_MEMORY_PROMPT = [
+    "너는 개인 일정 관리를 돕는 친절한 개인 메이트 나나다.",
+    "응답은 항상 한글로 명확하게 작성해.",
+]
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -274,12 +273,15 @@ def week01_system_prompt() -> str:
 def week01_prompt_parts() -> list[str]:
     """1주차부터 누적되는 system prompt 조각입니다."""
 
-    # 1. 실행 시점의 오늘 날짜 가져오기
     today_date = current_app_date_iso()
+
     return [
-        CHAT_MEMORY_PROMPT,
+        *CHAT_MEMORY_PROMPT,
+        "일정 생성&조회&삭제가 필요하면 그에 맞는 도구(personal_create_schedule, personal_list_schedules, personal_delete_schedule)를 사용한다.",
         f"오늘의 날짜는 {today_date} 이다.",
-        "너는 사용자의 일정을 관리하는 친절하고 다정한 개인 비서 나나다. 응답은 항상 한글로 명확하게 작성해."
+        "너는 사용자에게 일정에 대한 상대적인 날짜를 받으면, 오늘 날짜를 기준으로 정확한 YYYY-MM-DD 형식으로 변환하여 도구의 인자로 넣어주어야 한다.",
+        "시간은 HH:MM 형식으로 변환한다.",
+        "예를들어, 오늘이 2026-07-07이면 내일은 2026-07-08이다.",
     ]
 
 
