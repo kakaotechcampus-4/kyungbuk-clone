@@ -208,6 +208,9 @@ def week02_prompt_parts() -> list[str]:
             반환된 schedules 목록의 각 일정을 하나씩 StructuredRequest로 만들어 requests에 담는다.
             이때 kind는 해당 일정의 성격에 맞게(attendees가 있으면 group_schedule, 없으면 personal_schedule) 판단한다.
         """,
+        """
+            최종 답변에는 JSON(StructuredRequestBatch) 이외의 어떤 자연어 설명도 덧붙이지 않는다.
+        """,
     ]
 
 def build_week02_agent() -> object:
