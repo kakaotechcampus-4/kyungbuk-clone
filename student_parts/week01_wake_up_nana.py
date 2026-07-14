@@ -28,7 +28,7 @@ _WEEK01_AGENT: Any | None = None
 
 
 # TODO: 현재 채팅 기억 관련 공통 system prompt를 자유롭게 추가하세요.
-CHAT_MEMORY_PROMPT = f"오늘 날짜는 {current_app_date_iso()}입니다."
+CHAT_MEMORY_PROMPT = ""
 
 
 def join_system_prompt(parts: list[str]) -> str:
@@ -208,9 +208,9 @@ def personal_delete_schedule(schedule_id: str) -> str:
 
     PERSONAL_SCHEDULES[:] = temp
     after = len(PERSONAL_SCHEDULES)
-    deleted = before - after
+    deleted_count = before - after
 
-    return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted": deleted})
+    return _json({"ok": True, "tool_name": "personal_delete_schedule", "deleted_count": deleted_count})
 
 
 def week01_tools() -> list[Any]:
@@ -230,7 +230,7 @@ def week01_prompt_parts() -> list[str]:
 
     return [
         CHAT_MEMORY_PROMPT,
-        # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
+        f"오늘 날짜는 {current_app_date_iso()}입니다.",
     ]
 
 
