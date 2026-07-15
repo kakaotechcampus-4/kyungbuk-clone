@@ -45,7 +45,13 @@ WEEK03_TOOL_CALL_PROMPT = (
     "수정은 personal_update_saved_schedule에 schedule_id와 바꿀 필드만 넘기고, "
     "삭제는 먼저 personal_list_saved_schedules로 후보 schedule_id를 확인한 뒤 "
     "personal_delete_saved_schedules에 schedule_ids 또는 명시적인 날짜/제목/시간 필터를 넘긴다. "
-    "조건이 하나도 없는 전체 삭제는 사용자가 명확히 요청하지 않는 한 하지 않는다."
+    "조건이 하나도 없는 전체 삭제는 사용자가 명확히 요청하지 않는 한 하지 않는다. "
+    "매우 중요: personal_list_schedules와 personal_delete_schedule(단수형)은 Week 1의 "
+    "현재-대화 임시 메모리 전용 tool이므로, 앱 DB에 저장된 일정에는 절대 사용하지 않는다. "
+    "DB에 저장된 일정의 조회는 반드시 personal_list_saved_schedules를, 삭제는 반드시 "
+    "personal_delete_saved_schedules(복수형)를 사용한다. personal_list_saved_schedules가 돌려준 "
+    "schedule_id(sch_로 시작)는 SQLite 일정이므로, 그 삭제는 personal_delete_saved_schedules의 "
+    "schedule_ids에 담아 넘긴다."
 )
 
 
