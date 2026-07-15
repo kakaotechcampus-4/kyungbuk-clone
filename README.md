@@ -2,8 +2,6 @@
 
 Kanana 강의용 일정 Agent 실습 프로젝트의 Week 1 main 브랜치입니다. 학생들은 `student_parts/week01_wake_up_nana.py`를 열고, 파일 상단의 `[수강생 구현 가이드]`가 지정한 함수와 tool 본문을 직접 완성합니다.
 
-Week 1-6 전체 자료는 `week_1_to_6f` 브랜치에 보존되어 있습니다.
-
 처음 구조를 볼 때는 [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)를 먼저 읽고, 수업 흐름은 [CURRICULUM.md](CURRICULUM.md)를 기준으로 따라가면 됩니다.
 
 ## 실행
