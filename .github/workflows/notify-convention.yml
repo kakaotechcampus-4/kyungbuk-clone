@@ -41,3 +41,20 @@ jobs:
           PR_DRAFT: ${{ github.event.pull_request.draft }}
           SOURCE_REPO: ${{ github.repository }}
         run: bash mapping/workflows/scripts/convention-check.sh
+
+      - name: Notify ops on failure
+        # 인프라 실패(sparse checkout·PAT·스크립트 크래시) 감지용 — 위반 감지 자체는 스크립트가
+        # 정상 종료하며 자체 ops-alert 를 만들므로 여기 안 옴. PAT = forward-ops-alert 트리거 가능.
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_ASSIGN_PAT }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SRC: ${{ github.repository }}
+          PRN: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh issue create \
+            -R kakaotechcampus-4/pr-pipeline \
+            -t "[ops-alert] notify-convention 실패 ($SRC#$PRN)" \
+            -b "$(printf 'Convention check 실행 실패 — base=main 오지정 감지가 이 PR 에서 누락됐을 수 있음.\n\n- source: %s#%s\n- run: %s\n\nActions 로그의 ::error:: 확인. (PAT 만료/checkout 실패 등)' "$SRC" "$PRN" "$RUN_URL")" \
+            -l "ops-alert"
