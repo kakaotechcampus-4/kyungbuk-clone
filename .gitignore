@@ -4,8 +4,7 @@ __pycache__/
 
 .env
 .env.*
-
-
+!.env.example
 data/
 .pytest_cache/
 .mypy_cache/
@@ -22,9 +21,8 @@ venv/
 node_modules/
 dist/
 
-# Keep later-week student files local on the Week 1 main branch.
-student_parts/week03_build_nanas_logbook.py
-student_parts/week04_retrieve_nanas_memory.py1
+# Keep later-week student files local until their assignment is published.
+student_parts/week04_retrieve_nanas_memory.py
 student_parts/week05_load_kanas_past_conversations.py
 student_parts/week06_kanamate_decides_schedule.py
 
