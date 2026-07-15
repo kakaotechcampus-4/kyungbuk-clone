@@ -1,7 +1,12 @@
 name: Auto-assign reviewer
 # PRD-mvp.md §7 (FR-1 ~ FR-5)
-# 학생이 학교 repo 에 PR open → 매핑 CSV 조회 → 매칭 멘토 reviewer 자동 지정
-# 실패 시 pr-pipeline repo 에 ops-alert label issue 자동 생성
+# 학생이 학교 repo 에 PR open → 담당 멘토 reviewer 자동 지정. 실패 시 pr-pipeline 에 ops-alert issue.
+#
+# ⚠️ 이 YAML 은 학생 <user>/final 브랜치에 **박제**된다 (pull_request 는 base 브랜치의 워크플로 정의를
+#   실행). 따라서 여기엔 **판정 로직을 두지 않는다** — 전부 workflows/scripts/assign-reviewer.sh 에 있고,
+#   그 스크립트는 runtime sparse-checkout 이라 항상 pr-pipeline main 의 최신본이 돈다.
+#   → 사이클/게이트/코멘트 문구를 바꿔도 **154개 학생 브랜치 재전파 불요**. (CLAUDE.md 규칙)
+#   이 파일 자체(트리거·checkout·env 계약)를 바꿀 때만 setup/31 로 전파할 것.
 
 on:
   pull_request:
@@ -17,12 +22,12 @@ jobs:
     # 발화 조건:
     #  - draft 제외 ("리뷰 준비 안 됨" 상태에 reviewer 지정/Discord ping 방지)
     #  - 학생 PR 모양만 (base = "<user>/final"). 배포/운영 PR(→main)·base-template PR 은 skip
-    #    → 운영 PR 이 roster 미존재로 실패해 ops-alert 내는 노이즈 차단 (별도 flag 불요)
+    #    → 운영 PR 이 roster 미존재로 실패해 ops-alert 내는 노이즈 차단
     if: >-
       github.event.pull_request.draft == false &&
       endsWith(github.event.pull_request.base.ref, '/final')
     steps:
-      - name: Checkout mapping data
+      - name: Checkout mapping data + scripts
         uses: actions/checkout@v4
         with:
           repository: kakaotechcampus-4/pr-pipeline
@@ -30,68 +35,20 @@ jobs:
           path: mapping
           sparse-checkout: |
             data
+            workflows/scripts
 
       - name: Lookup mentor + assign reviewer
         env:
           GH_TOKEN: ${{ secrets.AUTO_ASSIGN_PAT }}
+          REPO: ${{ github.repository }}
           PR_NUM: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          REPO: ${{ github.repository }}
+          # PR 의 사이클 판정용 — 전역 '현재 사이클' 이 아니라 이 PR 자신의 주차/생성일로 멘토를 정한다.
+          # (week2 PR 을 reopen/지각 제출해도 원래 사이클1 멘토가 유지됨)
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_CREATED_AT: ${{ github.event.pull_request.created_at }}
           FEEDBACK_FORM_URL: ${{ vars.FEEDBACK_FORM_URL }}
-        run: |
-          set -euo pipefail
-
-          STUDENT_ROSTER=mapping/data/student-roster.csv
-          CYCLE_MAPPING=mapping/data/cycle-mapping.csv
-          FEEDBACK_STATUS=mapping/data/feedback-status.csv
-          CURRENT_CYCLE=$(tr -d '[:space:]' < mapping/data/current-cycle.txt)
-
-          if [ -z "$CURRENT_CYCLE" ]; then
-            echo "::error::current-cycle.txt is empty"
-            exit 1
-          fi
-
-          # 학생 → team_no (skip header + comment lines starting with #)
-          TEAM_NO=$(awk -F, -v s="$PR_AUTHOR" '
-            NR==1 || /^#/ {next}
-            $4==s {print $3; exit}
-          ' "$STUDENT_ROSTER")
-
-          if [ -z "$TEAM_NO" ]; then
-            echo "::error::student $PR_AUTHOR not in roster"
-            exit 1
-          fi
-
-          # ── 상호피드백 게이트 (ADR-0007) ──
-          # cleared_cycle = 이 학생이 멘토링 받을 수 있는 최고 window cycle (행 없으면 1).
-          # window(current-cycle) > cleared 이면 = 직전 사이클 상호피드백 미제출 → reviewer 미배정(NONE).
-          CLEARED=$(awk -F, -v u="$PR_AUTHOR" '
-            NR==1 || /^#/ {next}
-            $1==u {print $2; exit}
-          ' "$FEEDBACK_STATUS")
-          CLEARED=${CLEARED:-1}
-
-          if [ "$CURRENT_CYCLE" -gt "$CLEARED" ]; then
-            echo "gated: $PR_AUTHOR (window=$CURRENT_CYCLE > cleared=$CLEARED) — reviewer 미배정"
-            BODY="🔒 직전 사이클 **상호피드백 미제출**로 이번 사이클 멘토가 배정되지 않았습니다. 상호피드백 제출 후 **다음 PR** 부터 자동으로 멘토가 배정됩니다. (이미 올린 이 PR 은 제출 확인 후 **운영 매니저가 배정**해 드립니다.)"
-            [ -n "${FEEDBACK_FORM_URL:-}" ] && BODY="${BODY}"$'\n\n'"상호피드백 폼: ${FEEDBACK_FORM_URL}"
-            gh pr comment "$PR_NUM" -R "$REPO" --body "$BODY"
-            exit 0
-          fi
-
-          # (cycle, team_no) → mentor github username
-          MENTOR=$(awk -F, -v c="$CURRENT_CYCLE" -v t="$TEAM_NO" '
-            NR==1 || /^#/ {next}
-            $1==c && $2==t {print $3; exit}
-          ' "$CYCLE_MAPPING")
-
-          if [ -z "$MENTOR" ]; then
-            echo "::error::no mentor for cycle=$CURRENT_CYCLE team=$TEAM_NO"
-            exit 1
-          fi
-
-          echo "Assigning reviewer: $MENTOR (student=$PR_AUTHOR, cycle=$CURRENT_CYCLE, team=$TEAM_NO)"
-          gh pr edit "$PR_NUM" --add-reviewer "$MENTOR" -R "$REPO"
+        run: bash mapping/workflows/scripts/assign-reviewer.sh
 
       - name: Notify ops on failure
         if: failure()
@@ -116,7 +73,7 @@ jobs:
           가능한 원인:
           - 학생이 \`data/student-roster.csv\` 에 없음 (신규 입과 누락)
           - 매칭 멘토가 \`data/cycle-mapping.csv\` 에 없음 (사이클 row 누락)
-          - \`data/current-cycle.txt\` 잘못된 값
+          - PR 사이클 판정 실패 (\`data/cycle-windows.csv\` 구간 누락)
           - 멘토 GitHub username 오타 (gh API: "Reviewer is not a collaborator")
 
           처리: roster/매핑 수정 → PR 에 reviewer 수동 추가 → 이 이슈 close.
