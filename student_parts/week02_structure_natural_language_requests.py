@@ -160,13 +160,28 @@ class StructuredRequestBatch(BaseModel):
 def _coerce_structured_request(value: Any) -> StructuredRequest:
     """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
 
-    ...
+    if isinstance(value,StructuredRequest) :
+        return value
+    elif isinstance(value,dict):
+        return StructuredRequest.model_validate(value)
+    else :
+        raise TypeError("dict/StructuredRequest type만이 사용되야합니다.")
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
     """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
 
-    ...
+    structured_model = chat_model().with_structured_output(
+        StructuredRequest,
+        method = "function_calling"
+    )
+
+    result = structured_model.invoke([
+        {"role": "system", "content": week02_system_prompt()},
+        {"role": "user", "content" : text}
+    ])
+
+    return _coerce_structured_request(result)
 
 
 @tool
