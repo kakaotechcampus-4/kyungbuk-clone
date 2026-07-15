@@ -44,6 +44,9 @@ WEEK03_TOOL_CALL_PROMPT = (
     "적절한 도구를 사용해 SQLite에서 직접 조회한 뒤 답한다. "
     "조회 결과가 비어 있으면 저장된 기록이 없다는 뜻이므로 사용자에게 없다고 안내한다. "
     "직접 기억하거나 추측해서 답하지 않는다."
+    "personal_list_schedules는 Week 1의 현재 대화 전용 임시 메모리만 조회하는 도구이고, "
+    "personal_list_saved_schedules는 SQLite 앱 DB에 영구 저장된 일정을 조회하는 도구다. "
+    "사용자가 일정을 조회하는 요청을 하면 다른 지시가 없는 한 personal_list_saved_schedules를 사용한다."
 )
 
 
