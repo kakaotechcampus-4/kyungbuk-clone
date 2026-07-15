@@ -27,11 +27,23 @@ from student_parts.week02_structure_natural_language_requests import (
 
 _WEEK03_AGENT: Any | None = None
 
-# TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
-SQLITE_MEMORY_PROMPT = ""
 
-# TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
-WEEK03_TOOL_CALL_PROMPT = ""
+SQLITE_MEMORY_PROMPT = (
+    "너는 SQLite 앱 DB에 저장된 일정/할 일/알림을 가지고 있다. "
+    "이 기록은 대화가 새로 시작되거나 앱이 재시작되어도 그대로 남아 있으므로, "
+    "사용자가 예전에 저장된 일정이나 요청을 물어보면 기억이 아니라 저장된 tool로 조회해서 답해야 한다."
+)
+
+WEEK03_TOOL_CALL_PROMPT = (
+    "사용자의 자연어 요청을 저장할 때는 다음 순서를 따른다. "
+    "1) extract_schedule_request로 요청을 구조화한다. "
+    "2) 구조화된 kind/title/date/start_time/end_time/members/priority/reason/original_text 값을 "
+    "save_structured_request tool의 인자로 그대로 전달해 저장한다. "
+    "3) 사용자가 저장된 일정이나 요청을 조회하고 싶어 하면 "
+    "personal_list_saved_schedules, list_saved_requests, get_saved_request 중 "
+    "적절한 도구를 사용해 SQLite에서 직접 조회한 뒤 답한다. "
+    "직접 기억하거나 추측해서 답하지 않는다."
+)
 
 
 # [3주차 수강생 구현 가이드]
@@ -479,10 +491,9 @@ def week03_prompt_parts() -> list[str]:
 
     return [
         *week02_prompt_parts(),
-        # TODO: Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가하세요.
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
-        # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
+        f"오늘 날짜는 {current_app_date_iso()}이다.",
     ]
 
 
