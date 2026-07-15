@@ -42,6 +42,7 @@ WEEK03_TOOL_CALL_PROMPT = (
     "3) 사용자가 저장된 일정이나 요청을 조회하고 싶어 하면 "
     "personal_list_saved_schedules, list_saved_requests, get_saved_request 중 "
     "적절한 도구를 사용해 SQLite에서 직접 조회한 뒤 답한다. "
+    "조회 결과가 비어 있으면 저장된 기록이 없다는 뜻이므로 사용자에게 없다고 안내한다. "
     "직접 기억하거나 추측해서 답하지 않는다."
 )
 
@@ -504,8 +505,11 @@ def build_week03_agent() -> object:
         raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
     global _WEEK03_AGENT
     if _WEEK03_AGENT is None:
-        # TODO: chat_model(), week03_tools(), week03_system_prompt()로 Week 3 LangChain agent를 생성하세요.
-        ...
+        _WEEK03_AGENT = create_agent(
+            model=chat_model(),
+            tools=week03_tools(),
+            system_prompt=week03_system_prompt(),
+        )
     return _WEEK03_AGENT
 
 
