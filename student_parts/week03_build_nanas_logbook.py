@@ -301,7 +301,33 @@ def _delete_saved_schedules(
 
     # TODO: 삭제 조건이 없으면 거부하고, delete_all 또는 명시 필터에 맞는 store 메서드를 호출하세요.
     # TODO: deleted_count, filters, deleted가 포함된 tool 결과 dict를 반환하세요.
-    ...
+    condition = any([schedule_ids,date,title,start_time,time_unspecified,delete_all])
+    if not condition : 
+        return None
+    
+    deleted = None
+
+    if delete_all :
+        deleted = store().delete_all_schedules();    
+    else :
+        deleted = store().delete_schedules_by_filter(schedule_ids,date,title,start_time,time_unspecified)
+    
+    return tool_result(
+        tool_name="personal_delete_saved_schedules",
+    ok=True,
+    deleted_count = len(deleted),
+    filter = {
+        schedule_ids : schedule_ids,
+        date : date,
+        title : title,
+        start_time : start_time,
+        time_unspecified : time_unspecified,
+        delete_all : delete_all
+    },
+    deleted = deleted
+    )
+
+    
 
 
 def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
@@ -455,8 +481,9 @@ def personal_delete_saved_schedules(
     """Nana가 고른 일정 ID나 날짜/제목/시간 필터로 저장 일정을 삭제합니다."""
 
     # TODO: _delete_saved_schedules(...)에 삭제 조건을 전달하고 결과를 JSON 문자열로 반환하세요.
-    ...
+    result = _delete_saved_schedules(_store(),schedule_ids,date,title,start_time,time_unspecified,delete_all)
 
+    return json_payload(result)
 
 def week03_tools() -> list[Any]:
     """Week 1 도구, Week 2 구조화 helper, SQLite 저장/조회/삭제 도구를 조립합니다."""
