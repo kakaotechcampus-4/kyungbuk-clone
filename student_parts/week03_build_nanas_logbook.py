@@ -397,8 +397,16 @@ def personal_list_saved_schedules(
 
     # TODO: 기본 kind를 personal_schedule로 정하고 날짜/종류/limit 필터로 저장 일정을 조회하세요.
     # TODO: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
-    ...
 
+    schedules = _store().list_schedules(limit=limit,kind=kind or "personal_schedule",date_from=date_from,date_to=date_to)
+    
+    return json_payload(tool_result(tool_name="personal_list_saved_schedules",ok=True,filters={
+        "kind" : kind,
+        "date_from" : date_from,
+        "date_to" : date_to,
+        "limit" : limit
+    },
+    schedules=schedules))
 
 def delete_saved_schedules_dict(
     schedule_ids: list[str] | None = None,
