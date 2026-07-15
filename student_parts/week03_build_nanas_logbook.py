@@ -372,8 +372,9 @@ def list_saved_requests(
     """SQLite에 저장된 구조화 요청 목록을 조회합니다."""
 
     # TODO: kind/date_from/date_to 필터로 저장 요청을 조회하고 rows를 JSON 문자열로 반환하세요.
-    ...
+    rows = _store().list_saved_requests(kind,date_from,date_to)
 
+    return json_payload(tool_result(tool_name = "list_saved_requests",ok=True,**rows))
 
 @tool(args_schema=SavedRequestGetInput)
 def get_saved_request(request_id: str) -> str:
