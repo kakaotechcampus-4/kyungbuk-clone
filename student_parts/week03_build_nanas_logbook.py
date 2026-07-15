@@ -343,8 +343,25 @@ def save_structured_request(
 
     # TODO: 검증된 함수 인자를 저장 dict로 만들고 None 값을 제외한 뒤 SQLite에 저장하세요.
     # TODO: ok/tool_name과 저장 결과가 포함된 JSON 문자열을 반환하세요.
-    ...
+    
+    dic = {
+        kind : kind,
+        title : title,
+        date : date,
+        start_time : start_time,
+        end_time : end_time,
+        members : members,
+        priority : priority,
+        reason : reason,
+        original_text : original_text,
+        source_schedule_id : source_schedule_id
+    }
 
+    dic = {k : v for k,v in dic.items() if v is not None}
+
+    result = _store().save_structured_request(dic)
+
+    return json_payload(tool_result(tool_name="save_structured_request",ok=True,**dic))
 
 @tool(args_schema=SavedRequestListInput)
 def list_saved_requests(
