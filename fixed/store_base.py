@@ -38,7 +38,7 @@ def decode_schedule_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 SCHEDULE_COLUMNS = (
-    "schedule_id, request_id, owner, title, date, start_time, end_time, "
+    "schedule_id, request_id, schedule_type, owner, title, date, start_time, end_time, "
     "attendees_json, source, created_at"
 )
 SCHEDULE_COLUMNS_WITH_KIND = (

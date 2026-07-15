@@ -338,34 +338,10 @@ def personal_create_schedule(
 
 
 @tool(args_schema=SaveStructuredRequestInput)
-def save_structured_request(
-    kind: RequestKind = "unknown",
-    title: str | None = None,
-    date: str | None = None,
-    start_time: str | None = None,
-    end_time: str | None = None,
-    members: list[str] | None = None,
-    priority: str | None = None,
-    reason: str | None = None,
-    original_text: str = "",
-    source_schedule_id: str | None = None,
-) -> str:
+def save_structured_request(**kwargs: Any) -> str:
     """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
 
-    candidate = {
-        "kind": kind,
-        "title": title,
-        "date": date,
-        "start_time": start_time,
-        "end_time": end_time,
-        "members": members,
-        "priority": priority,
-        "reason": reason,
-        "original_text": original_text,
-        "source_schedule_id": source_schedule_id,
-    }
-    payload = {key: value for key, value in candidate.items() if value is not None}
-
+    payload = SaveStructuredRequestInput.model_validate(kwargs).model_dump()
     saved = _store().save_structured_request(payload)
     return json_payload(tool_result("save_structured_request", **saved))
 
