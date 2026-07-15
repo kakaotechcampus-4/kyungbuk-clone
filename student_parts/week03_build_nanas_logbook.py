@@ -29,8 +29,11 @@ _WEEK03_AGENT: Any | None = None
 
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
 SQLITE_MEMORY_PROMPT = """
-- 사용자가 '내 일정 보여줘', '저번에 저장한 거 뭐 있어?' 같은 질문하면 대화 기록에 없어도 조회 tool을 이용해서 DB를 직접 확인하세요." \
+- 사용자가 '내 일정 보여줘', '저번에 저장한 거 뭐 있어?' 같은 질문하면 대화 기록에 없어도 조회 tool을 이용해서 DB를 직접 확인하세요.
 - 새 대화(세션) 이어도 이전에 저장한 일정/할 일/알림이 그대로 남아있으니 조회 tool을 먼저 사용하세요.
+- 일정을 조회하는 tool이 여러 개 보이면, 이번 대화에서만 유지되는 임시 메모리를 보는 tool이 아니라
+  앱 DB(SQLite)에 영구 저장된 내용을 조회하는 tool을 사용하세요. 임시 메모리 조회 tool은 대화가
+  끝나면 사라지는 내용만 보여주므로 저장된 일정 확인에는 쓰지 않습니다.
 """
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
@@ -558,8 +561,15 @@ def personal_delete_saved_schedules(
 def week03_tools() -> list[Any]:
     """Week 1 도구, Week 2 구조화 helper, SQLite 저장/조회/삭제 도구를 조립합니다."""
 
+    # personal_list_schedules/personal_delete_schedule은 이번 대화의 임시 메모리만 조회/삭제하므로
+    # SQLite 기반 personal_list_saved_schedules/personal_delete_saved_schedules와 목적이 겹친다.
+    # 두 tool이 동시에 노출되면 LLM이 docstring 문구가 더 일치하는 임시 메모리 tool을 고를 수 있으므로,
+    # Week 1 버전은 base_tools에서 아예 제외한다.
+    DROPPED_WEEK1_TOOLS = {"personal_list_schedules", "personal_delete_schedule"}
     base_tools = [
-        personal_create_schedule if _tool_name(item) == "personal_create_schedule" else item for item in week01_tools()
+        personal_create_schedule if _tool_name(item) == "personal_create_schedule" else item
+        for item in week01_tools()
+        if _tool_name(item) not in DROPPED_WEEK1_TOOLS
     ]
     return [
         *base_tools,
