@@ -28,10 +28,21 @@ from student_parts.week02_structure_natural_language_requests import (
 _WEEK03_AGENT: Any | None = None
 
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
-SQLITE_MEMORY_PROMPT = ""
+SQLITE_MEMORY_PROMPT = (
+    "Week 3부터 저장된 일정/할 일/알림/요청은 현재 대화가 끝나도 앱 SQLite DB에 남는다. "
+    "이전 대화나 앱을 재시작하기 전에 저장한 내용도 새 대화에서 그대로 조회할 수 있으므로, "
+    "'예전에 말한 그거' 같은 요청을 받으면 먼저 personal_list_saved_schedules 또는 list_saved_requests로 "
+    "저장된 기록을 조회한 뒤 답한다. 대화 맥락에 없다고 모른다고 답하지 않는다."
+)
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
-WEEK03_TOOL_CALL_PROMPT = ""
+WEEK03_TOOL_CALL_PROMPT = (
+    "일정/할 일/알림을 저장해 달라는 요청이면 먼저 extract_schedule_request로 자연어를 구조화하고, "
+    "그 결과의 kind/title/date/start_time/end_time/members/priority/reason/original_text 필드를 그대로 "
+    "save_structured_request 인자로 전달해 SQLite에 저장한다. 구조화만 하고 저장 tool을 호출하지 않은 채 "
+    "끝내지 않는다. 저장된 것을 조회하는 요청이면 personal_list_saved_schedules(내 일정)나 "
+    "list_saved_requests/get_saved_request(원본 요청 기록)를 사용한다."
+)
 
 
 # [3주차 수강생 구현 가이드]
@@ -307,8 +318,16 @@ def _delete_saved_schedules(
 def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
-    # TODO: Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
-    ...
+    return SaveStructuredRequestInput(
+        kind="personal_schedule",
+        title=schedule.get("title"),
+        date=schedule.get("date"),
+        start_time=schedule.get("start_time"),
+        end_time=schedule.get("end_time"),
+        members=schedule.get("attendees") or [],
+        original_text=schedule.get("title") or "",
+        source_schedule_id=schedule.get("id"),
+    )
 
 
 @tool("personal_create_schedule")
@@ -321,9 +340,28 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
 
-    # TODO: Week 1 임시 일정 tool을 호출한 뒤 결과를 StructuredRequest로 바꿔 SQLite에도 저장하세요.
-    # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
-    ...
+    created = json.loads(
+        week01_personal_create_schedule.invoke(
+            {
+                "title": title,
+                "date": date,
+                "start_time": start_time,
+                "end_time": end_time,
+                "attendees": attendees or [],
+            }
+        )
+    )
+    schedule = created["created_schedule"]
+    save_input = structured_request_from_week01_schedule(schedule)
+    payload = {key: value for key, value in save_input.model_dump().items() if value is not None}
+    sqlite_save = _store().save_structured_request(payload)
+    return json_payload(
+        tool_result(
+            "personal_create_schedule",
+            structured_request=save_input.model_dump(),
+            sqlite_save=sqlite_save,
+        )
+    )
 
 
 @tool(args_schema=SaveStructuredRequestInput)
@@ -389,9 +427,6 @@ def personal_list_saved_schedules(
 ) -> str:
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
-    # TODO: 기본 kind를 personal_schedule로 정하고 날짜/종류/limit 필터로 저장 일정을 조회하세
-요.
-    # TODO: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
     effective_kind = kind or "personal_schedule"
     schedules = _store().list_schedules(limit=limit, kind=effective_kind, date_from=date_from, date_to=date_to)
     filters = {"kind": effective_kind, "date_from": date_from, "date_to": date_to, "limit": limit}
@@ -477,6 +512,11 @@ def week03_prompt_parts() -> list[str]:
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
+        f"너는 SQLite 기록장을 갖춘 3주차 Nana다. 오늘은 {current_app_date_iso()}이다. "
+        "일정 생성은 personal_create_schedule(Week 1 호환) 대신 "
+        "extract_schedule_request → save_structured_request 흐름을 우선 사용한다. "
+        "personal_create_schedule은 Week 1과의 호환을 위해서만 존재하며, 명시적으로 요청되지 않는 한 "
+        "먼저 선택하지 않는다. Week 3에서는 아직 저장 일정 수정/삭제, RAG, 외부 멤버 일정 조율은 다루지 않는다.",
     ]
 
 
@@ -487,8 +527,11 @@ def build_week03_agent() -> object:
         raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
     global _WEEK03_AGENT
     if _WEEK03_AGENT is None:
-        # TODO: chat_model(), week03_tools(), week03_system_prompt()로 Week 3 LangChain agent를 생성하세요.
-        ...
+        _WEEK03_AGENT = create_agent(
+            model=chat_model(),
+            tools=week03_tools(),
+            system_prompt=week03_system_prompt(),
+        )
     return _WEEK03_AGENT
 
 
