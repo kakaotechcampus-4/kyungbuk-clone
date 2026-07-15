@@ -220,7 +220,12 @@ class SaveStructuredRequestInput(StructuredRequest):
     def unwrap_legacy_payload(cls, value: Any) -> Any:
         """예전 trace의 payload wrapper만 짧게 풀고 실제 검증은 필드 스키마에 맡깁니다."""
 
-        # TODO: StructuredRequest와 예전 payload/structured_request wrapper를 저장 입력 형태로 정규화하세요.
+        if isinstance(value, StructuredRequest):
+            return value.model_dump()
+
+        if isinstance(value, dict) and "structured_request" in value:
+            return value["structured_request"]
+
         return value
 
 
@@ -228,7 +233,14 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
     """저장 입력을 SaveStructuredRequestInput 하나로 모읍니다."""
 
     # TODO: dict/JSON/자연어/StructuredRequest 입력을 SaveStructuredRequestInput으로 검증하고 정규화하세요.
-    ...
+    if isinstance(value, str):
+        try :
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = extract_schedule_request(value).model_dump()
+        return SaveStructuredRequestInput.model_validate(parsed)
+    
+    return SaveStructuredRequestInput.model_validate(value)
 
 
 def save_structured_request_payload(
@@ -239,7 +251,9 @@ def save_structured_request_payload(
     """검증된 structured request를 앱 DB에 저장합니다."""
 
     # TODO: 입력을 검증한 뒤 AppSQLiteStore.save_structured_request(...)로 저장하고 tool 결과를 반환하세요.
-    ...
+    result = save_structured_request(request,_store())
+
+    return tool_result(tool_name="")
 
 
 class SavedRequestListInput(BaseModel):
@@ -350,6 +364,7 @@ def personal_create_schedule(
     # TODO: Week 1 임시 일정 tool을 호출한 뒤 결과를 StructuredRequest로 바꿔 SQLite에도 저장하세요.
     # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
     ...
+    
 
 
 @tool(args_schema=SaveStructuredRequestInput)
