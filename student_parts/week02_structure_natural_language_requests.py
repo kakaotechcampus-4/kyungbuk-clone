@@ -147,20 +147,43 @@ class StructuredRequestBatch(BaseModel):
 def _coerce_structured_request(value: Any) -> StructuredRequest:
     """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
 
-    ...
+    if isinstance(value, StructuredRequest):
+        return value
+    if isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
+    raise RuntimeError(
+        "StructuredRequest 또는 dict 형태의 structured output이 필요합니다. "
+        f"현재 타입: {type(value).__name__}"
+    )
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
     """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
 
-    ...
+    structured_model = chat_model().with_structured_output(StructuredRequest, method="function_calling")
+    result = structured_model.invoke(
+        [
+            {"role": "system", "content": join_system_prompt(week02_prompt_parts())},
+            {"role": "user", "content": text},
+        ]
+    )
+    return _coerce_structured_request(result)
 
 
 @tool
 def extract_schedule_request(query: str) -> str:
     """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
 
-    ...
+    structured = extract_structured_request(query)
+    return json.dumps(
+        {
+            "ok": True,
+            "tool_name": "extract_schedule_request",
+            "base_date": current_app_date_iso(),
+            "structured_request": structured.model_dump(),
+        },
+        ensure_ascii=False,
+    )
 
 
 def week02_tools() -> list[Any]:
@@ -198,6 +221,10 @@ def week02_prompt_parts() -> list[str]:
         "회의, 약속, 병원 예약처럼 특정 시각에 실제로 만나거나 참석해야 하는 이벤트에만 "
         "personal_create_schedule을 호출한다. '장보기', '청소하기', '빨래하기'처럼 시간 표현이 있어도 "
         "완료해야 할 작업(chore) 성격이면 kind는 todo이고, tool을 호출하지 않는다.",
+        "'3시에 약 먹으라고 알려줘', '내일 9시에 깨워줘'처럼 특정 시각에 스스로에게 알림만 받으면 되는 "
+        "요청은 kind를 reminder로 분류한다. 완료 여부가 중요한 작업(장보기, 청소 등)은 todo, 만나거나 "
+        "참석해야 하는 이벤트는 personal_schedule/group_schedule, 시각을 못 놓치도록 알려주기만 하면 "
+        "되는 요청은 reminder로 구분한다.",
         "사용자의 자연어 요청이나 Week 1 tool이 반환한 JSON을 kind/title/date/start_time/end_time/"
         "members/priority/reason/original_text 필드로 구조화한다.",
         "Week 1 tool(personal_create_schedule 등) 결과 JSON을 이미 받았다면 같은 tool을 다시 호출하지 않고, "

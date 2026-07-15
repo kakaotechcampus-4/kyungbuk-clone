@@ -9,6 +9,7 @@ from student_parts.week01_wake_up_nana import PERSONAL_SCHEDULES, week01_prompt_
 from student_parts.week02_structure_natural_language_requests import (
     StructuredRequest,
     StructuredRequestBatch,
+    _coerce_structured_request,
     build_week02_agent,
     build_week_agent,
     week02_prompt_parts,
@@ -157,6 +158,25 @@ def test_structured_request_time_fields_accept_valid_format():
     assert request.end_time == "16:00"
 
 
+# --- _coerce_structured_request (Week 3 사전 작업으로 구현됨) ---
+
+def test_coerce_structured_request_passes_through_instance():
+    request = StructuredRequest(kind="todo")
+    assert _coerce_structured_request(request) is request
+
+
+def test_coerce_structured_request_validates_dict():
+    coerced = _coerce_structured_request({"kind": "personal_schedule", "title": "회의"})
+    assert isinstance(coerced, StructuredRequest)
+    assert coerced.kind == "personal_schedule"
+    assert coerced.title == "회의"
+
+
+def test_coerce_structured_request_raises_on_invalid_type():
+    with pytest.raises(RuntimeError):
+        _coerce_structured_request(["kind", "todo"])
+
+
 # --- StructuredRequestBatch ---
 
 def test_structured_request_batch_requests_defaults_to_empty_list():
@@ -212,6 +232,12 @@ def test_week02_prompt_parts_forbids_sqlite_rag_and_external_coordination():
 def test_week02_prompt_parts_instructs_reuse_of_tool_json():
     combined = "\n".join(week02_prompt_parts())
     assert "다시 호출하지 않" in combined
+
+
+def test_week02_prompt_parts_distinguishes_reminder_from_todo():
+    combined = "\n".join(week02_prompt_parts())
+    assert "reminder" in combined
+    assert "알려" in combined
 
 
 def test_week02_system_prompt_includes_prompt_parts_text():
