@@ -82,7 +82,6 @@ class AppSQLiteStore(SQLiteFileStore):
                     members_json TEXT NOT NULL DEFAULT '[]',
                     priority TEXT,
                     reason TEXT,
-                    payload_json TEXT NOT NULL,
                     raw_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
@@ -90,7 +89,6 @@ class AppSQLiteStore(SQLiteFileStore):
                 CREATE TABLE IF NOT EXISTS schedules (
                     schedule_id TEXT PRIMARY KEY,
                     request_id TEXT,
-                    schedule_type TEXT NOT NULL,
                     owner TEXT NOT NULL DEFAULT 'me',
                     title TEXT NOT NULL,
                     date TEXT,
@@ -119,27 +117,6 @@ class AppSQLiteStore(SQLiteFileStore):
                     reason TEXT,
                     created_at TEXT NOT NULL
                 );
-                """
-            )
-            request_columns = {row["name"] for row in conn.execute("PRAGMA table_info(structured_requests)")}
-            if "payload_json" not in request_columns:
-                conn.execute("ALTER TABLE structured_requests ADD COLUMN payload_json TEXT")
-
-            schedule_columns = {row["name"] for row in conn.execute("PRAGMA table_info(schedules)")}
-            if "schedule_type" not in schedule_columns:
-                conn.execute("ALTER TABLE schedules ADD COLUMN schedule_type TEXT")
-
-            # 기존 앱 DB는 raw_json과 request_id 연결만 갖고 있으므로, 새 명세 컬럼을
-            # 추가한 뒤 같은 원본 payload와 요청 종류를 채워 이전 기록도 계속 조회되게 합니다.
-            conn.execute("UPDATE structured_requests SET payload_json = raw_json WHERE payload_json IS NULL")
-            conn.execute(
-                """
-                UPDATE schedules
-                SET schedule_type = COALESCE(
-                    (SELECT kind FROM structured_requests WHERE request_id = schedules.request_id),
-                    'unknown'
-                )
-                WHERE schedule_type IS NULL
                 """
             )
 
@@ -348,12 +325,11 @@ class AppSQLiteStore(SQLiteFileStore):
                         "shared_sync": None,
                         "already_exists": True,
                     }
-            payload_json = json.dumps(payload, ensure_ascii=False)
             conn.execute(
                 """
                 INSERT INTO structured_requests
-                    (request_id, kind, title, date, start_time, end_time, members_json, priority, reason, payload_json, raw_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (request_id, kind, title, date, start_time, end_time, members_json, priority, reason, raw_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     request_id,
@@ -365,8 +341,7 @@ class AppSQLiteStore(SQLiteFileStore):
                     json.dumps(members, ensure_ascii=False),
                     priority,
                     reason,
-                    payload_json,
-                    payload_json,
+                    json.dumps(payload, ensure_ascii=False),
                     created_at,
                 ),
             )
@@ -379,13 +354,12 @@ class AppSQLiteStore(SQLiteFileStore):
                 conn.execute(
                     """
                     INSERT INTO schedules
-                        (schedule_id, request_id, schedule_type, owner, title, date, start_time, end_time, attendees_json, source, created_at)
-                    VALUES (?, ?, ?, 'me', ?, ?, ?, ?, ?, 'structured_output', ?)
+                        (schedule_id, request_id, owner, title, date, start_time, end_time, attendees_json, source, created_at)
+                    VALUES (?, ?, 'me', ?, ?, ?, ?, ?, 'structured_output', ?)
                     """,
                     (
                         schedule_id,
                         request_id,
-                        kind,
                         title,
                         date,
                         start_time,
@@ -399,7 +373,6 @@ class AppSQLiteStore(SQLiteFileStore):
                     schedule_for_shared = {
                         "schedule_id": schedule_id,
                         "request_id": request_id,
-                        "schedule_type": kind,
                         "owner": "me",
                         "title": title,
                         "date": date,
