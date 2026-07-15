@@ -105,7 +105,7 @@ class StructuredRequest(BaseModel):
     # TODO: priority/reason 필드를 str | None 타입으로 선언하고 기본값은 None으로 두세요.
     # TODO: original_text 필드를 str 타입으로 선언하고 기본값은 ""로 두세요.
     # TODO: 각 필드에는 LLM structured output이 이해할 수 있도록 한국어 description을 달아주세요.
-    kind: RequestKind = Field(description="요청 타입")
+    kind: RequestKind = Field(description="요청 타입, personal_schedule=혼자 하는 스케쥴, group_schedule=두명 이상 하는 스케쥴, todo=해야 할 일, reminder=기억해야 하는 것, unknown=그 외의 요청")
     title: str | None = Field(description="일정 제목")
     date: str | None = Field(description="YYYY-MM-DD")
     start_time: str | None = Field(description="HH:MM")
