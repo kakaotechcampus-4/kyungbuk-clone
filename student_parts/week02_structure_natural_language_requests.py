@@ -157,7 +157,7 @@ class StructuredRequestBatch(BaseModel):
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
-    """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
+    """LangChain structured output을 StructuredRequest로 검증해 반환합니다."""
 
     if isinstance(value, StructuredRequest):
         return value
@@ -167,7 +167,7 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
-    """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
+    """Week 3 저장 전에 자연어 또는 tool JSON을 단건 구조로 변환합니다."""
 
     structured_llm = chat_model().with_structured_output(StructuredRequest, method="function_calling")
     result = structured_llm.invoke([
@@ -179,7 +179,7 @@ def extract_structured_request(text: str) -> StructuredRequest:
 
 @tool
 def extract_schedule_request(query: str) -> str:
-    """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
+    """Week 3 저장 흐름에 전달할 구조화 요청 JSON을 만듭니다."""
 
     request = extract_structured_request(query)
     return json.dumps(
