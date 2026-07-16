@@ -41,7 +41,10 @@ WEEK03_TOOL_CALL_PROMPT = (
     "자연어 문자열이나 ok/tool_name/base_date 같은 wrapper는 save_structured_request 인자로 넘기지 않는다. "
     "수정·삭제 전에는 personal_list_saved_schedules로 대상 일정과 schedule_id를 먼저 확인하고, "
     "수정은 personal_update_saved_schedule, 삭제는 personal_delete_saved_schedules에 schedule_ids나 "
-    "명시 필터(date/title/start_time)를 넘겨 처리한다. 조건 없는 전체 삭제는 하지 않는다."
+    "명시 필터(date/title/start_time)를 넘겨 처리한다. 조건 없는 전체 삭제는 하지 않는다. "
+    "personal_list_saved_schedules는 기본으로 개인 일정(personal_schedule)만 보여준다. "
+    "참석자가 있는 회의 등 그룹 일정을 조회·수정·삭제해야 하면 personal_list_saved_schedules(kind='group_schedule')로 "
+    "그룹 일정 후보를 먼저 확인한 뒤 schedule_id를 넘겨 처리한다."
 )
 
 
@@ -351,6 +354,9 @@ def _delete_saved_schedules(
         "time_unspecified": time_unspecified,
         "delete_all": delete_all,
     }
+    # store.delete_schedules_by_filter도 조건이 없으면 조용히 []를 돌려주지만,
+    # 그건 "아무것도 안 지웠다"일 뿐 agent에게 이유를 알려주지 못한다.
+    # 이 tool 가드의 책임은 삭제를 막는 것보다 ok=False와 사유를 agent에게 돌려주는 것이다.
     has_condition = delete_all or bool(schedule_ids) or any([date, title, start_time, time_unspecified])
     if not has_condition:
         return tool_result(
@@ -423,6 +429,18 @@ def personal_create_schedule(
         )
     )
     schedule = created.get("created_schedule", {})
+    # 이중 쓰기(Week 1 임시 생성 → SQLite 저장)에서 앞 단계가 실패했거나 빈 결과면
+    # 껍데기 일정을 DB에 저장하지 않고 여기서 멈춘다. 뒤 단계로 흘려보내면
+    # source_schedule_id 없는 빈 row가 기록장에 남는다.
+    if not created.get("ok", True) or not schedule:
+        return json_payload(
+            tool_result(
+                "personal_create_schedule",
+                ok=False,
+                created_schedule=schedule,
+                error="Week 1 임시 일정 생성 결과가 비어 있어 SQLite 저장을 건너뜁니다.",
+            )
+        )
     save_input = structured_request_from_week01_schedule(schedule)
     sqlite_save = save_structured_request_payload(save_input)
     payload = tool_result(
@@ -449,21 +467,22 @@ def save_structured_request(
 ) -> str:
     """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
 
-    payload = {
-        "kind": kind,
-        "title": title,
-        "date": date,
-        "start_time": start_time,
-        "end_time": end_time,
-        "members": members or [],
-        "priority": priority,
-        "reason": reason,
-        "original_text": original_text,
-        "source_schedule_id": source_schedule_id,
-    }
-    payload = {key: value for key, value in payload.items() if value is not None}
-    result = _store().save_structured_request(payload)
-    return json_payload(tool_result("save_structured_request", **result))
+    # args_schema가 이미 검증한 값을 SaveStructuredRequestInput 하나로 모아
+    # 저장 규칙(None 제거 후 store 위임)이 있는 save_structured_request_payload로 넘긴다.
+    # "None 빼고 store에 넘긴다"는 규칙을 이 tool과 helper가 각자 갖지 않게 한 곳으로 모은다.
+    save_input = SaveStructuredRequestInput(
+        kind=kind,
+        title=title,
+        date=date,
+        start_time=start_time,
+        end_time=end_time,
+        members=members or [],
+        priority=priority,
+        reason=reason,
+        original_text=original_text,
+        source_schedule_id=source_schedule_id,
+    )
+    return json_payload(save_structured_request_payload(save_input))
 
 
 @tool(args_schema=SavedRequestListInput)
