@@ -274,7 +274,7 @@ def save_structured_request_payload(
 
     validated = _save_input_from(request)
     saved = (store or _store()).save_structured_request(validated.model_dump(exclude_none=True))
-    return tool_result("save_structured_request", saved=saved)
+    return tool_result("save_structured_request", **saved)
 
 
 class SavedRequestListInput(BaseModel):
@@ -387,7 +387,6 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
         start_time=schedule.get("start_time"),
         end_time=schedule.get("end_time"),
         members=schedule.get("attendees") or [],
-        original_text=json.dumps(schedule, ensure_ascii=False),
         source_schedule_id=schedule.get("id"),
     )
 
@@ -416,7 +415,7 @@ def personal_create_schedule(
     return json_payload({
         **created,
         "structured_request": structured_request.model_dump(),
-        "sqlite_save": sqlite_save["saved"],
+        "sqlite_save": sqlite_save,
     })
 
 
@@ -450,7 +449,7 @@ def save_structured_request(
     saved = _store().save_structured_request(
         {key: value for key, value in payload.items() if value is not None}
     )
-    return json_payload(tool_result("save_structured_request", saved=saved))
+    return json_payload(tool_result("save_structured_request", **saved))
 
 
 @tool(args_schema=SavedRequestListInput)
