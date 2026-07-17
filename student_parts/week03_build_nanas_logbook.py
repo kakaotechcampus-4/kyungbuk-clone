@@ -29,7 +29,7 @@ _WEEK03_AGENT: Any | None = None
 
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
 SQLITE_MEMORY_PROMPT = (
-    "Week1에서의 일정은 현재 대화 안에서만 유지되는 임시 메모리였지만 이번 주차부터 Nana는 SQLite에 저장된 일정/할 일/알림을 진짜 기록장으로 사용해.\n"
+    "Week1에서의 일정은 현재 대화 안에서만 유지되는 임시 메모리였지만 Week3 이상에서는 Nana는 SQLite에 저장된 일정/할 일/알림을 진짜 기록장으로 사용해.\n"
     "SQLite에 저장한 내용은 대화가 끝나거나 새 대화를 시작해도 그대로 남아 있어. "
     "현재 대화에서 방금 만든 기억만으로 답하면 안돼.\n"
     "사용자가 일정/할 일/알림 생성을 요청하면 그 결과를 SQLite에 저장해야 새 대화에서도 계속 확인할 수 있어."
@@ -369,8 +369,8 @@ def save_structured_request(
     }
     save_payload = {key: value for key, value in save_payload.items() if value is not None}
 
-    result = _store().save_structured_request(save_payload)    
-    
+    result = _store().save_structured_request(save_payload)
+
     return json_payload(tool_result("save_structured_request", **result))
 
 
@@ -393,9 +393,9 @@ def get_saved_request(request_id: str) -> str:
     """request_id로 구조화 요청 행 하나를 조회합니다."""
 
     # TODO: request_id로 단건 조회하고, 결과가 없을 때도 row=None을 유지해 JSON 문자열로 반환하세요.
-    rows = _store().get_saved_request(request_id)
+    row = _store().get_saved_request(request_id)
 
-    return json_payload(tool_result("get_saved_requests", row=row))
+    return json_payload(tool_result("get_saved_request", row=row))
 
 
 @tool(args_schema=SavedScheduleListInput)
