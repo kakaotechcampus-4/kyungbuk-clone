@@ -47,22 +47,89 @@ class StructuredRequestBatch(BaseModel):
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
-    """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
+    """다양한 형태의 값을 StructuredRequest로 정규화합니다."""
 
-    ...
+    if isinstance(value, StructuredRequest):
+        return value
+
+    if isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
+
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("StructuredRequest로 변환할 수 없는 문자열입니다.") from exc
+
+        return StructuredRequest.model_validate(parsed)
+
+    raise TypeError(
+        f"StructuredRequest로 변환할 수 없는 타입입니다: {type(value).__name__}"
+    )
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
-    """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
+    """자연어 요청 하나를 StructuredRequest로 구조화합니다."""
 
-    ...
+    agent = build_week02_agent()
+
+    result = agent.invoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": text,
+                }
+            ]
+        }
+    )
+
+    structured_response = result.get("structured_response")
+
+    if structured_response is None:
+        raise ValueError("structured_response를 반환받지 못했습니다.")
+
+    if isinstance(structured_response, StructuredRequestBatch):
+        if not structured_response.requests:
+            raise ValueError("구조화된 요청이 비어 있습니다.")
+
+        return structured_response.requests[0]
+
+    if isinstance(structured_response, dict):
+        batch = StructuredRequestBatch.model_validate(structured_response)
+
+        if not batch.requests:
+            raise ValueError("구조화된 요청이 비어 있습니다.")
+
+        return batch.requests[0]
+
+    raise TypeError(
+        "지원하지 않는 structured_response 타입입니다: "
+        f"{type(structured_response).__name__}"
+    )
 
 
 @tool
 def extract_schedule_request(query: str) -> str:
-    """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
+    """자연어 요청을 StructuredRequest JSON 문자열로 반환합니다."""
 
-    ...
+    try:
+        structured = extract_structured_request(query)
+
+        return json.dumps(
+            structured.model_dump(),
+            ensure_ascii=False,
+        )
+
+    except Exception as exc:
+        return json.dumps(
+            {
+                "ok": False,
+                "error": str(exc),
+                "query": query,
+            },
+            ensure_ascii=False,
+        )
 
 
 def week02_tools() -> list[Any]:
