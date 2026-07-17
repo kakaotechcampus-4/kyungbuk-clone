@@ -238,7 +238,15 @@ def tool_result(tool_name: str, *, ok: bool = True, **payload: Any) -> dict[str,
 class SaveStructuredRequestInput(StructuredRequest):
     """SQLite 저장 직전에 검증하는 Week 3 입력 스키마입니다."""
 
-    kind: RequestKind = Field(default="unknown", description="분류된 요청 종류")
+    kind: RequestKind = Field(default="unknown", description=
+                              """
+                              요청의 종류를 나타내며, 다음 중 하나의 값만 허용됩니다:
+                                  - personal_schedule: 개인 일정 생성/조회/삭제/수정 요청
+                                  - group_schedule: 그룹 일정 생성/조회/삭제/수정 요청
+                                  - todo: 할 일 요청
+                                  - reminder: 일정 알림 요청
+                                  - unknown: 위의 어느 것에도 해당하지 않는 경우
+                              """)
     source_schedule_id: str | None = Field(default=None, description="Week 1 임시 일정에서 넘어온 원본 일정 ID")
 
     @model_validator(mode="before")
@@ -282,46 +290,46 @@ def save_structured_request_payload(
 class SavedRequestListInput(BaseModel):
     """저장 요청 목록 조회 입력입니다."""
 
-    kind: RequestKind | None = None
-    date_from: str | None = None
-    date_to: str | None = None
+    kind: RequestKind | None = Field(default=None, description="조회할 요청 종류 필터. None이면 종류 무관하게 조회")
+    date_from: str | None = Field(default=None, description="조회 범위의 시작 날짜(YYYY-MM-DD, 포함). None이면 시작 하한 없음")
+    date_to: str | None = Field(default=None, description="조회 범위의 끝 날짜(YYYY-MM-DD, 포함). None이면 끝 상한 없음")
 
 
 class SavedRequestGetInput(BaseModel):
     """저장 요청 단건 조회 입력입니다."""
 
-    request_id: str
+    request_id: str = Field(description="조회할 structured request의 request_id")
 
 
 class SavedScheduleListInput(BaseModel):
     """저장 일정 목록 조회 입력입니다."""
 
-    limit: int = Field(default=50, ge=1, le=200)
+    limit: int = Field(default=50, ge=1, le=200, description="한 번에 조회할 최대 일정 개수 (1~200)")
     kind: RequestKind | None = None
-    date_from: str | None = None
-    date_to: str | None = None
+    date_from: str | None = Field(default=None, description="조회 범위의 시작 날짜(YYYY-MM-DD, 포함). None이면 시작 하한 없음")
+    date_to: str | None = Field(default=None, description="조회 범위의 끝 날짜(YYYY-MM-DD, 포함). None이면 끝 상한 없음")
 
 
 class SavedScheduleUpdateInput(BaseModel):
     """저장 일정 수정 입력입니다."""
 
-    schedule_id: str
-    title: str | None = None
-    date: str | None = None
-    start_time: str | None = None
-    end_time: str | None = None
-    attendees: list[str] | None = None
+    schedule_id: str = Field(description="수정할 schedule id")
+    title: str | None = Field(default=None, description="변경 후 유지될 title. None이면 수정하지 않음")
+    date: str | None = Field(default=None, description="변경 후 유지될 날짜. None이면 수정하지 않음")
+    start_time: str | None = Field(default=None, description="변경 후 유지될 시작 시간. None이면 수정하지 않음")
+    end_time: str | None = Field(default=None, description="변경 후 유지될 종료 시간. None이면 수정하지 않음")
+    attendees: list[str] | None = Field(default=None, description="변경 후 유지될 참가자. None이면 수정하지 않음")
 
 
 class SavedScheduleDeleteInput(BaseModel):
     """저장 일정 삭제 입력입니다."""
 
-    schedule_ids: list[str] | None = None
-    date: str | None = None
-    title: str | None = None
-    start_time: str | None = None
-    time_unspecified: bool = False
-    delete_all: bool = False
+    schedule_ids: list[str] | None = Field(default=None, description="삭제할 schedule id")
+    date: str | None = Field(default=None, description="삭제할 schedule 날짜")
+    title: str | None = Field(default=None, description="삭제할 schedule title. 부분 일치(포함 여부)로 검색되며 정확히 일치하지 않아도 매칭됨")
+    start_time: str | None = Field(default=None, description="삭제할 schedule의 시작 시간")
+    time_unspecified: bool = Field(default=False, description="삭제할 schedule의 시작 시간이 지정되지 않은 경우 True")
+    delete_all: bool = Field(default=False, description="필터 무관 전체 schedule 삭제 요청 시 True, 아니면 False. 되돌릴 수 없는 파괴적 동작이므로 사용자가 전체 삭제를 명확히 요청했을 때만 True로 설정")
 
 
 def _delete_saved_schedules(
@@ -380,7 +388,7 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
     )
 
 
-@tool("personal_create_schedule")
+@tool("personal_create_schedule", parse_docstring=True)
 def personal_create_schedule(
     title: str,
     date: str,
@@ -388,7 +396,15 @@ def personal_create_schedule(
     end_time: str = "미정",
     attendees: list[str] | None = None,
 ) -> str:
-    """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
+    """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다.
+
+    Args:
+        title: 일정 제목
+        date: 일정 날짜 (YYYY-MM-DD 형식)
+        start_time: 일정 시작 시간 (HH:MM 형식)
+        end_time: 일정 종료 시간 (HH:MM 형식). 확실하지 않으면 "미정"
+        attendees: 참석자 목록. 없으면 None
+    """
 
     ...
     week01_result = week01_personal_create_schedule.invoke({
