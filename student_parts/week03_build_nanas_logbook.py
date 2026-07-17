@@ -31,32 +31,50 @@ _WEEK03_AGENT: Any | None = None
 SQLITE_MEMORY_PROMPT = """
 # 영속 메모리 (SQLite)
 저장된 일정/할 일/알림은 SQLite 데이터베이스에 영속 저장된다.
-대화가 끝나거나 새 대화를 시작해도 저장한 데이터는 그대로 남아 있다.
-사용자가 "내 일정 보여줘" 또는 "저장된 일정 있어?" 같은 조회 질문을 하면
-반드시 personal_list_saved_schedules를 호출해 DB에서 데이터를 가져온다.
-임시 메모리나 대화 기록으로 일정을 추측하지 않는다.
+대화가 끝나거나 새 대화를 시작해도 데이터는 사라지지 않는다.
+
+## 조회 필수 규칙
+- 일정 관련 질문("내 일정", "뭐 있어?", "보여줘", "있어?" 등)을 받으면
+  반드시 personal_list_saved_schedules를 호출해 DB에서 실제 데이터를 확인한다.
+- 대화 내 언급된 내용이나 임시 메모리로 일정을 추측하거나 지어내지 않는다.
+- 조회 결과가 비어 있으면 "저장된 일정이 없습니다"라고 정직하게 답한다.
+  단, 날짜 필터를 적용한 경우에는 필터 없이 한 번 더 조회해 실제로 아무것도 없는지 확인한다.
 """
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
 WEEK03_TOOL_CALL_PROMPT = """
-# Week 3 Tool 호출 순서
-1. 자연어 저장 요청 → extract_schedule_request(query=사용자 요청) → save_structured_request(kind/title/date/...필드 직접 전달)
-2. 일정 조회 요청 → personal_list_saved_schedules
-3. 저장 요청 목록 조회 → list_saved_requests
-4. 단건 조회 → get_saved_request
-5. 저장된 일정 수정 → personal_list_saved_schedules로 schedule_id 확인 후 personal_update_saved_schedule 호출
-6. 저장된 일정 삭제 → personal_list_saved_schedules로 schedule_id 확인 후 personal_delete_saved_schedules 호출
+# Week 3 Tool 호출 규칙
 
-# Tool 선택 규칙 (매우 중요)
-- save_structured_request로 저장한 일정(schedule_id가 sch_로 시작)의 삭제/수정은
-  반드시 personal_delete_saved_schedules / personal_update_saved_schedule을 사용한다.
-- personal_delete_schedule은 Week 1 임시 메모리 전용이다. SQLite에 저장된 일정에는 효과가 없다.
-- personal_list_schedules도 Week 1 임시 메모리 전용이다. 저장된 일정 조회에는 personal_list_saved_schedules를 사용한다.
+## 저장 흐름
+자연어 저장 요청 → extract_schedule_request(query=원문) → save_structured_request(필드 직접 전달)
+- extract_schedule_request 결과의 structured_request 안에 있는 필드를
+  save_structured_request 인자로 하나씩 펼쳐 전달한다.
+- 조회·수정·삭제 요청에는 extract_schedule_request와 save_structured_request를 호출하지 않는다.
 
-주의사항:
-- extract_schedule_request 결과의 structured_request 필드를 읽어 save_structured_request 인자로 직접 펼쳐 전달한다.
-- tool 결과 JSON을 그대로 노출하지 않고 핵심 정보만 요약해 사용자에게 전달한다.
-- 저장 없이 조회만 요청하면 save_structured_request를 호출하지 않는다.
+## 조회 흐름 (날짜 필터 기준)
+| 사용자 발화 예시 | date_from | date_to |
+|---|---|---|
+| "내 일정 보여줘" / "일정 있어?" | 지정 안 함 | 지정 안 함 |
+| "오늘 일정" | 오늘 날짜 | 오늘 날짜 |
+| "이번 주 일정" | 이번 주 월요일 | 이번 주 일요일 |
+| "7월 20일 일정" | 2026-07-20 | 2026-07-20 |
+| "다음 달 일정" | 다음 달 1일 | 다음 달 말일 |
+
+날짜 범위를 명시하지 않은 경우 date_from/date_to를 추가하지 않는다.
+
+## 수정 흐름
+personal_list_saved_schedules로 schedule_id 확인 → personal_update_saved_schedule 호출
+
+## 삭제 흐름
+personal_list_saved_schedules로 schedule_id 확인 → personal_delete_saved_schedules 호출
+
+## Tool 선택 주의사항 (매우 중요)
+- SQLite 저장 일정(schedule_id: sch_로 시작) 조회 → personal_list_saved_schedules
+- SQLite 저장 일정 수정 → personal_update_saved_schedule
+- SQLite 저장 일정 삭제 → personal_delete_saved_schedules
+- personal_list_schedules / personal_delete_schedule은 Week 1 임시 메모리 전용으로 SQLite에 효과 없음
+
+tool 결과 JSON을 그대로 노출하지 않고 핵심 정보(제목, 날짜, 시간)만 요약해 전달한다.
 """
 
 
@@ -503,9 +521,8 @@ def personal_list_saved_schedules(
 
     try:
         # TODO: 기본 kind를 personal_schedule로 정하고 날짜/종류/limit 필터로 저장 일정을 조회하세요.
-        effective_kind = kind or "personal_schedule"
-        schedules = _store().list_schedules(limit=limit, kind=effective_kind, date_from=date_from, date_to=date_to)
-        filters = {"kind": effective_kind, "date_from": date_from, "date_to": date_to, "limit": limit}
+        schedules = _store().list_schedules(limit=limit, kind=kind, date_from=date_from, date_to=date_to)
+        filters = {"kind": kind, "date_from": date_from, "date_to": date_to, "limit": limit}
         # TODO: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
         return json_payload(tool_result("personal_list_saved_schedules", filters=filters, schedules=schedules))
     except Exception as e:
