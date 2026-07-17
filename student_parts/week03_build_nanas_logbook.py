@@ -263,8 +263,6 @@ class SaveStructuredRequestInput(StructuredRequest):
 def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dict[str, Any] | str) -> SaveStructuredRequestInput:
     """저장 입력을 SaveStructuredRequestInput 하나로 모읍니다."""
 
-    ...
-    
     if isinstance(value, str):
         value = extract_structured_request(value)
     if isinstance(value, StructuredRequest) and not isinstance(value, SaveStructuredRequestInput):
@@ -280,12 +278,10 @@ def save_structured_request_payload(
 ) -> dict[str, Any]:
     """검증된 structured request를 앱 DB에 저장합니다."""
 
-    ...
-
     save_input = _save_input_from(request)  # 1. 검증
     store = store or _store()               # 2. store 객체
     saved_request = store.save_structured_request(save_input.model_dump())  # 3. 저장
-    return tool_result("save_structured_request", ok=True, saved_request=saved_request)
+    return tool_result("save_structured_request", ok=True, **saved_request)
 
 class SavedRequestListInput(BaseModel):
     """저장 요청 목록 조회 입력입니다."""
@@ -305,7 +301,7 @@ class SavedScheduleListInput(BaseModel):
     """저장 일정 목록 조회 입력입니다."""
 
     limit: int = Field(default=50, ge=1, le=200, description="한 번에 조회할 최대 일정 개수 (1~200)")
-    kind: RequestKind | None = None
+    kind: RequestKind | None = Field(default=None, description="조회할 요청 종류 필터. None이면 personal_schedule을 기본값으로 사용함 (종류 무관 조회 아님)")
     date_from: str | None = Field(default=None, description="조회 범위의 시작 날짜(YYYY-MM-DD, 포함). None이면 시작 하한 없음")
     date_to: str | None = Field(default=None, description="조회 범위의 끝 날짜(YYYY-MM-DD, 포함). None이면 끝 상한 없음")
 
@@ -344,9 +340,6 @@ def _delete_saved_schedules(
 ) -> dict[str, Any]:
     """삭제 guard와 DB 호출을 한 곳에 둡니다."""
 
-
-    ...
-    
     if not(schedule_ids or date or title or start_time or time_unspecified or delete_all):
         return tool_result("personal_delete_saved_schedules", ok=True, deleted_count=0, filters={}, deleted=[])
     if delete_all:
@@ -376,7 +369,6 @@ def _delete_saved_schedules(
 def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
-    ...
     return SaveStructuredRequestInput(
         kind="personal_schedule",
         title=schedule.get("title"),
@@ -406,7 +398,6 @@ def personal_create_schedule(
         attendees: 참석자 목록. 없으면 None
     """
 
-    ...
     week01_result = week01_personal_create_schedule.invoke({
         "title": title,
         "date": date,
@@ -442,8 +433,6 @@ def save_structured_request(
 ) -> str:
     """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
 
-    ...
-    
     store = _store()
     payload = {
         "kind": kind,
@@ -460,8 +449,7 @@ def save_structured_request(
     payload = {k: v for k, v in payload.items() if v is not None}
     
     saved_request = store.save_structured_request(payload)
-    
-    return json_payload(tool_result("save_structured_request", saved_request=saved_request))
+    return json_payload(tool_result("save_structured_request", **saved_request))
     
 
 
@@ -473,7 +461,6 @@ def list_saved_requests(
 ) -> str:
     """SQLite에 저장된 구조화 요청 목록을 조회합니다."""
 
-    ...
     store = _store()
     rows = store.list_saved_requests(
         kind=kind,
@@ -487,7 +474,6 @@ def list_saved_requests(
 def get_saved_request(request_id: str) -> str:
     """request_id로 구조화 요청 행 하나를 조회합니다."""
 
-    ...
     store = _store()
     row = store.get_saved_request(request_id=request_id)
     return json_payload(tool_result("get_saved_request", row=row))
@@ -503,14 +489,15 @@ def personal_list_saved_schedules(
 ) -> str:
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
-    ...
     store = _store()
-    
-    # kind="personal_schedule"이 아니면? 잘못 부른거
-    
+
+
+    # 실제 반영되는 kind로 지정
+    kind = kind or "personal_schedule"
+
     schedules=store.list_schedules(
         limit=limit,
-        kind=kind or "personal_schedule",
+        kind=kind,
         date_from=date_from,
         date_to=date_to,
     )
@@ -533,7 +520,6 @@ def delete_saved_schedules_dict(
 ) -> dict[str, Any]:
     """tool invoke 없이 저장 일정 삭제 로직을 직접 호출합니다."""
 
-    ...
     return _delete_saved_schedules(
         store=app_store or _store(),
         schedule_ids=schedule_ids,
@@ -556,7 +542,6 @@ def personal_update_saved_schedule(
 ) -> str:
     """앱 DB에 저장된 내 일정 원본을 수정하고 공유 일정 복사본을 같은 값으로 갱신합니다."""
 
-    ...
     store = _store()
     
     payload = {
@@ -653,7 +638,6 @@ def build_week03_agent() -> object:
         raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
     global _WEEK03_AGENT
     if _WEEK03_AGENT is None:
-        ...
         _WEEK03_AGENT = create_agent(
             model = chat_model(),
             tools=week03_tools(),
