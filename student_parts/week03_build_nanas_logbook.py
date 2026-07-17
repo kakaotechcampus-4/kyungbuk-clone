@@ -1,3 +1,4 @@
+from student_parts.week02_structure_natural_language_requests import week02_tools
 from __future__ import annotations
 
 import json
@@ -27,11 +28,27 @@ from student_parts.week02_structure_natural_language_requests import (
 
 _WEEK03_AGENT: Any | None = None
 
-# TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
-SQLITE_MEMORY_PROMPT = ""
+SQLITE_MEMORY_PROMPT = f"""당신의 기록은 이제 대화가 끝나도 사라지지 않아야 합니다. 
+따라서 저장된 일정/할 일/알림은 앱의 SQLite DB에 남아야 하고
+새 대화를 열거나 앱을 재시작해도 그대로 조회할 수 있어야 합니다.
+사용자가 "내 일정 보여줘", "저번에 저장한 거 뭐였지" 같이 물으면
+과거 대화 내용을 기억해서 답하지 말고, personal_list_saved_schedules 같은 조회 tool을 호출해
+실제 DB에 남아있는 값을 확인한 뒤 답해야 합니다.
+"""
+WEEK03_TOOL_CALL_PROMPT = f"""저장/조회/수정/삭제 tool은 다음 순서로 호출합니다.
+오늘 날짜는 {current_app_date_iso()}입니다.
 
-# TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
-WEEK03_TOOL_CALL_PROMPT = ""
+1. 저장 요청("~ 저장해줘", "~ 잡아줘")이면 먼저 extract_schedule_request(query=...)로
+   자연어를 구조화하고, 그 결과의 kind/title/date/start_time/end_time/members/priority/reason/original_text
+   필드를 save_structured_request 인자로 그대로 전달해 저장하세요.
+2. 조회 요청("내 일정 보여줘", "저장한 거 뭐 있어")이면 personal_list_saved_schedules를 호출하세요.
+   원본 구조화 기록 자체가 궁금한 경우에만 list_saved_requests / get_saved_request를 쓰세요.
+3. 수정/삭제 요청이면 임의로 schedule_id를 만들어내지 말고, 먼저 personal_list_saved_schedules로
+   후보 일정을 확인한 뒤, 그 결과에서 실제로 존재하는 schedule_id를 사용해서
+   personal_update_saved_schedule 또는 personal_delete_saved_schedules를 호출하세요.
+4. 사용자가 '전부', '모두', '전체', '싹 다'처럼 예외 없는 삭제를 명시한 경우에만 delete_all=True로 호출하세요. 
+   그런 명시적인 표현이 없다면 schedule_ids나 date/title을 명시해서 호출하세요.
+"""
 
 
 # [3주차 수강생 구현 가이드]
@@ -477,8 +494,12 @@ def build_week03_agent() -> object:
         raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
     global _WEEK03_AGENT
     if _WEEK03_AGENT is None:
-        # TODO: chat_model(), week03_tools(), week03_system_prompt()로 Week 3 LangChain agent를 생성하세요.
-        ...
+        _WEEK03_AGENT = create_agent(
+        model=chat_model(),
+        tools=week03_tools(),
+        #response_format=StructuredRequestBatch,
+        system_prompt=week03_system_prompt(),
+    )
     return _WEEK03_AGENT
 
 
