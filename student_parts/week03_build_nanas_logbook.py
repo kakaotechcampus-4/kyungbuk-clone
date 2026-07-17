@@ -33,6 +33,12 @@ SQLITE_MEMORY_PROMPT = """
     - 저장된 정보를 다시 볼 때는 기억이나 추측이 아니라 반드시 조회 tool 결과를 근거로 답하세요.
     - 저장된 일정 조회는 personal_list_saved_schedules, 원본 구조화 요청 조회는
       list_saved_requests / get_saved_request tool을 사용합니다.
+    - personal_list_saved_schedules는 kind를 지정하지 않으면 personal_schedule만 조회합니다.
+      group_schedule을 포함해 "전체" 일정을 확인하려면 kind="group_schedule"로 한 번 더 조회하거나,
+      list_saved_requests로 전체 kind를 함께 확인하세요.
+    - 특정 kind로 조회한 결과에 없다고 해서 다른 kind에도 없다고 단정하지 마세요.
+      "개인 일정 기준으로는 없습니다" 처럼 어떤 필터로 확인했는지 명시하고,
+      필요하면 다른 kind로 추가 조회한 뒤 답하세요.
 """
 
 WEEK03_TOOL_CALL_PROMPT = """
@@ -49,6 +55,9 @@ WEEK03_TOOL_CALL_PROMPT = """
 
     조회/수정/삭제 흐름:
     - "내 일정 보여줘" 같은 조회는 personal_list_saved_schedules로 처리합니다.
+    - "그룹 일정도", "전체 일정" 처럼 개인 일정 이외를 포함해 묻는 요청은
+      personal_list_saved_schedules를 kind="group_schedule"로 한 번 더 호출하거나
+      list_saved_requests로 전체를 확인한 뒤 종합해서 답합니다.
     - 수정/삭제는 먼저 personal_list_saved_schedules로 후보 schedule_id를 확인한 뒤,
       personal_update_saved_schedule 또는 personal_delete_saved_schedules에 schedule_ids나
       날짜/제목/시간 필터를 넘깁니다.
@@ -274,18 +283,33 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
     return SaveStructuredRequestInput.model_validate(value)
 
 
-def save_structured_request_payload(
+def _save_structured_request(
     request: SaveStructuredRequestInput | StructuredRequest | dict[str, Any] | str,
     *,
     store: AppSQLiteStore | None = None,
-) -> dict[str, Any]:
-    """검증된 structured request를 앱 DB에 저장합니다."""
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """저장 입력을 검증해 DB에 저장하고 (저장 payload, store 반환 결과)를 돌려줍니다.
+
+    save_structured_request tool / save_structured_request_payload /
+    personal_create_schedule이 공유하는 단일 저장 경로입니다.
+    """
 
     app_store = store or _store()
     save_input = _save_input_from(request)
     payload = save_input.model_dump(exclude_none=True)
     saved = app_store.save_structured_request(payload)
-    return tool_result("save_structured_request", ok=True, saved=saved)
+    return payload, saved
+
+
+def save_structured_request_payload(
+    request: SaveStructuredRequestInput | StructuredRequest | dict[str, Any] | str,
+    *,
+    store: AppSQLiteStore | None = None,
+) -> dict[str, Any]:
+    """검증된 structured request를 앱 DB에 저장하고 tool 응답 payload를 만듭니다."""
+
+    _payload, saved = _save_structured_request(request, store=store)
+    return tool_result("save_structured_request", ok=True, **saved)
 
 
 class SavedRequestListInput(BaseModel):
@@ -423,8 +447,7 @@ def personal_create_schedule(
     schedule = created.get("created_schedule", {})
 
     save_input = structured_request_from_week01_schedule(schedule)
-    payload = save_input.model_dump(exclude_none=True)
-    sqlite_save = _store().save_structured_request(payload)
+    payload, sqlite_save = _save_structured_request(save_input)
 
     return json_payload(
         {
@@ -464,8 +487,7 @@ def save_structured_request(
         "source_schedule_id": source_schedule_id,
     }
     payload = {key: value for key, value in payload.items() if value is not None}
-    saved = _store().save_structured_request(payload)
-    return json_payload(tool_result("save_structured_request", ok=True, saved=saved))
+    return json_payload(save_structured_request_payload(payload))
 
 
 @tool(args_schema=SavedRequestListInput)
