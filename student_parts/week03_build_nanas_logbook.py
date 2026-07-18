@@ -39,7 +39,9 @@ WEEK03_TOOL_CALL_PROMPT = (
     "일정 조회 질문에는 personal_list_saved_schedules를 호출한다. "
     "저장된 일정을 수정하거나 삭제하려면 먼저 personal_list_saved_schedules 또는 list_saved_requests로 후보를 확인한 뒤, "
     "schedule_id가 명확할 때만 personal_update_saved_schedule 또는 personal_delete_saved_schedules를 호출한다. "
-    "조건 없이 delete_all=True로 전체 삭제하지 않는다."
+    "delete_all=True는 사용자가 명시적으로 '모든 일정 전부 삭제'를 요청했을 때만 다른 필터 없이 단독으로 사용한다. "
+    "'7월 일정 전부 삭제'처럼 특정 날짜/월/제목 범위가 있는 요청에는 delete_all을 쓰지 말고, "
+    "personal_list_saved_schedules로 대상을 조회한 뒤 schedule_ids로 삭제한다."
 )
 
 
@@ -341,7 +343,8 @@ def _delete_saved_schedules(
         "time_unspecified": time_unspecified,
         "delete_all": delete_all,
     }
-    has_condition = delete_all or bool(schedule_ids) or bool(date) or bool(title) or bool(start_time) or time_unspecified
+    other_filters = any([schedule_ids, date, title, start_time, time_unspecified])
+    has_condition = delete_all or other_filters
     if not has_condition:
         return tool_result(
             "personal_delete_saved_schedules",
@@ -352,7 +355,10 @@ def _delete_saved_schedules(
             reason="삭제 조건이 없어 요청을 거부했습니다.",
         )
 
-    if delete_all:
+    # "7월 일정 전부 삭제" 요청에서 date와 delete_all이 동시에 켜져
+    # DB 전체가 지워지는 사고를 막기 위해, 범위 필터가 있으면 필터 삭제를 우선한다.
+    effective_delete_all = delete_all and not other_filters
+    if effective_delete_all:
         deleted = store.delete_all_schedules()
     else:
         deleted = store.delete_schedules_by_filter(
@@ -362,12 +368,14 @@ def _delete_saved_schedules(
             start_time=start_time,
             time_unspecified=time_unspecified,
         )
-    return tool_result(
-        "personal_delete_saved_schedules",
-        deleted_count=len(deleted),
-        filters=filters,
-        deleted=deleted,
-    )
+    payload: dict[str, Any] = {
+        "deleted_count": len(deleted),
+        "filters": filters,
+        "deleted": deleted,
+    }
+    if delete_all and not effective_delete_all:
+        payload["delete_all_ignored"] = "범위 필터가 함께 지정되어 전체 삭제 대신 필터 삭제로 처리했습니다."
+    return tool_result("personal_delete_saved_schedules", **payload)
 
 
 def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
