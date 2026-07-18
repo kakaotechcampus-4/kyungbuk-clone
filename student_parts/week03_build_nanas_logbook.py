@@ -201,28 +201,7 @@ WEEK03_TOOL_CALL_PROMPT = (
 
 
 def _store() -> AppSQLiteStore:
-    store = AppSQLiteStore(CONFIG.app_db_path)
-    with store.connect() as conn:
-        request_columns = {row["name"] for row in conn.execute("PRAGMA table_info(structured_requests)")}
-        if "payload_json" not in request_columns:
-            conn.execute("ALTER TABLE structured_requests ADD COLUMN payload_json TEXT")
-
-        schedule_columns = {row["name"] for row in conn.execute("PRAGMA table_info(schedules)")}
-        if "schedule_type" not in schedule_columns:
-            conn.execute("ALTER TABLE schedules ADD COLUMN schedule_type TEXT")
-
-        conn.execute("UPDATE structured_requests SET payload_json = raw_json WHERE payload_json IS NULL")
-        conn.execute(
-            """
-            UPDATE schedules
-            SET schedule_type = COALESCE(
-                (SELECT kind FROM structured_requests WHERE request_id = schedules.request_id),
-                'unknown'
-            )
-            WHERE schedule_type IS NULL
-            """
-        )
-    return store
+    return AppSQLiteStore(CONFIG.app_db_path)
 
 
 def _tool_name(item: Any) -> str:
@@ -363,18 +342,7 @@ def save_structured_request(**kwargs: Any) -> str:
     """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
 
     payload = SaveStructuredRequestInput.model_validate(kwargs).model_dump()
-    store = _store()
-    saved = store.save_structured_request(payload)
-    if not saved.get("already_exists"):
-        with store.connect() as conn:
-            conn.execute(
-                "UPDATE structured_requests SET payload_json = ? WHERE request_id = ?",
-                (json.dumps(payload, ensure_ascii=False), saved["request_id"]),
-            )
-            conn.execute(
-                "UPDATE schedules SET schedule_type = ? WHERE request_id = ?",
-                (payload["kind"], saved["request_id"]),
-            )
+    saved = _store().save_structured_request(payload)
     return json_payload(tool_result("save_structured_request", **saved))
 
 
@@ -420,8 +388,6 @@ def personal_list_saved_schedules(
         date_from=date_from,
         date_to=date_to,
     )
-    for schedule in schedules:
-        schedule["schedule_type"] = schedule.get("request_kind")
     return json_payload(tool_result("personal_list_saved_schedules", filters=filters, schedules=schedules))
 
 
