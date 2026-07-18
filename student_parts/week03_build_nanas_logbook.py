@@ -341,11 +341,15 @@ def _delete_saved_schedules(
     """삭제 guard와 DB 호출을 한 곳에 둡니다."""
 
     if not(schedule_ids or date or title or start_time or time_unspecified or delete_all):
-        return tool_result("personal_delete_saved_schedules", ok=True, deleted_count=0, filters={}, deleted=[])
+    # 하나도 조건이 주어지지 지지 않아 삭제된 행이 없으므로 ok=False 처리
+        return tool_result("personal_delete_saved_schedules", ok=False, deleted_count=0, filters={}, deleted=[])
     if delete_all:
+        
         deleted = store.delete_all_schedules()
         deleted_count = len(deleted)
         filters = {"delete_all": True}
+        if len(deleted) == 0:
+            return tool_result("personal_delete_saved_schedules", ok=False, deleted_count=0, filters=filters, deleted=deleted)
         return tool_result("personal_delete_saved_schedules", ok=True, deleted_count=deleted_count, filters=filters, deleted=deleted)
     
     deleted = store.delete_schedules_by_filter(
@@ -363,7 +367,7 @@ def _delete_saved_schedules(
         "start_time": start_time,
         "time_unspecified": time_unspecified
     }
-    return tool_result("personal_delete_saved_schedules", ok=True, deleted_count=deleted_count, filters=filters, deleted=deleted)
+    return tool_result("personal_delete_saved_schedules", ok=deleted_count != 0, deleted_count=deleted_count, filters=filters, deleted=deleted)
 
 
 def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
