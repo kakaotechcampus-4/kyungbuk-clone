@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
-from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
 from student_parts.week01_wake_up_nana import (
     join_system_prompt,
@@ -349,9 +348,27 @@ def _delete_saved_schedules(
             time_unspecified=time_unspecified,
         )
 
+    if not deleted :
+        return tool_result(
+            tool_name="personal_delete_saved_schedules",
+            ok=False,
+            reason= "조건에 맞는 일정을 찾지 못했습니다",
+            deleted_count=0,
+            filters={
+                "schedule_ids": schedule_ids,
+                "date": date,
+                "title": title,
+                "start_time": start_time,
+                "time_unspecified": time_unspecified,
+                "delete_all": delete_all,
+            },
+            deleted=deleted,
+    )
+
     return tool_result(
         tool_name="personal_delete_saved_schedules",
         ok=True,
+        reason="일정 삭제를 완료하였습니다.",
         deleted_count=len(deleted),
         filters={
             "schedule_ids": schedule_ids,
@@ -533,8 +550,8 @@ def personal_update_saved_schedule(
     result = _store().update_schedule(schedule_id,title,date,start_time,end_time,attendees)
 
     if result is None:
-        return json_payload(tool_result(tool_name="personal_update_saved_schedule",ok=False))
-    return json_payload(tool_result(tool_name="personal_update_saved_schedule",ok=True,updated_schedule=result["schedule"],shared_sync=result["shared_sync"]))
+        return json_payload(tool_result(tool_name="personal_update_saved_schedule",ok=False, reason = " 수정할 일정을 찾지 못했습니다."))
+    return json_payload(tool_result(tool_name="personal_update_saved_schedule",ok=True,reason = "일정을 수정하였습니다.",updated_schedule=result["schedule"],shared_sync=result["shared_sync"]))
 
 
 @tool(args_schema=SavedScheduleDeleteInput)

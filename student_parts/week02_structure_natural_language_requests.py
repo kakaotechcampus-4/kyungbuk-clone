@@ -168,10 +168,9 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
 
     if isinstance(value,StructuredRequest) :
         return value
-    elif isinstance(value,dict):
+    if isinstance(value,dict):
         return StructuredRequest.model_validate(value)
-    else :
-        raise TypeError("dict/StructuredRequest type만이 사용되야합니다.")
+    raise TypeError("dict/StructuredRequest type만이 사용되야합니다.")
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
