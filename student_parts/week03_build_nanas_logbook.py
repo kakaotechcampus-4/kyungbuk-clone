@@ -273,8 +273,8 @@ def save_structured_request_payload(
     """검증된 structured request를 앱 DB에 저장합니다."""
 
     # TODO: 입력을 검증한 뒤 AppSQLiteStore.save_structured_request(...)로 저장하고 tool 결과를 반환하세요.
-    save_input = _save_input_from(request)
-    payload = {key: value for key, value in save_input.model_dump().items() if value is not None}
+    structured_save_input = _save_input_from(request)
+    payload = {key: value for key, value in structured_save_input.model_dump().items() if value is not None}
     result = (store or _store()).save_structured_request(payload)
     return tool_result("save_structured_request", **result)
 
@@ -400,13 +400,13 @@ def personal_create_schedule(
         )
     )
     schedule = created["created_schedule"]
-    save_input = structured_request_from_week01_schedule(schedule)
-    payload = {key: value for key, value in save_input.model_dump().items() if value is not None}
+    structured_save_input = structured_request_from_week01_schedule(schedule)
+    payload = {key: value for key, value in structured_save_input.model_dump().items() if value is not None}
     sqlite_save = _store().save_structured_request(payload)
     return json_payload(
         tool_result(
             "personal_create_schedule",
-            structured_request=save_input.model_dump(),
+            structured_request=structured_save_input.model_dump(),
             sqlite_save=sqlite_save,
         )
     )
