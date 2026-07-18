@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
@@ -222,6 +222,28 @@ def tool_result(tool_name: str, *, ok: bool = True, **payload: Any) -> dict[str,
     return {"ok": ok, "tool_name": tool_name, **payload}
 
 
+def _store_call(tool_name: str, operation: Callable[[], dict[str, Any]]) -> str:
+    """DB에 접근하는 모든 tool이 거쳐 가는 단일 관문입니다.
+
+    tool 함수는 "무엇을 할지"만 operation으로 넘기고, 실패를 어떻게 표현할지는
+    이 함수 한 곳에서만 결정한다. tool마다 try/except를 따로 복붙해두면 시간이 지나며
+    tool별로 에러 응답 모양이 조금씩 어긋나기 쉽다.
+
+    operation이 정상적으로 dict를 반환하면 그 dict를 그대로 결과에 실어준다.
+    operation 스스로 "찾지 못함" 같은 정상적인 실패를 표현하고 싶으면
+    반환 dict 안에 ok=False를 직접 넣어도 된다(예: personal_update_saved_schedule).
+    operation 실행 중 예외가 나면(DB 연결 오류 등 예상 못 한 실패) 여기서 잡아서
+    모든 tool이 동일한 모양(ok, error_type, error)으로 답하게 만든다.
+    """
+
+    try:
+        return json_payload(tool_result(tool_name, **operation()))
+    except Exception as exc:
+        return json_payload(
+            tool_result(tool_name, ok=False, error_type=type(exc).__name__, error=str(exc))
+        )
+
+
 def _unwrap_wrapper_dict(data: dict[str, Any]) -> dict[str, Any]:
     """payload/structured_request/requests[0] wrapper를 한 겹만 벗겨 낸 flat dict를 만듭니다.
 
@@ -420,7 +442,7 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
 
-    try:
+    def _create_and_save() -> dict[str, Any]:
         week01_result: dict[str, Any] = json.loads(
             week01_personal_create_schedule.invoke(
                 {
@@ -435,24 +457,13 @@ def personal_create_schedule(
         created_schedule: dict[str, Any] = week01_result["created_schedule"]
         save_input = structured_request_from_week01_schedule(created_schedule)
         sqlite_save = save_structured_request_payload(save_input)
-        return json_payload(
-            tool_result(
-                "personal_create_schedule",
-                ok=True,
-                created_schedule=created_schedule,
-                structured_request=save_input.model_dump(),
-                sqlite_save=sqlite_save,
-            )
-        )
-    except Exception as exc:
-        return json_payload(
-            tool_result(
-                "personal_create_schedule",
-                ok=False,
-                error_type=type(exc).__name__,
-                error=str(exc),
-            )
-        )
+        return {
+            "created_schedule": created_schedule,
+            "structured_request": save_input.model_dump(),
+            "sqlite_save": sqlite_save,
+        }
+
+    return _store_call("personal_create_schedule", _create_and_save)
 
 
 @tool(args_schema=SaveStructuredRequestInput)
@@ -470,7 +481,7 @@ def save_structured_request(
 ) -> str:
     """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
 
-    try:
+    def _save() -> dict[str, Any]:
         save_payload: dict[str, Any] = {
             "kind": kind,
             "title": title,
@@ -483,12 +494,9 @@ def save_structured_request(
             "original_text": original_text,
             "source_schedule_id": source_schedule_id,
         }
-        save_result = _store().save_structured_request(save_payload)
-        return json_payload(tool_result("save_structured_request", ok=True, **save_result))
-    except Exception as exc:
-        return json_payload(
-            tool_result("save_structured_request", ok=False, error_type=type(exc).__name__, error=str(exc))
-        )
+        return _store().save_structured_request(save_payload)
+
+    return _store_call("save_structured_request", _save)
 
 
 @tool(args_schema=SavedRequestListInput)
@@ -499,26 +507,17 @@ def list_saved_requests(
 ) -> str:
     """SQLite에 저장된 구조화 요청 목록을 조회합니다."""
 
-    try:
-        rows = _store().list_saved_requests(kind=kind, date_from=date_from, date_to=date_to)
-        return json_payload(tool_result("list_saved_requests", ok=True, rows=rows))
-    except Exception as exc:
-        return json_payload(
-            tool_result("list_saved_requests", ok=False, error_type=type(exc).__name__, error=str(exc))
-        )
+    def _list() -> dict[str, Any]:
+        return {"rows": _store().list_saved_requests(kind=kind, date_from=date_from, date_to=date_to)}
+
+    return _store_call("list_saved_requests", _list)
 
 
 @tool(args_schema=SavedRequestGetInput)
 def get_saved_request(request_id: str) -> str:
     """request_id로 구조화 요청 행 하나를 조회합니다."""
 
-    try:
-        row = _store().get_saved_request(request_id)
-        return json_payload(tool_result("get_saved_request", ok=True, row=row))
-    except Exception as exc:
-        return json_payload(
-            tool_result("get_saved_request", ok=False, error_type=type(exc).__name__, error=str(exc))
-        )
+    return _store_call("get_saved_request", lambda: {"row": _store().get_saved_request(request_id)})
 
 
 @tool(args_schema=SavedScheduleListInput)
@@ -530,7 +529,7 @@ def personal_list_saved_schedules(
 ) -> str:
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
-    try:
+    def _list_schedules() -> dict[str, Any]:
         # "내 일정 보여줘" 같은 질문은 보통 개인 일정을 뜻하므로, kind를 안 정하면 group_schedule까지
         # 섞여 나오지 않도록 personal_schedule을 기본값으로 삼는다.
         effective_kind = kind or "personal_schedule"
@@ -541,13 +540,9 @@ def personal_list_saved_schedules(
             "date_to": date_to,
         }
         schedules = _store().list_schedules(limit=limit, kind=effective_kind, date_from=date_from, date_to=date_to)
-        return json_payload(
-            tool_result("personal_list_saved_schedules", ok=True, filters=filters, schedules=schedules)
-        )
-    except Exception as exc:
-        return json_payload(
-            tool_result("personal_list_saved_schedules", ok=False, error_type=type(exc).__name__, error=str(exc))
-        )
+        return {"filters": filters, "schedules": schedules}
+
+    return _store_call("personal_list_saved_schedules", _list_schedules)
 
 
 def delete_saved_schedules_dict(
@@ -583,7 +578,7 @@ def personal_update_saved_schedule(
 ) -> str:
     """앱 DB에 저장된 내 일정 원본을 수정하고 공유 일정 복사본을 같은 값으로 갱신합니다."""
 
-    try:
+    def _update() -> dict[str, Any]:
         # None으로 들어온 필드는 "수정하지 않음"을 뜻하고, AppSQLiteStore.update_schedule이 이미
         # 그 규칙(None이면 기존 값 유지)으로 동작하므로 여기서는 그대로 전달하기만 하면 된다.
         update_result = _store().update_schedule(
@@ -595,25 +590,12 @@ def personal_update_saved_schedule(
             attendees=attendees,
         )
         if update_result is None:
-            return json_payload(
-                tool_result(
-                    "personal_update_saved_schedule",
-                    ok=False,
-                    error=f"schedule_id={schedule_id}에 해당하는 저장 일정을 찾지 못했습니다.",
-                )
-            )
-        return json_payload(
-            tool_result(
-                "personal_update_saved_schedule",
-                ok=True,
-                updated_schedule=update_result["schedule"],
-                shared_sync=update_result["shared_sync"],
-            )
-        )
-    except Exception as exc:
-        return json_payload(
-            tool_result("personal_update_saved_schedule", ok=False, error_type=type(exc).__name__, error=str(exc))
-        )
+            # DB 오류가 아니라 "그런 일정이 없다"는 정상적인 실패이므로 예외 대신
+            # ok=False가 담긴 dict를 그대로 돌려준다 — _store_call은 이걸 그대로 실어 보낸다.
+            return {"ok": False, "error": f"schedule_id={schedule_id}에 해당하는 저장 일정을 찾지 못했습니다."}
+        return {"updated_schedule": update_result["schedule"], "shared_sync": update_result["shared_sync"]}
+
+    return _store_call("personal_update_saved_schedule", _update)
 
 
 @tool(args_schema=SavedScheduleDeleteInput)
@@ -627,8 +609,8 @@ def personal_delete_saved_schedules(
 ) -> str:
     """Nana가 고른 일정 ID나 날짜/제목/시간 필터로 저장 일정을 삭제합니다."""
 
-    try:
-        delete_result = _delete_saved_schedules(
+    def _delete() -> dict[str, Any]:
+        return _delete_saved_schedules(
             store=_store(),
             schedule_ids=schedule_ids,
             date=date,
@@ -637,18 +619,8 @@ def personal_delete_saved_schedules(
             time_unspecified=time_unspecified,
             delete_all=delete_all,
         )
-        return json_payload(tool_result("personal_delete_saved_schedules", **delete_result))
-    except Exception as exc:
-        return json_payload(
-            tool_result(
-                "personal_delete_saved_schedules",
-                ok=False,
-                error_type=type(exc).__name__,
-                error=str(exc),
-                deleted_count=0,
-                deleted=[],
-            )
-        )
+
+    return _store_call("personal_delete_saved_schedules", _delete)
 
 
 def week03_tools() -> list[Any]:
