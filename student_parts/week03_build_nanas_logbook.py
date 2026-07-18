@@ -257,7 +257,7 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
     if isinstance(value, SaveStructuredRequestInput):
         return value
         
-    raise ValueError("올바르지 않은 입력입니다.")
+    raise ValueError(f"올바르지 않은 입력입니다. (입력 타입: {type(value)}, 값: {value})")
 
 
 def save_structured_request_payload(
@@ -342,6 +342,12 @@ def _delete_saved_schedules(
         return tool_result("personal_delete_saved_schedules", ok=False, error="삭제 조건이 없습니다")
         
     if delete_all:
+        if any([schedule_ids, date, title, start_time, time_unspecified]):
+            return tool_result(
+                "personal_delete_saved_schedules",
+                ok=False,
+                error="delete_all(전체 삭제)은 다른 필터(date, title 등)와 함께 사용할 수 없습니다. 특정 조건의 일정만 삭제하려면 delete_all을 False로 설정하세요."
+            )
         deleted_items = store.delete_all_schedules()
     else:
         deleted_items = store.delete_schedules_by_filter(
@@ -377,12 +383,12 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
         
     return SaveStructuredRequestInput(
         kind="personal_schedule",
-        title=schedule.get("title", ""),
-        date=schedule.get("date", ""),
-        start_time=schedule.get("start_time", ""),
-        end_time=schedule.get("end_time", "미정"),
+        title=schedule.get("title"),
+        date=schedule.get("date"),
+        start_time=schedule.get("start_time"),
+        end_time=schedule.get("end_time"),
         members=attendees,
-        source_schedule_id=schedule.get("id", "")
+        source_schedule_id=schedule.get("id")
     )
 
 
