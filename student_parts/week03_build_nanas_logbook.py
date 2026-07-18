@@ -368,8 +368,17 @@ def _delete_saved_schedules(
 def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
-    # TODO: Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
-    ...
+    # week1 일정 dict의 값을 꺼내 SaveStructuredRequestInput 객체에 담아 반환
+    return SaveStructuredRequestInput(
+        kind="personal_schedule",                        # week1은 항상 개인 일정
+        title=schedule.get("title"),
+        date=schedule.get("date"),
+        start_time=schedule.get("start_time"),
+        end_time=schedule.get("end_time"),
+        members=schedule.get("attendees") or [],         # attendees → members 에 저장, 없으면 None 저장
+        original_text=schedule.get("title") or "",       
+        source_schedule_id=schedule.get("id"),           # id → source_schedule_id 에 저장
+    )
 
 
 @tool("personal_create_schedule")
@@ -382,10 +391,37 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
 
-    # TODO: Week 1 임시 일정 tool을 호출한 뒤 결과를 StructuredRequest로 바꿔 SQLite에도 저장하세요.
-    # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
-    ...
+    # 1. week1 임시 일정 tool을 호출해 created 에 저장
+    created = json.loads(
+        week01_personal_create_schedule.invoke(
+            {
+                "title": title,
+                "date": date,
+                "start_time": start_time,
+                "end_time": end_time,
+                "attendees": attendees,
+            }
+        )
+    )
 
+    # 2. week1 반환에서 생성된 일정 dict(키값=created_schedule)를 꺼낸다
+    schedule = created["created_schedule"]
+
+    # 3. week1 일정 dict를 week3 저장 입력으로 변환한다
+    structured = structured_request_from_week01_schedule(schedule)
+
+    # 4. 변환 결과를 dict로 풀어 SQLite에 저장한다.
+    saved = _store().save_structured_request(structured.model_dump())
+
+    # 5. JSON 문자열로 결과 변환 후 반환
+    return json_payload(
+        tool_result(
+            "personal_create_schedule",
+            created_schedule=schedule,
+            structured_request=structured.model_dump(),
+            sqlite_save=saved,
+        )
+    )
 
 # SaveStructuredRequestInput 스키마로 입력을 함수 진입 전에 검사
 @tool(args_schema=SaveStructuredRequestInput)
