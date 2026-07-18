@@ -9,12 +9,10 @@ from pydantic import BaseModel, Field, model_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
-from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
 from student_parts.week01_wake_up_nana import (
     join_system_prompt,
     personal_create_schedule as week01_personal_create_schedule,
-    week01_tools,
 )
 from student_parts.week02_structure_natural_language_requests import (
     RequestKind,
@@ -204,10 +202,6 @@ def _store() -> AppSQLiteStore:
     return AppSQLiteStore(CONFIG.app_db_path)
 
 
-def _tool_name(item: Any) -> str:
-    return getattr(item, "name", getattr(item, "__name__", str(item)))
-
-
 def json_payload(payload: dict[str, Any]) -> str:
     """도구 반환용 dict를 한글이 깨지지 않는 JSON 문자열로 변환합니다."""
 
@@ -270,7 +264,7 @@ def save_structured_request_payload(
     input_data = _save_input_from(request)
     payload = {key: value for key, value in input_data.model_dump().items() if value is not None}
     saved = (store or _store()).save_structured_request(payload)
-    return tool_result("save_structured_request", ok=True, saved=saved)
+    return tool_result("save_structured_request", ok=True, **saved)
 
 
 class SavedRequestListInput(BaseModel):
@@ -415,7 +409,7 @@ def personal_create_schedule(
             ok=True,
             created_schedule=created_schedule,
             structured_request=structured_request.model_dump(),
-            sqlite_save=sqlite_save.get("saved"),
+            sqlite_save=sqlite_save,
         )
     )
 
@@ -435,19 +429,22 @@ def save_structured_request(
 ) -> str:
     """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
 
-    request = SaveStructuredRequestInput(
-        kind=kind,
-        title=title,
-        date=date,
-        start_time=start_time,
-        end_time=end_time,
-        members=members or [],
-        priority=priority,
-        reason=reason,
-        original_text=original_text,
-        source_schedule_id=source_schedule_id,
+    payload = {
+        "kind": kind,
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "members": members,
+        "priority": priority,
+        "reason": reason,
+        "original_text": original_text,
+        "source_schedule_id": source_schedule_id,
+    }
+    saved = _store().save_structured_request(
+        {key: value for key, value in payload.items() if value is not None}
     )
-    return json_payload(save_structured_request_payload(request))
+    return json_payload(tool_result("save_structured_request", ok=True, **saved))
 
 
 @tool(args_schema=SavedRequestListInput)
@@ -479,10 +476,9 @@ def personal_list_saved_schedules(
 ) -> str:
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
-    effective_kind = kind or "personal_schedule"
     schedules = _store().list_schedules(
         limit=limit,
-        kind=effective_kind,
+        kind=kind,
         date_from=date_from,
         date_to=date_to,
     )
@@ -490,7 +486,7 @@ def personal_list_saved_schedules(
         tool_result(
             "personal_list_saved_schedules",
             ok=True,
-            filters={"limit": limit, "kind": effective_kind, "date_from": date_from, "date_to": date_to},
+            filters={"limit": limit, "kind": kind, "date_from": date_from, "date_to": date_to},
             schedules=schedules,
         )
     )
@@ -582,9 +578,9 @@ def personal_delete_saved_schedules(
 def week03_tools() -> list[Any]:
     """Week 1 도구, Week 2 구조화 helper, SQLite 저장/조회/삭제 도구를 조립합니다."""
 
-    base_tools = [
-        personal_create_schedule if _tool_name(item) == "personal_create_schedule" else item for item in week01_tools()
-    ]
+    # Week 1 목록/삭제 도구는 대화 메모리만 보므로 새 대화에서는 SQLite
+    # 기록을 놓칩니다. Week 3에서는 영속 저장 wrapper인 생성 도구만 유지합니다.
+    base_tools = [personal_create_schedule]
     return [
         *base_tools,
         extract_schedule_request,
@@ -610,10 +606,11 @@ def week03_prompt_parts() -> list[str]:
         *week02_prompt_parts(),
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
-        f"""
-        오늘 날짜는 {current_app_date_iso()}다.
+        """
         Week 3의 목표는 Week 2 structured request를 SQLite 기록장에 저장하고 다시 조회하는 것이다.
         사용자가 저장을 요청하면 구조화만 하고 끝내지 말고 save_structured_request까지 호출한다.
+        제출, 마감, 해야 할 일처럼 완료할 작업은 시간이 언급되어도 todo로 분류한다.
+        새 대화 여부와 관계없이 일정 조회에는 personal_list_saved_schedules만 사용한다.
         Week 3에서는 RAG 검색, 외부 멤버 일정 조율, sub-agent 위임은 하지 않는다.
         """,
     ]
