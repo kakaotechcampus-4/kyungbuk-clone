@@ -314,11 +314,55 @@ def _delete_saved_schedules(
     time_unspecified: bool = False,
     delete_all: bool = False,
 ) -> dict[str, Any]:
-    """삭제 guard와 DB 호출을 한 곳에 둡니다."""
+    """삭제 guard와 DB 호출을 한 곳에 둡니다."""    
 
-    # TODO: 삭제 조건이 없으면 거부하고, delete_all 또는 명시 필터에 맞는 store 메서드를 호출하세요.
-    # TODO: deleted_count, filters, deleted가 포함된 tool 결과 dict를 반환하세요.
-    ...
+    # 1. 어떤 조건으로 삭제하는지 응답에 실어줄 filters를 먼저 생성
+    # trace 에서 추적 가능
+    filters = {
+        "schedule_ids": schedule_ids,
+        "date": date,
+        "title": title,
+        "start_time": start_time,
+        "time_unspecified": time_unspecified,
+        "delete_all": delete_all,
+    }
+
+    # 2. 삭제 조건이 하나라도 있는지 확인(여러 변수가 있어도 상관 xx)
+    has_condition = bool(schedule_ids) or bool(date) or bool(title) or bool(start_time) or time_unspecified or delete_all
+
+    # 3. 삭제할 조건이 하나도 없을 시 실패 응답을 반환
+    if not has_condition:
+        return tool_result(
+            "personal_delete_saved_schedules",
+            ok=False,
+            deleted_count=0,
+            filters=filters,
+            deleted=[],
+            reason="삭제 조건이 없어 삭제를 거부했습니다.",
+        )
+
+    # 4. delete_all 이면 전체 삭제 
+    # 아닐 시 실제 들어온 변수값들을 filter 를 호출해 삭제 진행
+    # 실제 SQL은 store가 담당.
+    if delete_all:
+        deleted = store.delete_all_schedules()
+    else:
+        # 실제 삭제할 변수값들을 stroe 에 전달해 삭제 진행
+        deleted = store.delete_schedules_by_filter(
+            schedule_ids=schedule_ids,
+            date=date,
+            title=title,
+            start_time=start_time,
+            time_unspecified=time_unspecified,
+        )
+
+    # 5. 실제 삭제된 데이터들의 개수를 반환 (JSON 문자열 변환은 호출하는 tool이 담당)
+    return tool_result(
+        "personal_delete_saved_schedules",
+        deleted_count=len(deleted),
+        filters=filters,
+        deleted=deleted,
+    )
 
 
 def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
@@ -449,9 +493,19 @@ def delete_saved_schedules_dict(
 ) -> dict[str, Any]:
     """tool invoke 없이 저장 일정 삭제 로직을 직접 호출합니다."""
 
-    # TODO: 전달받은 store 또는 기본 store로 _delete_saved_schedules(...)를 호출하세요.
-    ...
+    # app_sotre 가 존재하지 않을 시 새로운 store 를 생성
+    store = app_store or _store()
 
+    # 2. 삭제 결과를 detele_saved_schedules 에 넘겨 dict 형태로 반환
+    return _delete_saved_schedules(
+        store=store,
+        schedule_ids=schedule_ids,
+        date=date,
+        title=title,
+        start_time=start_time,
+        time_unspecified=time_unspecified,
+        delete_all=delete_all,
+    )
 
 @tool(args_schema=SavedScheduleUpdateInput)
 def personal_update_saved_schedule(
@@ -480,8 +534,19 @@ def personal_delete_saved_schedules(
 ) -> str:
     """Nana가 고른 일정 ID나 날짜/제목/시간 필터로 저장 일정을 삭제합니다."""
 
-    # TODO: _delete_saved_schedules(...)에 삭제 조건을 전달하고 결과를 JSON 문자열로 반환하세요.
-    ...
+    # 1. _delete_saved_schedules 에 store와 삭제 조건을 넘겨 결과 dict를 받아 result 에 저장
+    result = _delete_saved_schedules(
+        store=_store(),
+        schedule_ids=schedule_ids,
+        date=date,
+        title=title,
+        start_time=start_time,
+        time_unspecified=time_unspecified,
+        delete_all=delete_all,
+    )
+
+    # 2. dict 결과를 JSON 문자열로 감싸서 반환 (tool은 문자열을 돌려줘야 함)
+    return json_payload(result)
 
 
 def week03_tools() -> list[Any]:
