@@ -1,4 +1,3 @@
-from student_parts.week02_structure_natural_language_requests import week02_tools
 from __future__ import annotations
 
 import json
@@ -337,9 +336,16 @@ def _delete_saved_schedules(
 def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
-    # TODO: Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
-    ...
-
+    data = {
+        'kind': 'personal_schedule',
+        'title': schedule['title'],
+        'date': schedule['date'],
+        'start_time': schedule['start_time'],
+        'end_time': schedule['end_time'],
+        'members': schedule['attendees'],
+        'source_schedule_id': schedule['id'],
+    }
+    return SaveStructuredRequestInput(**data)
 
 @tool("personal_create_schedule")
 def personal_create_schedule(
@@ -351,9 +357,20 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
 
-    # TODO: Week 1 임시 일정 tool을 호출한 뒤 결과를 StructuredRequest로 바꿔 SQLite에도 저장하세요.
-    # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
-    ...
+    created_json = week01_personal_create_schedule.invoke({
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "attendees": attendees,
+    })
+    created = json.loads(created_json)
+    week1_schedule = created["created_schedule"]
+    structured = structured_request_from_week01_schedule(week1_schedule)
+    #sqlite_save = save_structured_request_payload(structured, store=_store())
+    store = _store()
+    sqlite_save = store.save_structured_request(structured.model_dump(exclude_none=True))
+    return json_payload({"created_schedule": week1_schedule, "sqlite_save": sqlite_save})
 
 
 @tool(args_schema=SaveStructuredRequestInput)
