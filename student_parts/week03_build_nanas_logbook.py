@@ -29,9 +29,9 @@ _WEEK03_AGENT: Any | None = None
 
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
 SQLITE_MEMORY_PROMPT = (
-    "너는 사용자와 대화 내역뿐만 아니라 SQLite 데이터베이스에 저장된 정보를 너의 장기 기억으로 사용해야 해"
-    "새로운 대화가 시작되더라도 이전에 등록한 모든 일정, 할 일, 알림은 DB에 영구적으로 남아 있다는 걸 기억해"
-    "사용자가 과거 일정에 대해 물어보거나 일정을 조회, 수정, 삭제하려고 할 때는 대화 컨텍스트에만 의존하지 말고, 반드시 관련 조회 도구(personal_list_saved_schedules 등)를 실행해서 데이터베이스 기록을 확인하고 알려줘야 해"
+    "너는 사용자와 대화 내역뿐만 아니라 SQLite 데이터베이스에 저장된 정보를 너의 장기 기억으로 사용해야 해\n"
+    "새로운 대화가 시작되더라도 이전에 등록한 모든 일정, 할 일, 알림은 DB에 영구적으로 남아 있다는 걸 기억해\n"
+    "사용자가 과거 일정에 대해 물어보거나 일정을 조회, 수정, 삭제하려고 할 때는 대화 컨텍스트에만 의존하지 말고, 반드시 관련 조회 도구(personal_list_saved_schedules 등)를 실행해서 데이터베이스 기록을 확인하고 알려줘야 해\n"
 )
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
@@ -402,11 +402,8 @@ def get_saved_request(request_id: str) -> str:
     """request_id로 구조화 요청 행 하나를 조회합니다."""
 
     # TODO: request_id로 단건 조회하고, 결과가 없을 때도 row=None을 유지해 JSON 문자열로 반환하세요.
-    store = _store()
-
-    row = store.get_saved_request(request_id)
-    response = tool_result("get_saved_request", ok=True, row=row)
-    return json_payload(response)
+    row = _store().get_saved_request(request_id)
+    return json_payload(tool_result("get_saved_request", ok=True, row=row))
 
 
 @tool(args_schema=SavedScheduleListInput)
@@ -420,9 +417,6 @@ def personal_list_saved_schedules(
 
     # TODO: 기본 kind를 personal_schedule로 정하고 날짜/종류/limit 필터로 저장 일정을 조회하세요.
     store = _store()
-
-    if kind is None:
-        kind = "personal_schedule"
 
     # TODO: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
     schedules = store.list_schedules(
@@ -443,7 +437,6 @@ def personal_list_saved_schedules(
         "personal_list_saved_schedules",
         ok=True,
         filters=filters,
-        schedules=schedules,
         rows=schedules
     )
 
