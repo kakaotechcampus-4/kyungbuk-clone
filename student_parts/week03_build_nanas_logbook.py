@@ -44,6 +44,9 @@ WEEK03_TOOL_CALL_PROMPT = """
 6. delete_all은 사용자가 "전부 지워줘"처럼 명확히 전체 삭제를 요청했을 때만 사용한다.
 7. tool 결과의 ok, error, error_type 같은 원본 JSON 필드를 사용자에게 그대로 보여주지 않는다.
    저장/조회/삭제가 실패했으면 그 이유를 한두 문장의 자연스러운 한국어로 풀어서 말한다.
+8. personal_create_schedule 결과에 sqlite_saved=false가 있으면, 일정이 아예 안 만들어진 게
+   아니라 "이번 대화에는 남아 있지만 기록장(SQLite)에는 아직 안 남았다"는 뜻이다. 이때는
+   실패라고만 말하지 말고, 지금은 이 대화 안에서만 확인되며 다시 저장을 시도해볼 수 있다고 안내한다.
 """
 
 
@@ -204,6 +207,82 @@ WEEK03_TOOL_CALL_PROMPT = """
 
 def _store() -> AppSQLiteStore:
     return AppSQLiteStore(CONFIG.app_db_path)
+
+
+class ScheduleStoreGateway:
+    """DB를 관리하는 단일 주체입니다.
+
+    tool 함수는 AppSQLiteStore를 직접 만들거나 그 메서드를 부르지 않고, 이 클래스의
+    메서드를 통해서만 저장/조회/수정/삭제를 요청하고 결과(dict)를 받는다.
+    tool_name이나 JSON 문자열 변환 같은 "tool 응답 모양"은 이 클래스가 몰라도 된다 —
+    그건 tool 경계에 있는 _store_call의 몫이다. 이렇게 나누면 나중에 DB 접근에
+    권한 검사나 재시도 같은 규칙을 추가하고 싶을 때, tool 코드를 하나도 안 건드리고
+    이 클래스 안에서만 고치면 된다.
+    """
+
+    def __init__(self, store: AppSQLiteStore | None = None) -> None:
+        self._store = store or _store()
+
+    def save_structured_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._store.save_structured_request(payload)
+
+    def list_saved_requests(
+        self, *, kind: RequestKind | None, date_from: str | None, date_to: str | None
+    ) -> dict[str, Any]:
+        rows = self._store.list_saved_requests(kind=kind, date_from=date_from, date_to=date_to)
+        return {"rows": rows}
+
+    def get_saved_request(self, request_id: str) -> dict[str, Any]:
+        return {"row": self._store.get_saved_request(request_id)}
+
+    def list_schedules(
+        self, *, limit: int, kind: RequestKind | None, date_from: str | None, date_to: str | None
+    ) -> dict[str, Any]:
+        # "내 일정 보여줘" 같은 질문은 보통 개인 일정을 뜻하므로, kind를 안 정하면 group_schedule까지
+        # 섞여 나오지 않도록 personal_schedule을 기본값으로 삼는다.
+        effective_kind = kind or "personal_schedule"
+        filters: dict[str, Any] = {
+            "limit": limit,
+            "kind": effective_kind,
+            "date_from": date_from,
+            "date_to": date_to,
+        }
+        schedules = self._store.list_schedules(limit=limit, kind=effective_kind, date_from=date_from, date_to=date_to)
+        return {"filters": filters, "schedules": schedules}
+
+    def update_schedule(
+        self,
+        schedule_id: str,
+        *,
+        title: str | None,
+        date: str | None,
+        start_time: str | None,
+        end_time: str | None,
+        attendees: list[str] | None,
+    ) -> dict[str, Any]:
+        result = self._store.update_schedule(
+            schedule_id, title=title, date=date, start_time=start_time, end_time=end_time, attendees=attendees
+        )
+        if result is None:
+            # DB 오류가 아니라 "그런 일정이 없다"는 정상적인 실패이므로 예외를 던지지 않고
+            # ok=False가 담긴 dict를 그대로 돌려준다.
+            return {"ok": False, "error": f"schedule_id={schedule_id}에 해당하는 저장 일정을 찾지 못했습니다."}
+        return {"updated_schedule": result["schedule"], "shared_sync": result["shared_sync"]}
+
+    def delete_schedules(self, **filters: Any) -> dict[str, Any]:
+        return _delete_saved_schedules(store=self._store, **filters)
+
+
+_GATEWAY: ScheduleStoreGateway | None = None
+
+
+def _gateway() -> ScheduleStoreGateway:
+    """앱 전체에서 하나만 쓰는 ScheduleStoreGateway를 반환합니다."""
+
+    global _GATEWAY
+    if _GATEWAY is None:
+        _GATEWAY = ScheduleStoreGateway()
+    return _GATEWAY
 
 
 def _tool_name(item: Any) -> str:
@@ -443,6 +522,8 @@ def personal_create_schedule(
     """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
 
     def _create_and_save() -> dict[str, Any]:
+        # 1단계: Week 1 임시 일정 생성. 여기서 실패하면 애초에 아무 것도 안 만들어진 것이므로
+        # 아래 except 없이 그냥 예외가 올라가 _store_call의 일반 실패 처리로 넘어가도 된다.
         week01_result: dict[str, Any] = json.loads(
             week01_personal_create_schedule.invoke(
                 {
@@ -456,10 +537,27 @@ def personal_create_schedule(
         )
         created_schedule: dict[str, Any] = week01_result["created_schedule"]
         save_input = structured_request_from_week01_schedule(created_schedule)
-        sqlite_save = save_structured_request_payload(save_input)
+
+        # 2단계: SQLite 저장. 1단계는 이미 끝난 상태이므로, 여기서 실패하면 "아무 것도
+        # 안 됐다"가 아니라 "Week 1 임시 일정은 있는데 SQLite 기록만 안 남았다"는 뜻이다.
+        # 이 갈림길을 예외로 그냥 흘려보내면 LLM이 created_schedule의 존재 자체를 모르게 되므로,
+        # 코드에서 명시적으로 두 경우를 나눠서 응답한다.
+        try:
+            sqlite_save = _gateway().save_structured_request(save_input.model_dump())
+        except Exception as exc:
+            return {
+                "ok": False,
+                "created_schedule": created_schedule,
+                "structured_request": save_input.model_dump(),
+                "sqlite_saved": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+
         return {
             "created_schedule": created_schedule,
             "structured_request": save_input.model_dump(),
+            "sqlite_saved": True,
             "sqlite_save": sqlite_save,
         }
 
@@ -494,7 +592,7 @@ def save_structured_request(
             "original_text": original_text,
             "source_schedule_id": source_schedule_id,
         }
-        return _store().save_structured_request(save_payload)
+        return _gateway().save_structured_request(save_payload)
 
     return _store_call("save_structured_request", _save)
 
@@ -507,17 +605,17 @@ def list_saved_requests(
 ) -> str:
     """SQLite에 저장된 구조화 요청 목록을 조회합니다."""
 
-    def _list() -> dict[str, Any]:
-        return {"rows": _store().list_saved_requests(kind=kind, date_from=date_from, date_to=date_to)}
-
-    return _store_call("list_saved_requests", _list)
+    return _store_call(
+        "list_saved_requests",
+        lambda: _gateway().list_saved_requests(kind=kind, date_from=date_from, date_to=date_to),
+    )
 
 
 @tool(args_schema=SavedRequestGetInput)
 def get_saved_request(request_id: str) -> str:
     """request_id로 구조화 요청 행 하나를 조회합니다."""
 
-    return _store_call("get_saved_request", lambda: {"row": _store().get_saved_request(request_id)})
+    return _store_call("get_saved_request", lambda: _gateway().get_saved_request(request_id))
 
 
 @tool(args_schema=SavedScheduleListInput)
@@ -529,20 +627,10 @@ def personal_list_saved_schedules(
 ) -> str:
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
-    def _list_schedules() -> dict[str, Any]:
-        # "내 일정 보여줘" 같은 질문은 보통 개인 일정을 뜻하므로, kind를 안 정하면 group_schedule까지
-        # 섞여 나오지 않도록 personal_schedule을 기본값으로 삼는다.
-        effective_kind = kind or "personal_schedule"
-        filters: dict[str, Any] = {
-            "limit": limit,
-            "kind": effective_kind,
-            "date_from": date_from,
-            "date_to": date_to,
-        }
-        schedules = _store().list_schedules(limit=limit, kind=effective_kind, date_from=date_from, date_to=date_to)
-        return {"filters": filters, "schedules": schedules}
-
-    return _store_call("personal_list_saved_schedules", _list_schedules)
+    return _store_call(
+        "personal_list_saved_schedules",
+        lambda: _gateway().list_schedules(limit=limit, kind=kind, date_from=date_from, date_to=date_to),
+    )
 
 
 def delete_saved_schedules_dict(
@@ -556,8 +644,8 @@ def delete_saved_schedules_dict(
 ) -> dict[str, Any]:
     """tool invoke 없이 저장 일정 삭제 로직을 직접 호출합니다."""
 
-    return _delete_saved_schedules(
-        store=app_store or _store(),
+    gateway = ScheduleStoreGateway(app_store) if app_store is not None else _gateway()
+    return gateway.delete_schedules(
         schedule_ids=schedule_ids,
         date=date,
         title=title,
@@ -578,24 +666,12 @@ def personal_update_saved_schedule(
 ) -> str:
     """앱 DB에 저장된 내 일정 원본을 수정하고 공유 일정 복사본을 같은 값으로 갱신합니다."""
 
-    def _update() -> dict[str, Any]:
-        # None으로 들어온 필드는 "수정하지 않음"을 뜻하고, AppSQLiteStore.update_schedule이 이미
-        # 그 규칙(None이면 기존 값 유지)으로 동작하므로 여기서는 그대로 전달하기만 하면 된다.
-        update_result = _store().update_schedule(
-            schedule_id,
-            title=title,
-            date=date,
-            start_time=start_time,
-            end_time=end_time,
-            attendees=attendees,
-        )
-        if update_result is None:
-            # DB 오류가 아니라 "그런 일정이 없다"는 정상적인 실패이므로 예외 대신
-            # ok=False가 담긴 dict를 그대로 돌려준다 — _store_call은 이걸 그대로 실어 보낸다.
-            return {"ok": False, "error": f"schedule_id={schedule_id}에 해당하는 저장 일정을 찾지 못했습니다."}
-        return {"updated_schedule": update_result["schedule"], "shared_sync": update_result["shared_sync"]}
-
-    return _store_call("personal_update_saved_schedule", _update)
+    return _store_call(
+        "personal_update_saved_schedule",
+        lambda: _gateway().update_schedule(
+            schedule_id, title=title, date=date, start_time=start_time, end_time=end_time, attendees=attendees
+        ),
+    )
 
 
 @tool(args_schema=SavedScheduleDeleteInput)
@@ -609,18 +685,17 @@ def personal_delete_saved_schedules(
 ) -> str:
     """Nana가 고른 일정 ID나 날짜/제목/시간 필터로 저장 일정을 삭제합니다."""
 
-    def _delete() -> dict[str, Any]:
-        return _delete_saved_schedules(
-            store=_store(),
+    return _store_call(
+        "personal_delete_saved_schedules",
+        lambda: _gateway().delete_schedules(
             schedule_ids=schedule_ids,
             date=date,
             title=title,
             start_time=start_time,
             time_unspecified=time_unspecified,
             delete_all=delete_all,
-        )
-
-    return _store_call("personal_delete_saved_schedules", _delete)
+        ),
+    )
 
 
 def week03_tools() -> list[Any]:
