@@ -642,12 +642,48 @@ def week03_prompt_parts() -> list[str]:
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
         f"""
         오늘 날짜는 {current_app_date_iso()}이다. 상대 날짜는 이 날짜 기준으로 계산한다.
-        저장/조회 요청에는 반드시 알맞은 tool을 호출한 뒤 짧게 답한다.
-        일정 수정 요청이 오면 먼저 personal_list_saved_schedules로 대상 schedule_id를 확인한 뒤
-        personal_update_saved_schedule을 호출한다.
-        일정 삭제 요청이 오면 먼저 personal_list_saved_schedules로 대상을 확인한 뒤
-        personal_delete_saved_schedules에 schedule_ids 또는 명시적 필터를 전달한다.
-        조건이 불분명한 삭제 요청("전부 지워줘" 등)은 delete_all=True를 명시적으로 확인한 뒤에만 호출한다.
+        사용자 요청이 "저장/추가/잡아줘"처럼 새 일정을 만들어달라는 것이면 다음 순서를 반드시 지킨다.
+        1. extract_schedule_request(query=사용자 요청)를 호출해 자연어를 구조화된 요청으로 바꾼다.
+        2. 그 결과의 필드들을 save_structured_request 인자로 그대로 전달해 SQLite에 저장한다.
+        같은 요청에 대해 이미 저장했다는 답변을 한 적이 있다면, 사용자가 명시적으로 다시 요청하지 않는 한
+        같은 내용을 다시 저장하지 않는다.
+
+        사용자 요청이 "보여줘/조회/뭐 있어"처럼 이미 저장된 것을 확인하려는 것이면 다음 기준으로 tool을 고른다.
+        - 사용자가 "내 개인 일정"처럼 명확히 개인 일정만 물으면 personal_list_saved_schedules를 사용한다.
+        - 사용자가 "일정 다 보여줘", "전체 일정", "일정 전부 삭제해줘"처럼 종류를 특정하지 않고 전체를 가리키면
+        list_saved_requests(kind 없이 전체 조회)를 먼저 사용해 개인/그룹 일정을 모두 확인한다.
+        personal_list_saved_schedules만 호출해서 "일정이 없다" 또는 "저장되지 않았다"고 단정하지 않는다.
+        extract_schedule_request를 호출하지 않고 곧바로 위 조회 tool을 호출한다.
+        구조화 결과를 텍스트로 그대로 출력하지 않는다.
+
+        일정 삭제 요청을 받으면 절대 같은 턴에서 바로 삭제 tool을 호출하지 않는다. 다음 규칙을 반드시 지킨다.
+        1. 삭제 후보를 조회할 때는 반드시 personal_list_saved_schedules를 사용한다 (kind를 지정하지 않은
+        요청이면 personal_schedule과 group_schedule 각각에 대해 호출해 모두 확인한다). list_saved_requests는
+        request_id만 반환하고 personal_delete_saved_schedules가 요구하는 schedule_id와 다르므로,
+        삭제 후보 조회에는 사용하지 않는다.
+        2. 조회된 후보 목록(제목/날짜/시간)과 각 일정의 schedule_id를 사용자에게 그대로 보여주고,
+        "이 일정들을 삭제할까요?"처럼 명시적으로 확인을 요청한 뒤 답변을 끝낸다. 이 턴에서는
+        personal_delete_saved_schedules를 호출하지 않는다.
+        3. 사용자가 다음 메시지에서 "네", "삭제해줘", "맞아" 등으로 명확히 승인한 경우, 직전 턴에서
+        personal_list_saved_schedules가 반환한 정확한 schedule_id 값들을 그대로 schedule_ids 인자로 만들어
+        personal_delete_saved_schedules를 호출한다. request_id나 추측한 값을 schedule_ids로 사용하지 않는다.
+        만약 직전 조회 결과가 대화에 남아있지 않다면, 먼저 personal_list_saved_schedules를 다시 호출해
+        최신 schedule_id를 확보한 뒤 삭제를 진행한다.
+        4. 사용자가 승인하지 않거나 애매하게 답하면 삭제를 실행하지 않고 다시 확인을 요청한다.
+        5. "전부 삭제"처럼 delete_all=True가 필요한 요청은 위 확인 절차를 반드시 거친 뒤에만 실행하고,
+        확인 없이 delete_all=True를 호출하는 것은 금지한다.
+
+        일정 수정 요청은 대상이 명확한지에 따라 다르게 처리한다.
+        1. 사용자가 이미 특정 schedule_id를 알려줬거나, 직전에 조회 tool로 조회해서 수정 대상이 정확히
+        하나로 좁혀진 경우에는, 확인 없이 바로 personal_update_saved_schedule을 호출해도 된다.
+        2. 하지만 "이번 주 일정 다 시간 미정으로 바꿔줘"처럼 대상이 여러 개이거나, 제목/날짜 같은 애매한
+        조건만으로 대상을 특정해야 하는 경우에는 삭제와 동일한 절차를 따른다: 먼저 조회 tool로 후보
+        목록을 보여주고, 사용자가 명시적으로 승인한 뒤에만 각 대상에 personal_update_saved_schedule을
+        호출한다. 이때도 schedule_id는 직전 조회 결과의 정확한 값을 그대로 쓰고 추측하지 않는다.
+        3. 제목만으로 지칭했는데 같은 제목의 일정이 여러 개 조회되면, 임의로 하나를 골라 수정하지 않고
+        반드시 후보를 보여주며 어느 것인지 먼저 확인한다.
+        4. 어느 경우든 수정될 필드(예: 시간을 몇 시로 바꾸는지)를 답변에 명시해서, 사용자가 무엇이
+        바뀌는지 항상 확인할 수 있게 한다.
         """,
     ]
 
