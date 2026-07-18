@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from fixed.config import CONFIG
@@ -39,22 +40,42 @@ class StructuredRequestBatch(BaseModel):
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
-    """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
+    """LangChain structured output 결과를 StructuredRequest로 정규화합니다."""
 
-    ...
+    if isinstance(value, StructuredRequest):
+        return value
+    if isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
+    raise RuntimeError(f"예상하지 못한 structured output 형태입니다: {type(value)!r}")
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
-    """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
+    """Week 3 이상에서 agent를 새로 띄우지 않고 자연어를 StructuredRequest로 바꿉니다."""
 
-    ...
+    structured_llm = chat_model().with_structured_output(StructuredRequest, method="function_calling")
+    result = structured_llm.invoke(
+        [
+            SystemMessage(content=join_system_prompt(week02_prompt_parts())),
+            HumanMessage(content=text),
+        ]
+    )
+    return _coerce_structured_request(result)
 
 
 @tool
 def extract_schedule_request(query: str) -> str:
-    """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
+    """Week 3 이상 agent가 저장/조율 전에 호출하는 구조화 bridge tool입니다."""
 
-    ...
+    structured = extract_structured_request(query)
+    return json.dumps(
+        {
+            "ok": True,
+            "tool_name": "extract_schedule_request",
+            "base_date": current_app_date_iso(),
+            "structured_request": structured.model_dump(),
+        },
+        ensure_ascii=False,
+    )
 
 
 def week02_tools() -> list[Any]:
