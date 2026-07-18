@@ -598,7 +598,12 @@ def week03_prompt_parts() -> list[str]:
         "일정 생성은 personal_create_schedule(Week 1 호환) 대신 "
         "extract_schedule_request → save_structured_request 흐름을 우선 사용한다. "
         "personal_create_schedule은 Week 1과의 호환을 위해서만 존재하며, 명시적으로 요청되지 않는 한 "
-        "먼저 선택하지 않는다. Week 3에서는 아직 저장 일정 수정/삭제, RAG, 외부 멤버 일정 조율은 다루지 않는다.",
+        "먼저 선택하지 않는다. 저장된 일정을 수정하거나 삭제해 달라는 요청을 받으면, 먼저 "
+        "personal_list_saved_schedules로 후보를 확인해 어떤 일정인지 좁힌 뒤, 수정은 "
+        "personal_update_saved_schedule에 schedule_id와 바뀔 필드만 전달하고(바뀌지 않는 필드는 "
+        "비워 둔다), 삭제는 personal_delete_saved_schedules에 schedule_ids 또는 명시적인 날짜/제목/시간 "
+        "필터를 전달한다. 조건 없이 전체 삭제(delete_all)는 사용자가 명확히 전체 삭제를 요청했을 때만 "
+        "쓴다. Week 3에서는 아직 RAG, 외부 멤버 일정 조율은 다루지 않는다.",
     ]
 
 
