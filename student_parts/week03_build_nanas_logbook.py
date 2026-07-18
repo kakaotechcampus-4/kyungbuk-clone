@@ -30,7 +30,13 @@ _WEEK03_AGENT: Any | None = None
 # TODO: 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성하세요.
 SQLITE_MEMORY_PROMPT = """
 Nana의 일정/할 일/알림은 SQLite 앱 DB에 저장되어 대화가 끝나거나 새로 시작해도 유지됩니다.
-사용자가 예전에 저장한 내용을 물어보면 list_saved_requests, get_saved_request, personal_list_saved_schedules 중 알맞은 tool로 조회해 답하세요.
+
+"내 일정 보여줘", "저장한 일정 알려줘" 처럼 이미 저장된 개인 일정을 조회할때는 반드시 personal_list_saved_schedules(SQLite)를 사용하세요.
+
+- 저장된 개인 일정 조회 -> personal_list_saved_schedules
+- 저장된 구조화 요청(할 일) 목록 -> list_saved_requests
+- 특정 요청 1건 상세 조회 -> get_saved_request
+
 """
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
@@ -363,6 +369,7 @@ def save_structured_request(
         "source_schedule_id": source_schedule_id,
     }
 
+    payload = {key: value for key, value in payload.items() if value is not None}
     result = _store().save_structured_request(payload)
     return json_payload(tool_result("save_structured_request", ok=True, **result))
 
@@ -500,9 +507,9 @@ def week03_prompt_parts() -> list[str]:
         WEEK03_TOOL_CALL_PROMPT,
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
         (
-            f"오늘 날짜는 {current_app_date_iso()}입니다. 저장 요청은 save_structured_request, "
-            "조회 요청은 list_saved_requests / get_saved_request / personal_list_saved_schedules 중 "
-            "질문에 맞는 tool을 골라 사용하세요."
+            f"오늘 날짜는 {current_app_date_iso()}입니다. 저장 요청은 save_structured_request를 사용하세요. "
+            "저장된 개인 일정을 보여달라는 요청은 personal_list_saved_schedules를, "
+            "요청 전체 목록은 list_saved_requests를, 특정 요청 1건은 get_saved_request를 사용하세요. "
         ),
     ]
 
