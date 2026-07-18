@@ -453,8 +453,18 @@ def personal_create_schedule(
     structured = structured_request_from_week01_schedule(schedule)
 
     # 4. 변환 결과를 dict로 풀어 SQLite에 저장한다.
-    saved = _store().save_structured_request(structured.model_dump())
-
+    try:
+        saved = _store().save_structured_request(structured.model_dump())
+     # 예외 발생 시 이미 생성된 일정을 예외 안에 담아서 반환 
+    except Exception as exc:
+        return json_payload(
+            tool_result(
+                "personal_create_schedule",
+                ok=False,
+                created_schedule=schedule,
+                error=str(exc),
+            )
+        )
     # 5. JSON 문자열로 결과 변환 후 반환
     return json_payload(
         tool_result(
@@ -497,11 +507,17 @@ def save_structured_request(
     # 2. value 값이 None 인 값은 저장 xx(==None 인 값은 payload 에서 값 제외)
     payload = {key: value for key, value in payload.items() if value is not None}
  
-    # 3. _store() 를 통해 Repository(AppSqLiteStore)를 획득하고, 
-    # save_structured_request 호출 후 db 에 저장
-    saved = _store().save_structured_request(payload)
 
-    # 4. JSON 문자열로 반환
+    # 4-1. save 과정에서 성공하면 saved에 결과를 담고, 실패하면 예외를 잡아 ok=False 응답을 반환한다.
+    try:
+        # _store() 를 통해 Repository(AppSqLiteStore)를 획득하고, 
+        # save_structured_request 호출 후 db 에 저장
+        saved = _store().save_structured_request(payload)
+    except Exception as exc:
+        return json_payload(
+            tool_result("save_structured_request", ok=False, error=str(exc))
+        )
+    # 4-2. 성공 시 JSON 문자열로 반환
     return json_payload(tool_result("save_structured_request", saved=saved))
 
 @tool(args_schema=SavedRequestListInput)
@@ -598,14 +614,25 @@ def personal_update_saved_schedule(
 
     # 1. store.update_schedule에 schedule_id와 수정 필드를 전달
     # None인 필드는 store가 그대로 유지해서 전달 
-    result = _store().update_schedule(
-        schedule_id,
-        title=title,
-        date=date,
-        start_time=start_time,
-        end_time=end_time,
-        attendees=attendees,
-    )
+    try:
+        result = _store().update_schedule(
+            schedule_id,
+            title=title,
+            date=date,
+            start_time=start_time,
+            end_time=end_time,
+            attendees=attendees,
+        )
+    # 호출 과정에서 실패 시 예외 처리 진행
+    except Exception as exc:
+        return json_payload(
+            tool_result(
+                "personal_update_saved_schedule",
+                ok=False,
+                schedule_id=schedule_id,
+                error=str(exc),
+            )
+        )
 
     # 2. result가 None 일 시 실패 응답 반환
     if result is None:
@@ -640,16 +667,21 @@ def personal_delete_saved_schedules(
     """Nana가 고른 일정 ID나 날짜/제목/시간 필터로 저장 일정을 삭제합니다."""
 
     # 1. _delete_saved_schedules 에 store와 삭제 조건을 넘겨 결과 dict를 받아 result 에 저장
-    result = _delete_saved_schedules(
-        store=_store(),
-        schedule_ids=schedule_ids,
-        date=date,
-        title=title,
-        start_time=start_time,
-        time_unspecified=time_unspecified,
-        delete_all=delete_all,
-    )
-
+    try:
+        result = _delete_saved_schedules(
+            store=_store(),
+            schedule_ids=schedule_ids,
+            date=date,
+            title=title,
+            start_time=start_time,
+            time_unspecified=time_unspecified,
+            delete_all=delete_all,
+        )
+    # 삭제(delete) 과정에서 삭제 진행 시 예외 처리
+    except Exception as exc:
+        return json_payload(
+            tool_result("personal_delete_saved_schedules", ok=False, error=str(exc))
+        )
     # 2. dict 결과를 JSON 문자열로 감싸서 반환 (tool은 문자열을 돌려줘야 함)
     return json_payload(result)
 
