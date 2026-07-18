@@ -558,9 +558,9 @@ def personal_list_saved_schedules(
 ) -> str:
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
-    # 1. kind 값이 있을 시 해당 kind 값을 저장
-    # 없으면 personal_schedule 를 조회
-    kind = kind or "personal_schedule"
+    # 1. kind는 넘어온 값을 그대로 쓴다.
+    # None이면 store에서 kind 필터를 걸지 않아 personal/group 모든 일정을 조회한다.
+    # (강제로 personal_schedule로 두면 group_schedule 일정이 숨겨지는 버그가 있었음)
 
     # 2. _store() 를 통해 Repository 를 호출 후
     # list_schedules 에 limit, kind, date_from, date_to 를 호출 후 결과값을
@@ -689,8 +689,14 @@ def personal_delete_saved_schedules(
 def week03_tools() -> list[Any]:
     """Week 1 도구, Week 2 구조화 helper, SQLite 저장/조회/삭제 도구를 조립합니다."""
 
+    # 단일 데이터를 삭제하는 과정에서 자꾸 모든 데이터를 삭제하는 문제가 발생하였음 이에 따라
+    # 임시메모리 기반 조회/삭제(personal_list_schedules, personal_delete_schedule)는
+    # SQLite 버전과 중복·충돌해 LLM이 잘못 고르므로 여기서 제외한다.
+    excluded = {"personal_list_schedules", "personal_delete_schedule"}
     base_tools = [
-        personal_create_schedule if _tool_name(item) == "personal_create_schedule" else item for item in week01_tools()
+        personal_create_schedule if _tool_name(item) == "personal_create_schedule" else item
+        for item in week01_tools()
+        if _tool_name(item) not in excluded
     ]
     return [
         *base_tools,
