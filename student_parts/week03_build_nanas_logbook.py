@@ -295,7 +295,7 @@ def save_structured_request_payload(
     validated = _save_input_from(request)
     payload = {k: v for k, v in validated.model_dump().items() if v is not None}
     result = store.save_structured_request(payload)
-    return tool_result("save_structured_request", ok=True, saved=result, request=payload, **result)
+    return tool_result("save_structured_request", ok=True, saved=result, request=payload)
 
 
 class SavedRequestListInput(BaseModel):
@@ -485,7 +485,7 @@ def save_structured_request(
     }
     payload = {k: v for k, v in payload.items() if v is not None}
     result = store.save_structured_request(payload)
-    return json_payload(tool_result("save_structured_request", ok=True, saved=result, request=payload, **result))
+    return json_payload(tool_result("save_structured_request", ok=True, saved=result, request=payload))
 
 
 @tool(args_schema=SavedRequestListInput)
