@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
-from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
 from student_parts.week01_wake_up_nana import (
     join_system_prompt,
@@ -41,7 +40,9 @@ WEEK03_TOOL_CALL_PROMPT = (
     "save_structured_request 인자로 그대로 전달해 SQLite에 저장합니다. "
     "personal_create_schedule은 Week 1 호환용 도구이므로 이번 주차의 저장 흐름에서는 사용하지 않습니다. "
     "저장된 일정/요청을 조회할 때는 personal_list_saved_schedules(kind/date_from/date_to 필터)를 사용하고, "
-    "request_id를 알고 있으면 get_saved_request로 단건을 확인하세요."
+    "request_id를 알고 있으면 get_saved_request로 단건을 확인하세요. "
+    "사용자가 '내 일정 보여줘'처럼 날짜를 구체적으로 언급하지 않았다면 date_from/date_to를 모두 비워(None) "
+    "호출해 전체 저장 일정을 조회하세요. 오늘 날짜나 다른 날짜로 임의로 좁히지 마세요."
 )
 
 
@@ -358,7 +359,7 @@ def save_structured_request(
         "date": date,
         "start_time": start_time,
         "end_time": end_time,
-        "members": members or [],
+        "members": members,
         "priority": priority,
         "reason": reason,
         "original_text": original_text,
@@ -482,7 +483,7 @@ def week03_prompt_parts() -> list[str]:
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
         (
-            f"오늘 날짜는 {current_app_date_iso()}입니다. 당신은 Week 3 Nana agent입니다. "
+            "당신은 Week 3 Nana agent입니다. "
             "자연어 저장/조회 요청은 SQLite 기반 tool(extract_schedule_request, save_structured_request, "
             "list_saved_requests, get_saved_request, personal_list_saved_schedules)로 처리하고, "
             "외부 공유 일정 동기화나 RAG 검색, 여러 사람 일정 조율은 이번 주차의 범위가 아닙니다."
