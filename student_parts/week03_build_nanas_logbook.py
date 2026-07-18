@@ -460,9 +460,9 @@ def personal_update_saved_schedule(
     result = store.update_schedule(schedule_id, title=title, date=date, start_time=start_time, end_time=end_time, attendees=attendees)
 
     if result is None:
-        return json_payload(tool_result("personal_update_saved_schedule", ok=False))
+        return json_payload(tool_result("personal_update_saved_schedule", ok=False, schedule_id=schedule_id))
     else:
-        return json_payload(tool_result("personal_update_saved_schedule", updated_schedule=result["schedule"], shared_sync=result["shared_sync"]))
+        return json_payload(tool_result("personal_update_saved_schedule", schedule_id=schedule_id, updated_schedule=result["schedule"], shared_sync=result["shared_sync"]))
 
 
 
