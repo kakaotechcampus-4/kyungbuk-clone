@@ -43,7 +43,7 @@ WEEK03_TOOL_CALL_PROMPT = (
     "personal_list_saved_schedules, list_saved_requests, get_saved_request 중 "
     "적절한 도구를 사용해 SQLite에서 직접 조회한 뒤 답한다. "
     "조회 결과가 비어 있으면 저장된 기록이 없다는 뜻이므로 사용자에게 없다고 안내한다. "
-    "직접 기억하거나 추측해서 답하지 않는다."
+    "직접 기억하거나 추측해서 답하지 않는다. "
     "personal_list_schedules는 Week 1의 현재 대화 전용 임시 메모리만 조회하는 도구이고, "
     "personal_list_saved_schedules는 SQLite 앱 DB에 영구 저장된 일정을 조회하는 도구다. "
     "사용자가 일정을 조회하는 요청을 하면 다른 지시가 없는 한 personal_list_saved_schedules를 사용한다."
@@ -467,20 +467,17 @@ def personal_delete_saved_schedules(
 
 
 def week03_tools() -> list[Any]:
-    """Week 1 도구, Week 2 구조화 helper, SQLite 저장/조회/삭제 도구를 조립합니다."""
+    """Week 1 도구, Week 2 구조화 helper, SQLite 저장/조회/삭제 도구를 조립합니다.
+    
+    아직 구현되지 않은 personal_update_saved_schedule, personal_delete_saved_schedules, Week1 호환 personal_create_schedule은 완성 전까지 agent에 노출하지 않습니다."""
 
-    base_tools = [
-        personal_create_schedule if _tool_name(item) == "personal_create_schedule" else item for item in week01_tools()
-    ]
     return [
-        *base_tools,
+        *week01_tools(),
         extract_schedule_request,
         save_structured_request,
         list_saved_requests,
         get_saved_request,
         personal_list_saved_schedules,
-        personal_update_saved_schedule,
-        personal_delete_saved_schedules,
     ]
 
 
@@ -497,6 +494,8 @@ def week03_prompt_parts() -> list[str]:
         *week02_prompt_parts(),
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
+        "이번 주차에서는 저장된 일정/할 일/알림의 수정과 삭제, Week 1 호환 이중 저장은 지원하지 않는다. ",
+        "사용자가 수정이나 삭제를 요청하면 아직 지원하지 않는 기능이라고 정직하게 안내한다. ",
         f"오늘 날짜는 {current_app_date_iso()}이다.",
     ]
 
