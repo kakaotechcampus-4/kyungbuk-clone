@@ -235,16 +235,29 @@ class SaveStructuredRequestInput(StructuredRequest):
     @classmethod
     def unwrap_legacy_payload(cls, value: Any) -> Any:
         """예전 trace의 payload wrapper만 짧게 풀고 실제 검증은 필드 스키마에 맡깁니다."""
-
-        # TODO: StructuredRequest와 예전 payload/structured_request wrapper를 저장 입력 형태로 정규화하세요.
+        if isinstance(value, dict) and "structured_request" in value:
+            return value["structured_request"]
+        if isinstance(value, dict) and "payload" in value:
+            return value["payload"]
         return value
 
 
 def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dict[str, Any] | str) -> SaveStructuredRequestInput:
     """저장 입력을 SaveStructuredRequestInput 하나로 모읍니다."""
 
-    # TODO: dict/JSON/자연어/StructuredRequest 입력을 SaveStructuredRequestInput으로 검증하고 정규화하세요.
-    ...
+    if isinstance(value, SaveStructuredRequestInput):
+        return value
+    if isinstance(value, StructuredRequest):
+        return SaveStructuredRequestInput(**value.model_dump())
+    if isinstance(value, dict):
+        return SaveStructuredRequestInput(**value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return SaveStructuredRequestInput(**extract_structured_request(value).model_dump())
+        return SaveStructuredRequestInput(**parsed)
+    raise ValueError(f"Unsupported type for _save_input_from: {type(value)}")
 
 
 def save_structured_request_payload(
@@ -253,10 +266,10 @@ def save_structured_request_payload(
     store: AppSQLiteStore | None = None,
 ) -> dict[str, Any]:
     """검증된 structured request를 앱 DB에 저장합니다."""
-
-    # TODO: 입력을 검증한 뒤 AppSQLiteStore.save_structured_request(...)로 저장하고 tool 결과를 반환하세요.
-    ...
-
+    validated = _save_input_from(request)
+    store = store or _store()
+    result = store.save_structured_request(validated.model_dump(exclude_none=True))
+    return tool_result("save_structured_request", **result)
 
 class SavedRequestListInput(BaseModel):
     """저장 요청 목록 조회 입력입니다."""
@@ -440,9 +453,16 @@ def delete_saved_schedules_dict(
     app_store: AppSQLiteStore | None = None,
 ) -> dict[str, Any]:
     """tool invoke 없이 저장 일정 삭제 로직을 직접 호출합니다."""
-
-    # TODO: 전달받은 store 또는 기본 store로 _delete_saved_schedules(...)를 호출하세요.
-    ...
+    store = app_store or _store()
+    return _delete_saved_schedules(
+        store=store,
+        schedule_ids=schedule_ids,
+        date=date,
+        title=title,
+        start_time=start_time,
+        time_unspecified=time_unspecified,
+        delete_all=delete_all,
+    )
 
 
 @tool(args_schema=SavedScheduleUpdateInput)
