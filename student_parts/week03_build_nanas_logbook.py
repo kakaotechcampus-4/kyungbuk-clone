@@ -31,8 +31,17 @@ _WEEK03_AGENT: Any | None = None
 SQLITE_MEMORY_PROMPT = "사용자가 만든 일정/요청은 대화가 끝나도 사라지지 않고 SQLite에 영구 저장된다. 그러니 새 대화에서도 이전 요청을 불러올 때 tool을 불러 확인한 후 대답한다"
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
-WEEK03_TOOL_CALL_PROMPT = "사용자가 일정/할 일/알림을 만들거나 수정/삭제할 때는 먼저 자연어를 구조화한 뒤 SQLite에 저장하고, 이후 조회/수정/삭제 tool을 호출한다. 새 대화에서도 이전 요청을 불러올 때는 SQLite 조회 tool을 먼저 호출한다"
-
+WEEK03_TOOL_CALL_PROMPT = (
+    "## Week 3 tool 호출 순서\n"
+    "- 새 일정/할 일/알림을 저장할 때: extract_schedule_request로 자연어를 구조화한 뒤, "
+    "그 결과를 save_structured_request 인자로 그대로 전달해 저장한다.\n"
+    "- 저장된 일정을 조회할 때: extract_schedule_request를 거치지 않고 "
+    "personal_list_saved_schedules를 날짜/종류 필터로 바로 호출한다.\n"
+    "- 저장된 일정을 수정하거나 삭제할 때: 먼저 personal_list_saved_schedules로 후보를 조회해 "
+    "schedule_id를 확인한 뒤, personal_update_saved_schedule 또는 personal_delete_saved_schedules에 "
+    "그 schedule_id(또는 명확한 필터)를 전달한다.\n"
+    "- 지목한 일정이 여러 개로 해석될 수 있으면, 바로 삭제/수정하지 않고 후보를 먼저 보여준 뒤 확인받는다.\n"
+)
 
 # [3주차 수강생 구현 가이드]
 #
@@ -333,7 +342,8 @@ def _delete_saved_schedules(
         "time_unspecified": time_unspecified,
         "delete_all": delete_all,
     }
-    has_condition = delete_all or bool(schedule_ids) or any([date, title, start_time, time_unspecified])
+    has_specific_filter = bool(schedule_ids) or any([date, title, start_time, time_unspecified])
+    has_condition = delete_all or has_specific_filter
     if not has_condition:
         return tool_result(
             "personal_delete_saved_schedules",
@@ -343,7 +353,18 @@ def _delete_saved_schedules(
             deleted=[],
             error="삭제 조건이 없습니다. schedule_ids, 날짜/제목/시간 필터, 또는 delete_all=True 중 하나가 필요합니다.",
         )
-    if delete_all:
+
+    if delete_all and has_specific_filter:
+        # delete_all과 구체적 필터가 동시에 오면, 더 좁고 안전한 쪽인 필터 삭제를 우선한다.
+        # (delete_all을 그대로 믿으면 date/title 필터가 무시되고 전체가 삭제되는 사고로 이어진다.)
+        deleted = store.delete_schedules_by_filter(
+            schedule_ids=schedule_ids,
+            date=date,
+            title=title,
+            start_time=start_time,
+            time_unspecified=time_unspecified,
+        )
+    elif delete_all:
         deleted = store.delete_all_schedules()
     else:
         deleted = store.delete_schedules_by_filter(
@@ -611,13 +632,21 @@ def week03_prompt_parts() -> list[str]:
         *week02_prompt_parts(),
         # TODO: Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가하세요.
         SQLITE_MEMORY_PROMPT,
-        WEEK03_TOOL_CALL_PROMPT,
+        WEEK03_TOOL_CALL_PROMPT,    
         # TODO: 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가하세요.
+        "## Week 1 tool 대체 안내\n"
+        "- Week 1에서 안내했던 personal_list_schedules, personal_delete_schedule tool은 "
+        "대화가 끝나면 사라지는 임시 메모리를 대상으로 하므로, Week 3부터는 사용하지 않는다.\n"
+        "- 일정을 조회할 때는 personal_list_schedules가 아니라 personal_list_saved_schedules를 사용한다.\n"
+        "- 일정을 삭제할 때는 personal_delete_schedule이 아니라 personal_delete_saved_schedules를 사용한다.\n",
         f"## Week 3 tool 선택 기준\n"
         f"- 현재 날짜 기준: {current_app_date_iso()}\n"
         f"- 일정/할 일/알림을 새로 저장할 때는 extract_schedule_request → save_structured_request 순서로 tool을 사용합니다.\n"
-        f"- 이미 저장된 내용을 확인하거나 새 대화에서 이전 요청을 참고할 때는 "
-        f"list_saved_requests, get_saved_request, personal_list_saved_schedules 중 상황에 맞는 조회 tool을 사용합니다.\n"
+        f"- 개인 일정을 조회하거나, 수정/삭제 전에 대상 schedule_id 후보를 확인해야 할 때는 "
+        f"personal_list_saved_schedules를 사용합니다.\n"
+        f"- 할 일(todo), 알림(reminder), 또는 일정 종류에 상관없이 저장된 요청 이력 전반을 확인하고 싶을 때는 "
+        f"list_saved_requests를 사용합니다.\n"
+        f"- request_id를 이미 알고 있어 그 요청 하나만 정확히 확인해야 할 때는 get_saved_request를 사용합니다.\n"
         f"- 저장된 일정을 바꾸거나 지울 때는 personal_update_saved_schedule, personal_delete_saved_schedules를 사용합니다.\n"
         f"\n"
         f"## Week 3 범위\n"
