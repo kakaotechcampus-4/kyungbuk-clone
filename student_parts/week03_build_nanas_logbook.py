@@ -232,6 +232,11 @@ class SaveStructuredRequestInput(StructuredRequest):
         """예전 trace의 payload wrapper만 짧게 풀고 실제 검증은 필드 스키마에 맡깁니다."""
 
         # TODO: StructuredRequest와 예전 payload/structured_request wrapper를 저장 입력 형태로 정규화하세요.
+        if isinstance(value, dict):
+            if "payload" in value and isinstance(value["payload"], dict):
+                return value["payload"]
+            if "structured_request" in value and isinstance(value["structured_request"], dict):
+                return value["structured_request"]
         return value
 
 
@@ -239,7 +244,23 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
     """저장 입력을 SaveStructuredRequestInput 하나로 모읍니다."""
 
     # TODO: dict/JSON/자연어/StructuredRequest 입력을 SaveStructuredRequestInput으로 검증하고 정규화하세요.
-    ...
+    if isinstance(value, SaveStructuredRequestInput): # 지원하는 형식(SaveStructuredRequestInput) 그대로 들어오면 그대로 반환
+        return value
+    elif isinstance(value, StructuredRequest): # SaveStructuredRequestInput이 아닌 형식이면 변환
+        return SaveStructuredRequestInput(**value.model_dump())
+    elif isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = None
+
+        if isinstance(parsed, dict):
+            return SaveStructuredRequestInput(**parsed)
+        
+        structured = extract_structured_request(value)
+        return SaveStructuredRequestInput(**structured.model_dump())
+    else: # 지원되지 않는 형식에 예외처리
+        raise ValueError(f"지원하지 않는 입력 타입: {type(value)}")
 
 
 def save_structured_request_payload(
