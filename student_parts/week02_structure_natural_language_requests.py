@@ -133,7 +133,7 @@ class StructuredRequestBatch(BaseModel):
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
-    """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
+    """StructuredRequest 인스턴스 또는 dict를 받아 StructuredRequest로 정규화합니다."""
 
     if isinstance(value, StructuredRequest):
         return value
@@ -163,7 +163,7 @@ def extract_structured_request(text: str) -> StructuredRequest:
 
 @tool
 def extract_schedule_request(query: str) -> str:
-    """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
+    """사용자의 자연어 요청을 kind/title/date 등이 담긴 StructuredRequest로 구조화해 JSON 문자열로 반환합니다."""
 
     structured = extract_structured_request(query)
     return json.dumps(
