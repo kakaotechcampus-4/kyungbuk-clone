@@ -50,8 +50,9 @@ WEEK03_TOOL_CALL_PROMPT = (
     "현재-대화 임시 메모리 전용 tool이므로, 앱 DB에 저장된 일정에는 절대 사용하지 않는다. "
     "DB에 저장된 일정의 조회는 반드시 personal_list_saved_schedules를, 삭제는 반드시 "
     "personal_delete_saved_schedules(복수형)를 사용한다. personal_list_saved_schedules가 돌려준 "
-    "schedule_id(sch_로 시작)는 SQLite 일정이므로, 그 삭제는 personal_delete_saved_schedules의 "
-    "schedule_ids에 담아 넘긴다."
+    "schedule_id는 접두어(sch_, personal_ 등)와 무관하게 모두 SQLite 일정이므로, 그 삭제는 "
+    "언제나 personal_delete_saved_schedules의 schedule_ids에 담아 넘긴다. schedule_id 접두어만 "
+    "보고 Week 1 임시 메모리 tool을 고르지 않는다."
 )
 
 
@@ -452,13 +453,15 @@ def save_structured_request(
 ) -> str:
     """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
 
+    # members는 args_schema(SaveStructuredRequestInput → StructuredRequest)에서
+    # list[str](default_factory=list) 비-nullable 필드로 이미 검증되므로 여기서는 항상 list다.
     payload = {
         "kind": kind,
         "title": title,
         "date": date,
         "start_time": start_time,
         "end_time": end_time,
-        "members": members if members is not None else [],
+        "members": members,
         "priority": priority,
         "reason": reason,
         "original_text": original_text,
