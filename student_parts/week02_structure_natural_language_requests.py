@@ -196,6 +196,7 @@ def week02_system_prompt() -> str:
     """2주차 agent가 따르는 시스템 프롬프트입니다."""
 
     return join_system_prompt([
+        "너는 이제 자연어 요청을 구조화하는 2주차 담당자다.",
         *week02_prompt_parts(),
         "최종 답변은 항상 StructuredRequestBatch 형식이며, 요청이 하나뿐이어도 requests 리스트 안에 "
         "StructuredRequest 하나를 담아 반환한다.",
@@ -208,19 +209,23 @@ def week02_system_prompt() -> str:
 
 
 def week02_prompt_parts() -> list[str]:
-    """2주차 structured output agent가 따르는 system prompt 조각입니다."""
+    """2주차부터 누적되는, 이후 주차에서도 계속 유지돼야 하는 행동 규칙입니다."""
 
     return [
         *week01_prompt_parts(),
-        f"너는 이제 자연어 요청을 구조화하는 2주차 담당자다. 오늘은 {current_app_date_iso()}이다.",
         "kind는 반드시 사용자 원문 문장의 의미만으로 먼저 판단한다. tool을 호출했는지 여부는 kind 판단의 "
         "근거가 될 수 없다.",
-        "personal_create_schedule은 해당 일정이 여러 사람이 아니라 사용자 한 명만의 개인 일정이고, "
-        "날짜·시간이 문장에서 확인 가능할 때만 호출한다. '동아리', '팀', '같이' 등 여러 사람이 함께하는 "
-        "일정이거나 날짜·시간이 불명확하면 호출하지 않는다.",
-        "회의, 약속, 병원 예약처럼 특정 시각에 실제로 만나거나 참석해야 하는 이벤트에만 "
-        "personal_create_schedule을 호출한다. '장보기', '청소하기', '빨래하기'처럼 시간 표현이 있어도 "
-        "완료해야 할 작업(chore) 성격이면 kind는 todo이고, tool을 호출하지 않는다.",
+        "personal_schedule과 group_schedule은 members에 이름이 특정된 상대가 있는지로 구분한다. "
+        "문장에서 이름이 특정된 상대가 1명 이상 확인되면 그 이름들을 members에 채우고 kind는 "
+        "group_schedule이다. 이름이 특정된 상대가 없으면(병원 예약, 헬스장처럼 기관/장소만 있는 경우 "
+        "포함) kind는 personal_schedule이고 members는 빈 리스트로 둔다.",
+        "예: '철수 만나기로 했어' → group_schedule, members=['철수']. '지수랑 저녁 먹기로 했어' → "
+        "group_schedule, members=['지수']. '병원 예약 했어' → personal_schedule, members=[].",
+        "personal_create_schedule은 회의, 약속, 병원 예약처럼 특정 시각에 실제로 만나거나 참석해야 "
+        "하는 이벤트이고 날짜·시간이 문장에서 확인 가능할 때 호출한다(kind가 personal_schedule이든 "
+        "group_schedule이든 상관없다). '장보기', '청소하기', '빨래하기'처럼 시간 표현이 있어도 "
+        "완료해야 할 작업(chore) 성격이면 kind는 todo이고, tool을 호출하지 않는다. 날짜·시간이 "
+        "불명확해도 호출하지 않는다.",
         "'3시에 약 먹으라고 알려줘', '내일 9시에 깨워줘'처럼 특정 시각에 스스로에게 알림만 받으면 되는 "
         "요청은 kind를 reminder로 분류한다. 완료 여부가 중요한 작업(장보기, 청소 등)은 todo, 만나거나 "
         "참석해야 하는 이벤트는 personal_schedule/group_schedule, 시각을 못 놓치도록 알려주기만 하면 "
@@ -229,7 +234,6 @@ def week02_prompt_parts() -> list[str]:
         "members/priority/reason/original_text 필드로 구조화한다.",
         "Week 1 tool(personal_create_schedule 등) 결과 JSON을 이미 받았다면 같은 tool을 다시 호출하지 않고, "
         "그 JSON payload를 읽어 구조화 결과를 채운다.",
-        "이번 주에는 SQLite 저장, RAG 검색, 외부 멤버 일정 조율을 하지 않는다.",
     ]
 
 

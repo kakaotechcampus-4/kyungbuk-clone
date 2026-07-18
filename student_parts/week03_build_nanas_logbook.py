@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from fixed.config import CONFIG
 from fixed.llm import chat_model
-from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
 from student_parts.week01_wake_up_nana import (
     join_system_prompt,
@@ -355,7 +354,7 @@ def save_structured_request(
         "date": date,
         "start_time": start_time,
         "end_time": end_time,
-        "members": members or [],
+        "members": members,
         "priority": priority,
         "reason": reason,
         "original_text": original_text,
@@ -467,18 +466,20 @@ def week03_tools() -> list[Any]:
 def week03_system_prompt() -> str:
     """3주차 단일 agent가 따르는 시스템 프롬프트입니다."""
 
-    return join_system_prompt(week03_prompt_parts())
+    return join_system_prompt([
+        "너는 이제 SQLite 기록장을 갖춘 3주차 담당자다. "
+        "이번 주 범위는 SQLite 저장/조회/수정/삭제까지이며, RAG 검색이나 외부 멤버 일정 조율은 하지 않는다.",
+        *week03_prompt_parts(),
+    ])
 
 
 def week03_prompt_parts() -> list[str]:
-    """1~3주차 system prompt 조각을 누적합니다."""
+    """1~3주차부터 누적되는, 이후 주차에서도 계속 유지돼야 하는 행동 규칙입니다."""
 
     return [
         *week02_prompt_parts(),
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
-        f"너는 이제 SQLite 기록장을 갖춘 3주차 담당자다. 오늘은 {current_app_date_iso()}이다. "
-        "이번 주 범위는 SQLite 저장/조회/수정/삭제까지이며, RAG 검색이나 외부 멤버 일정 조율은 하지 않는다.",
     ]
 
 

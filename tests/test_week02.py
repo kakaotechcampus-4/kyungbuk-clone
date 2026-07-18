@@ -222,13 +222,6 @@ def test_week02_prompt_parts_mentions_today_date():
     assert current_app_date_iso() in combined
 
 
-def test_week02_prompt_parts_forbids_sqlite_rag_and_external_coordination():
-    combined = "\n".join(week02_prompt_parts())
-    assert "SQLite" in combined
-    assert "RAG" in combined
-    assert "외부" in combined
-
-
 def test_week02_prompt_parts_instructs_reuse_of_tool_json():
     combined = "\n".join(week02_prompt_parts())
     assert "다시 호출하지 않" in combined
