@@ -237,15 +237,48 @@ class SaveStructuredRequestInput(StructuredRequest):
     def unwrap_legacy_payload(cls, value: Any) -> Any:
         """예전 trace의 payload wrapper만 짧게 풀고 실제 검증은 필드 스키마에 맡깁니다."""
 
-        # TODO: StructuredRequest와 예전 payload/structured_request wrapper를 저장 입력 형태로 정규화하세요.
+        # 입력값이 dict 객체 형태일 경우(key=value 형태일 경우)
+        # 실제 value 값을 꺼내 반환(key 값을 제외하고 value 값만을 꺼내는 과정 진행)
+        if isinstance(value, dict):
+            if isinstance(value.get("payload"), dict):
+                return value["payload"]
+            if isinstance(value.get("structured_request"), dict):
+                return value["structured_request"]
+        # dict 형태가 아닐 경우 value 자체를 반환
         return value
 
 
 def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dict[str, Any] | str) -> SaveStructuredRequestInput:
     """저장 입력을 SaveStructuredRequestInput 하나로 모읍니다."""
 
-    # TODO: dict/JSON/자연어/StructuredRequest 입력을 SaveStructuredRequestInput으로 검증하고 정규화하세요.
-    ...
+    # 1. value 가 처음부터 SaveStructuredRequestInput 일 경우 그대로 반환
+    if isinstance(value, SaveStructuredRequestInput):
+        return value
+
+    # 2. 부모 객체인 StructuredRequest 일 경우 dict 객체로 풀어 SaveStructuredRequestInput으로 재검증 후 반환
+    if isinstance(value, StructuredRequest):
+        return SaveStructuredRequestInput.model_validate(value.model_dump())
+
+    # 3. dict 일 경우 바로 검증한다.
+    if isinstance(value, dict):
+        return SaveStructuredRequestInput.model_validate(value)
+
+    # 4. 문자열이면 먼저 JSON인지 검사하고, JSON이 아닐 경우 Week2 구조화를 거쳐서 반환
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = None
+        # 4-1. JSON dict 일 경우 그대로 검증
+        if isinstance(parsed, dict):
+            return SaveStructuredRequestInput.model_validate(parsed)
+        # 4-2. JSON이 아닐고 자연어(일반 텍스트)일 경우 extract_structured_request로 구조화 후 변환 후 반환
+        structured = extract_structured_request(text)
+        return SaveStructuredRequestInput.model_validate(structured.model_dump())
+
+    # 5. 위 어디에도 안 맞으면 지원하지 않는 형태
+    raise TypeError(f"지원하지 않는 저장 입력 형태입니다: {type(value)!r}")
 
 
 def save_structured_request_payload(
@@ -255,8 +288,17 @@ def save_structured_request_payload(
 ) -> dict[str, Any]:
     """검증된 structured request를 앱 DB에 저장합니다."""
 
-    # TODO: 입력을 검증한 뒤 AppSQLiteStore.save_structured_request(...)로 저장하고 tool 결과를 반환하세요.
-    ...
+    # 1.  _save_input_from으로 SaveStructuredRequestInput 으로 변환 후 save_input 에 저장
+    save_input = _save_input_from(request)
+
+    # 2. store 가 없을 시 새로 생성하여 반환 후 store 에 저장
+    store = store or _store()
+
+    # 3. 객체를 dict로 반환 후 저장. None 필드는 제외하고 저장
+    saved = store.save_structured_request(save_input.model_dump(exclude_none=True))
+
+    # 4. 저장 결과를 tool 결과 dict로 반환 (JSON 문자열 변환은 호출하는 쪽이 담당)
+    return tool_result("save_structured_request", saved=saved)
 
 
 class SavedRequestListInput(BaseModel):
