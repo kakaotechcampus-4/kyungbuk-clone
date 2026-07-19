@@ -170,13 +170,13 @@ def extract_schedule_request(query: str) -> str:
     """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
     structured_request: dict[str, Any] | None
     try: 
-        structured_request = extract_structured_request(query)
+        structured_request = extract_structured_request(query).model_dump()
     except:
         structured_request = None
     res = {
         **structured_request,
         "ok": structured_request is not None,
-        "tool_name": extract_schedule_request.__name__,
+        "tool_name": extract_schedule_request.name,
         "base_date": current_app_date_iso()
     }
     ret = json.dumps(res, ensure_ascii=False)
