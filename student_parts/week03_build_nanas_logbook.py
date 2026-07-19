@@ -11,7 +11,6 @@ from fixed.config import CONFIG
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
-from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 from student_parts.week01_wake_up_nana import (
     join_system_prompt,
     personal_create_schedule as week01_personal_create_schedule,
@@ -382,20 +381,6 @@ def _delete_saved_schedules(
     )
 
 
-def _current_user_message() -> str:
-    """현재 대화의 마지막 사용자 메시지를 앱 DB에서 읽어 옵니다.
-
-    agent 실행 직전에 사용자 메시지가 messages 테이블에 먼저 저장되므로(fixed/agent_runtime.py),
-    tool 실행 중에는 이 값이 곧 이번 요청의 원문이다. 대화 밖 직접 호출이면 빈 문자열을 반환한다.
-    """
-
-    session_id = current_session_scope()
-    if session_id == DEFAULT_SESSION_SCOPE:
-        return ""
-    user_rows = [row for row in _store().load_conversation(session_id) if row["role"] == "user"]
-    return user_rows[-1]["content"] if user_rows else ""
-
-
 def _time_or_none(value: str | None) -> str | None:
     """Week 1의 '미정'/빈 문자열 sentinel을 Week 3 스키마 규칙(모르는 값은 None)으로 바꿉니다."""
 
@@ -439,8 +424,7 @@ def personal_create_schedule(
 ) -> str:
     """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다.
 
-    사용자 요청 원문은 앱이 대화 기록에서 자동으로 채웁니다.
-    original_text는 대화 밖에서 직접 호출할 때만 원문을 넘기는 용도입니다.
+    original_text에는 사용자의 이번 요청 문장을 요약하지 말고 원문 그대로 담습니다.
     """
 
     # 먼저 Week 1 tool을 그대로 호출해 현재 대화의 임시 메모리에 일정을 만든다.
@@ -457,12 +441,10 @@ def personal_create_schedule(
     schedule = created.get("created_schedule") or {}
     # 같은 내용을 Week 3 저장 입력으로 바꿔 SQLite에도 저장한다(이중 기록).
     save_input = structured_request_from_week01_schedule(schedule)
-    # 원문 보존은 LLM의 인자 복사에 맡기지 않고, 이번 실행이 속한 대화의 마지막 사용자
-    # 메시지를 앱 DB에서 직접 읽어 확정한다. 대화 밖 직접 호출은 original_text 인자를,
-    # 그것도 없으면 변환 fallback(JSON)을 쓴다.
-    user_text = _current_user_message() or original_text
-    if user_text:
-        save_input.original_text = user_text
+    # 사용자 원문이 넘어왔으면 변환 fallback 대신 원문으로 확정해 채운다.
+    # (extract_schedule_request가 query 인자로 원문을 받는 것과 같은 Week 2 방식으로 두 저장 경로를 통일)
+    if original_text:
+        save_input.original_text = original_text
     sqlite_save = save_structured_request_payload(save_input)
     return json_payload(
         {
