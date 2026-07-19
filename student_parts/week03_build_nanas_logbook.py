@@ -43,6 +43,9 @@ WEEK03_TOOL_CALL_PROMPT = (
     "특히 참석자·멤버가 있는 일정은 personal_create_schedule로 만들지 말고 "
     "반드시 extract_schedule_request → save_structured_request 경로로 저장해 group_schedule로 분류되게 한다. "
     "저장된 일정 조회는 personal_list_saved_schedules를 쓴다. "
+    "이 tool은 kind를 안 주면 personal_schedule만 보여주므로, 일정을 조회하거나 수정/삭제 후보를 찾을 때는 "
+    "kind=group_schedule로도 한 번 더 호출해 그룹 일정까지 합쳐서 확인한다. "
+    "'전부'나 '모든 기록'을 물으면 list_saved_requests(kind 미지정)로 할 일·알림까지 함께 확인한다. "
     "수정/삭제는 먼저 personal_list_saved_schedules로 schedule_id 후보를 확인한 뒤 "
     "personal_update_saved_schedule 또는 personal_delete_saved_schedules를 호출한다. "
     "삭제할 때는 schedule_ids나 날짜/제목/시간 필터를 반드시 명시하고, "
@@ -379,22 +382,26 @@ def _delete_saved_schedules(
     )
 
 
+def _time_or_none(value: str | None) -> str | None:
+    """Week 1의 '미정'/빈 문자열 sentinel을 Week 3 스키마 규칙(모르는 값은 None)으로 바꿉니다."""
+
+    if value is None or value.strip() in ("", "미정"):
+        return None
+    return value
+
+
 def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
     attendees = schedule.get("attendees") or []
-    end_time = schedule.get("end_time")
-    # Week 1은 종료 시각을 모르면 "미정" 문자열을 쓰지만, Week 3 저장 스키마는 모르는 값을 None으로 둔다.
-    if end_time == "미정":
-        end_time = None
     return SaveStructuredRequestInput(
         # personal_create_schedule 경로로 만든 일정이므로 kind는 personal_schedule로 고정한다.
         # 참석자 기반 group 분류는 extract_schedule_request → save_structured_request 경로에서 LLM이 정한다.
         kind="personal_schedule",
         title=schedule.get("title"),
         date=schedule.get("date"),
-        start_time=schedule.get("start_time"),
-        end_time=end_time,
+        start_time=_time_or_none(schedule.get("start_time")),
+        end_time=_time_or_none(schedule.get("end_time")),
         members=attendees,
         original_text=json.dumps(schedule, ensure_ascii=False),
         source_schedule_id=schedule.get("id"),
@@ -451,23 +458,24 @@ def save_structured_request(
 ) -> str:
     """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
 
-    # args_schema(SaveStructuredRequestInput)가 검증을 끝낸 인자이므로 저장 dict만 만든다.
-    payload = {
-        "kind": kind,
-        "title": title,
-        "date": date,
-        "start_time": start_time,
-        "end_time": end_time,
-        "members": members or [],
-        "priority": priority,
-        "reason": reason,
-        "original_text": original_text,
-        "source_schedule_id": source_schedule_id,
-    }
-    # 모르는 값(None)은 raw_json에 null로 남기지 않고 아예 뺀다.
-    payload = {key: value for key, value in payload.items() if value is not None}
-    saved = _store().save_structured_request(payload)
-    return json_payload(tool_result("save_structured_request", **saved))
+    # 저장 규칙(None 제외, store 호출)은 save_structured_request_payload 한 곳에 모은다.
+    # tool은 args_schema가 검증한 인자를 dict로 모아 helper에 넘기는 입구 역할만 한다.
+    return json_payload(
+        save_structured_request_payload(
+            {
+                "kind": kind,
+                "title": title,
+                "date": date,
+                "start_time": start_time,
+                "end_time": end_time,
+                "members": members or [],
+                "priority": priority,
+                "reason": reason,
+                "original_text": original_text,
+                "source_schedule_id": source_schedule_id,
+            }
+        )
+    )
 
 
 @tool(args_schema=SavedRequestListInput)
