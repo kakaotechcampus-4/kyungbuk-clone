@@ -329,7 +329,7 @@ def _delete_saved_schedules(
     """삭제 guard와 DB 호출을 한 곳에 둡니다."""
 
     if not delete_all and not any([schedule_ids, date, title, start_time, time_unspecified]):
-        return tool_result("personal_delete_saved_schedules", ok=False, error="삭제 조건이 필요합니다.")
+        return tool_result("personal_delete_saved_schedules", ok=False, deleted=[], deleted_count=0, filters={"schedule_ids": schedule_ids, "date": date, "title": title, "start_time": start_time, "time_unspecified": time_unspecified}, error="삭제 조건이 필요합니다.")
     
     if delete_all is True:
         deleted = store.delete_all_schedules()
