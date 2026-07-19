@@ -399,9 +399,8 @@ def personal_list_saved_schedules(
 ) -> str:
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
-    effective_kind = kind or "personal_schedule"
-    schedules = _store().list_schedules(limit=limit, kind=effective_kind, date_from=date_from, date_to=date_to)
-    filters = {"kind": effective_kind, "date_from": date_from, "date_to": date_to, "limit": limit}
+    schedules = _store().list_schedules(limit=limit, kind=kind, date_from=date_from, date_to=date_to)
+    filters = {"kind": kind, "date_from": date_from, "date_to": date_to, "limit": limit}
     return json_payload(tool_result("personal_list_saved_schedules", filters=filters, schedules=schedules))
 
 
