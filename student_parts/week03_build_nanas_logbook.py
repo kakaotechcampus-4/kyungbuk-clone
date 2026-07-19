@@ -38,8 +38,11 @@ WEEK03_TOOL_CALL_PROMPT = """
 자연어 일정, 할 일, 알림을 저장할 때는 extract_schedule_request로 먼저 구조화하고,
 그 결과의 structured_request 필드를 save_structured_request 인자로 그대로 전달한다.
 저장 요청에는 구조화만 하고 끝내지 말고 반드시 SQLite 저장 결과까지 확인한다.
-저장 요청 조회에는 list_saved_requests 또는 personal_list_saved_schedules를 사용한다.
-수정과 삭제 전에는 personal_list_saved_schedules로 후보와 schedule_id를 확인한 뒤,
+일정 목록이나 캘린더 내용을 묻는 요청에는 personal_list_saved_schedules를 사용한다.
+이 tool은 정규화된 schedules row와 수정·삭제에 필요한 schedule_id를 반환한다.
+할 일, 알림, 분류 불가 요청 또는 저장된 구조화 요청의 이력을 묻는 경우에는 list_saved_requests를 사용한다.
+특정 request_id의 원본 구조화 기록을 묻는 경우에는 get_saved_request를 사용한다.
+수정과 삭제 전에는 personal_list_saved_schedules로 일정 후보와 schedule_id를 확인한 뒤,
 확인된 ID 또는 사용자가 명시한 필터만 수정/삭제 tool에 전달한다.
 삭제 조건이 불명확하면 추측해서 전체 삭제하지 말고 사용자에게 대상을 확인한다.
 """.strip()
