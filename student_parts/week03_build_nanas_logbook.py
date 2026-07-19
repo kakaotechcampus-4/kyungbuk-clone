@@ -42,10 +42,9 @@ WEEK03_TOOL_CALL_PROMPT = (
     "save_structured_request 인자로 그대로 전달해 SQLite에 저장한다. "
     "특히 참석자·멤버가 있는 일정은 personal_create_schedule로 만들지 말고 "
     "반드시 extract_schedule_request → save_structured_request 경로로 저장해 group_schedule로 분류되게 한다. "
-    "저장된 일정 조회는 personal_list_saved_schedules를 쓴다. "
-    "이 tool은 kind를 안 주면 personal_schedule만 보여주므로, 일정을 조회하거나 수정/삭제 후보를 찾을 때는 "
-    "kind=group_schedule로도 한 번 더 호출해 그룹 일정까지 합쳐서 확인한다. "
-    "'전부'나 '모든 기록'을 물으면 list_saved_requests(kind 미지정)로 할 일·알림까지 함께 확인한다. "
+    "저장된 일정 조회와 수정/삭제 후보 확인은 personal_list_saved_schedules를 쓴다. "
+    "kind를 지정하지 않으면 개인 일정과 그룹 일정이 모두 나오므로, 특정 종류만 좁혀 볼 때만 kind를 지정한다. "
+    "할 일과 알림까지 포함한 '모든 기록' 질문은 list_saved_requests(kind 미지정)로 확인한다. "
     "수정/삭제는 먼저 personal_list_saved_schedules로 schedule_id 후보를 확인한 뒤 "
     "personal_update_saved_schedule 또는 personal_delete_saved_schedules를 호출한다. "
     "삭제할 때는 schedule_ids나 날짜/제목/시간 필터를 반드시 명시하고, "
@@ -403,7 +402,12 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
         start_time=_time_or_none(schedule.get("start_time")),
         end_time=_time_or_none(schedule.get("end_time")),
         members=attendees,
-        original_text=json.dumps(schedule, ensure_ascii=False),
+        # 원문 보존 필드에는 사용자가 요청한 내용만 남긴다. id/created_at/session_id 같은
+        # 실행 메타데이터는 원문이 아니고 검색(search_saved_requests)에도 노이즈만 된다.
+        original_text=json.dumps(
+            {key: schedule.get(key) for key in ("title", "date", "start_time", "end_time", "attendees")},
+            ensure_ascii=False,
+        ),
         source_schedule_id=schedule.get("id"),
     )
 
@@ -507,10 +511,12 @@ def personal_list_saved_schedules(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
+    """앱 DB에 저장된 일정 목록을 반환합니다. kind를 지정하지 않으면 개인+그룹 일정을 모두 조회하고,
+    특정 종류만 볼 때 kind로 좁힙니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
-    # kind를 지정하지 않으면 개인 일정을 기본으로 조회한다.
-    kind = kind or "personal_schedule"
+    # kind 미지정이면 개인+그룹 일정을 모두 조회한다. schedules 테이블에는 일정 kind만 들어 있어
+    # 할 일/알림이 섞이지 않는다. "그룹은 kind를 바꿔 한 번 더 조회"같은 프롬프트 지시는
+    # LLM이 빠뜨릴 수 있으므로, 기본 조회 범위는 tool이 보장한다.
     filters = {"limit": limit, "kind": kind, "date_from": date_from, "date_to": date_to}
     schedules = _store().list_schedules(limit=limit, kind=kind, date_from=date_from, date_to=date_to)
     return json_payload(tool_result("personal_list_saved_schedules", filters=filters, schedules=schedules))
