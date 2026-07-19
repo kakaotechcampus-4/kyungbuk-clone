@@ -402,8 +402,9 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
         start_time=_time_or_none(schedule.get("start_time")),
         end_time=_time_or_none(schedule.get("end_time")),
         members=attendees,
-        # 원문 보존 필드에는 사용자가 요청한 내용만 남긴다. id/created_at/session_id 같은
-        # 실행 메타데이터는 원문이 아니고 검색(search_saved_requests)에도 노이즈만 된다.
+        # 사용자 원문이 없는 호출(테스트/직접 invoke)을 위한 fallback이다. 원문이 있으면
+        # 호출한 쪽(personal_create_schedule)이 이 값을 원문으로 덮어쓴다.
+        # id/created_at/session_id 같은 실행 메타데이터는 원문이 아니고 검색에도 노이즈라 뺀다.
         original_text=json.dumps(
             {key: schedule.get(key) for key in ("title", "date", "start_time", "end_time", "attendees")},
             ensure_ascii=False,
@@ -419,8 +420,12 @@ def personal_create_schedule(
     start_time: str,
     end_time: str = "미정",
     attendees: list[str] | None = None,
+    original_text: str = "",
 ) -> str:
-    """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다."""
+    """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다.
+
+    original_text에는 사용자의 이번 요청 문장을 요약하지 말고 원문 그대로 담습니다.
+    """
 
     # 먼저 Week 1 tool을 그대로 호출해 현재 대화의 임시 메모리에 일정을 만든다.
     raw = week01_personal_create_schedule.invoke(
@@ -436,6 +441,10 @@ def personal_create_schedule(
     schedule = created.get("created_schedule") or {}
     # 같은 내용을 Week 3 저장 입력으로 바꿔 SQLite에도 저장한다(이중 기록).
     save_input = structured_request_from_week01_schedule(schedule)
+    # 사용자 원문이 넘어왔으면 변환 fallback 대신 원문으로 확정해 채운다.
+    # (Week 2 extract_structured_request가 original_text를 입력 text로 확정하는 것과 같은 보존 방식)
+    if original_text:
+        save_input.original_text = original_text
     sqlite_save = save_structured_request_payload(save_input)
     return json_payload(
         {
