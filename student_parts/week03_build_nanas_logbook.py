@@ -27,7 +27,7 @@ from student_parts.week02_structure_natural_language_requests import (
 
 _WEEK03_AGENT: Any | None = None
 
-# 메인 과제 기준으로 작성 (추가 과제 기능은 [미구현] 표시로 남기고, 요청 시 솔직히 안내)
+# 새 대화에서도 SQLite 일정/할 일/알림을 조회할 수 있도록 Week 3 영속 메모리 규칙을 작성
 SQLITE_MEMORY_PROMPT = """
 [영속 기억 지침]
 - 사용자가 일정/할 일/알림을 물으면, 새 대화이거나 앱을 재시작한 경우라도 반드시 list_saved_requests 또는
@@ -37,19 +37,15 @@ SQLITE_MEMORY_PROMPT = """
   실제 저장 여부·날짜·시간 등 사실 정보의 근거로는 항상 tool 조회 결과를 우선한다.
 - 새 일정/요청 저장은 절대 대화 기억에만 반영하지 않고, 반드시 save_structured_request 호출을 통해
   SQLite에 실제로 반영한다.
-- [미구현 안내] 저장된 일정의 수정/삭제는 아직 구현되지 않았다. 사용자가 수정/삭제를 요청하면
-  tool을 호출하지 말고 아직 지원되지 않는 기능이라고 솔직하게 답한다.
 """
 
-# 메인 과제 기준으로 작성 (추가 과제 기능은 [미구현] 표시로 남기고, 요청 시 솔직히 안내)
+# 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성
 WEEK03_TOOL_CALL_PROMPT = """
 [Tool 호출 순서 규칙]
 - 자연어 요청을 저장할 때는 먼저 extract_schedule_request로 구조화한 뒤,
   그 결과의 kind/title/date/start_time/end_time/members/priority/reason/original_text 필드를
   save_structured_request 인자로 그대로 전달해 저장을 완료한다. 이미 구조화된 값이 있다면
   extract_schedule_request를 다시 호출하지 않는다.
-- 저장된 요청/일정을 확인할 때는 list_saved_requests(목록) 또는 get_saved_request(단건),
-  personal_list_saved_schedules로 조회한다.
 - [미구현 안내] personal_update_saved_schedule(일정 수정), personal_delete_saved_schedules(일정 삭제),
   personal_create_schedule(Week 1 호환 생성)은 아직 구현되지 않았다. 사용자가 이 기능들을 요청하면
   tool을 호출하지 말고 아직 구현되지 않았다고 솔직하게 답한다.
@@ -376,8 +372,8 @@ def save_structured_request(
         "source_schedule_id": source_schedule_id,
     }
     data = { key: value for key, value in data.items() if value is not None }
-    _store().save_structured_request(data)
-    return json_payload(tool_result(tool_name="save_structured_request", ok=True, **data))
+    stored_data = _store().save_structured_request(data)
+    return json_payload(tool_result(tool_name="save_structured_request", ok=True, **stored_data))
 
 # 메인 구현
 @tool(args_schema=SavedRequestListInput)
@@ -410,7 +406,7 @@ def personal_list_saved_schedules(
     """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
 
     filters = { "limit": limit, "kind": kind, "date_from": date_from, "date_to": date_to }
-    schedules = _store().list_saved_requests(kind=kind, date_from=date_from, date_to=date_to, limit=limit)
+    schedules = _store().list_schedules(kind=kind, date_from=date_from, date_to=date_to, limit=limit)
     return json_payload(tool_result(tool_name="personal_list_saved_schedules", ok=True, filters=filters, schedules=schedules))
 
 
@@ -490,6 +486,7 @@ def week03_prompt_parts() -> list[str]:
     # 메인 과제 기준으로 작성 (추가 과제 기능은 [미구현] 표시로 남기고, 요청 시 솔직히 안내)
     return [
         *week02_prompt_parts(),
+        # Week 2 구조화 결과를 Week 3 SQLite 저장 흐름으로 연결하는 지시를 추가
         """
         [Week 2 → Week 3 연결 규칙]
         - Week 2까지는 구조화(StructuredRequestBatch)로 끝났지만, Week 3부터는 사용자가 "저장해줘/기록해줘"처럼
@@ -499,6 +496,7 @@ def week03_prompt_parts() -> list[str]:
         """,
         SQLITE_MEMORY_PROMPT,
         WEEK03_TOOL_CALL_PROMPT,
+        # 현재 날짜, Week 3 tool 선택 기준, 이번 주차의 범위를 설명하는 agent 지시를 추가
         f"""
         [역할]
         너는 이제 기록장(SQLite)을 가진 '나나'다. 오늘은 {current_app_date_iso()}이다. 상대 날짜는 이 날짜 기준으로 해석한다.
@@ -507,9 +505,7 @@ def week03_prompt_parts() -> list[str]:
         - 새 구조화 요청 저장: save_structured_request
         - 저장된 원본 요청 조회: list_saved_requests(목록) / get_saved_request(단건)
         - 일정 목록 확인: personal_list_saved_schedules
-        - [미구현] 일정 수정: personal_update_saved_schedule / 일정 삭제: personal_delete_saved_schedules /
-          Week 1 호환 생성: personal_create_schedule — 아직 구현되지 않았으니 호출하지 말고,
-          사용자가 요청하면 아직 지원되지 않는 기능이라고 솔직하게 답한다.
+        - 그 외 수정/삭제/생성 관련 tool의 구현 여부는 위 [Tool 호출 순서 규칙]의 미구현 안내를 따른다.
 
         [Week 3 범위 제한]
         - Week 3에서도 RAG 검색과 외부 멤버 일정 조율(가용성 확인, 초대 등)은 하지 않는다.
