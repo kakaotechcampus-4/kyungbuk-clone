@@ -56,6 +56,24 @@ _WEEK02_AGENT: Any | None = None
 #        ./run.sh --week2가 동작하게 합니다.
 #      - 개인 일정 생성 요청에서는 Week 1 personal_create_schedule tool 결과의 created_schedule JSON을
 #        LLM이 읽어 StructuredRequestBatch로 최종 변환하는 흐름을 확인합니다.
+
+# 추가 과제 구현 대상
+#   1. _coerce_structured_request
+#      - LangChain structured output 결과가 이미 StructuredRequest이면 그대로 반환합니다.
+#      - dict이면 StructuredRequest.model_validate(...)로 검증해 반환합니다.
+#      - 예상한 형태가 아니면 RuntimeError를 발생시켜 잘못된 LLM 응답을 조용히 통과시키지 않습니다.
+#
+#   2. extract_structured_request
+#      - chat_model().with_structured_output(StructuredRequest, method="function_calling")를 사용합니다.
+#      - system 메시지에는 join_system_prompt(week02_prompt_parts())를 넣고,
+#        user 메시지에는 text를 넣어 structured LLM을 호출합니다.
+#      - 자연어 또는 JSON 문자열을 StructuredRequest 하나로 검증/구조화합니다.
+#
+#   3. extract_schedule_request
+#      - extract_structured_request(query) 결과에 ok/tool_name/base_date를 붙입니다.
+#      - structured_request에는 model_dump() 결과를 넣고, json.dumps(..., ensure_ascii=False)로 반환합니다.
+#      - Week 3 이상 저장 tool이 structured_request 필드를 그대로 받을 수 있게 만듭니다.
+
 #
 # StructuredRequest 읽는 법
 #   - kind: personal_schedule, group_schedule, todo, reminder, unknown 중 하나입니다.
@@ -137,21 +155,44 @@ class StructuredRequestBatch(BaseModel):
 def _coerce_structured_request(value: Any) -> StructuredRequest:
     """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
 
-    ...
-
+    if isinstance(value, StructuredRequest):
+        return value
+    if isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
+    raise RuntimeError(
+        "StructuredRequest 또는 dict 형태의 structured output이 필요합니다. "
+        f"현재 타입: {type(value).__name__}"
+    )
 
 def extract_structured_request(text: str) -> StructuredRequest:
     """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
 
-    ...
-
+    structured_model = chat_model().with_structured_output(
+        StructuredRequest,
+        method="function_calling",
+    )
+    result = structured_model.invoke(
+        [
+            {"role": "system", "content": join_system_prompt(week02_prompt_parts())},
+            {"role": "user", "content": text},
+        ]
+    )
+    return _coerce_structured_request(result)
 
 @tool
 def extract_schedule_request(query: str) -> str:
     """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
 
-    ...
-
+    structured = extract_structured_request(query)
+    return json.dumps(
+        {
+            "ok": True,
+            "tool_name": "extract_schedule_request",
+            "base_date": current_app_date_iso(),
+            "structured_request": structured.model_dump(),
+        },
+        ensure_ascii=False,
+    )
 
 def week02_tools() -> list[Any]:
     """Week 2 agent에 Week 1 도구를 노출해 tool JSON을 structured_response 근거로 씁니다."""
