@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from fixed.config import CONFIG
@@ -118,22 +119,45 @@ class StructuredRequestBatch(BaseModel):
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
-    """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
+    """LLM structured output 결과(StructuredRequest 또는 dict)를 StructuredRequest로 정규화합니다."""
 
-    ...
+    if isinstance(value, StructuredRequest):
+        return value
+    if isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
+    raise TypeError(f"StructuredRequest로 변환할 수 없는 값입니다: {type(value)!r}")
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
-    """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
+    """자연어 또는 Week 1 tool JSON 문자열을 오늘 날짜 기준으로 StructuredRequest로 구조화합니다."""
 
-    ...
+    structured_llm = chat_model().with_structured_output(StructuredRequest)
+    messages = [
+        SystemMessage(
+            content=f"오늘 날짜는 {current_app_date_iso()}이다. 이 날짜를 기준으로 상대 날짜(내일, 다음 주 등)를 해석해서 "
+            "사용자 요청을 StructuredRequest로 구조화하라."
+        ),
+        HumanMessage(content=text),
+    ]
+    result = structured_llm.invoke(messages)
+    return _coerce_structured_request(result)
 
 
 @tool
 def extract_schedule_request(query: str) -> str:
-    """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
+    """자연어 일정/할 일/알림 요청을 오늘 날짜 기준으로 구조화해 JSON으로 반환합니다.
+    Week 3 이상에서 SQLite 저장 tool을 호출하기 전에 사용합니다."""
 
-    ...
+    structured = extract_structured_request(query)
+    return json.dumps(
+        {
+            "ok": True,
+            "tool_name": "extract_schedule_request",
+            "base_date": current_app_date_iso(),
+            "structured_request": structured.model_dump(),
+        },
+        ensure_ascii=False,
+    )
 
 
 def week02_tools() -> list[Any]:
