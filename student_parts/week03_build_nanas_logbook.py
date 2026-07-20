@@ -325,9 +325,19 @@ def _delete_saved_schedules(
 def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStructuredRequestInput:
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
-    # TODO: Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
-    ...
-
+    # Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
+    return SaveStructuredRequestInput(
+        title=schedule.get("title"),
+        date=schedule.get("date"),
+        start_time=schedule.get("start_time"),
+        end_time=schedule.get("end_time"),
+        members=schedule.get("attendees") or [],
+        priority=None,
+        reason=None,
+        original_text="",
+        kind="personal_schedule",
+        source_schedule_id=schedule.get("id")
+    )
 
 @tool("personal_create_schedule")
 def personal_create_schedule(
@@ -341,7 +351,19 @@ def personal_create_schedule(
 
     # TODO: Week 1 임시 일정 tool을 호출한 뒤 결과를 StructuredRequest로 바꿔 SQLite에도 저장하세요.
     # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
-    ...
+    created = json.loads(week01_personal_create_schedule.invoke({
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "attendees": attendees,
+    }))
+    schedule = created["created_schedule"]
+    structured_schedule = structured_request_from_week01_schedule(schedule)
+    data = { key: value for key, value in structured_schedule.model_dump().items() if value is not None }
+    stored_data = _store.save_structured_request(data)
+    
+    return json_payload(tool_result(tool_name="save_structured_request", ok=True, **stored_data))
 
 # 메인 구현
 @tool(args_schema=SaveStructuredRequestInput)
@@ -469,8 +491,9 @@ def week03_tools() -> list[Any]:
         list_saved_requests,
         get_saved_request,
         personal_list_saved_schedules,
-        personal_update_saved_schedule,
-        personal_delete_saved_schedules,
+        # 추후 추가 과제 수행 예정
+        # personal_update_saved_schedule,
+        # personal_delete_saved_schedules,
     ]
 
 
