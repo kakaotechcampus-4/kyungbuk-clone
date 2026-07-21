@@ -158,22 +158,64 @@ class StructuredRequestBatch(BaseModel):
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
-    """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
+    """LLM structured output 결과를 StructuredRequest 하나로 정규화합니다.
 
-    ...
+    with_structured_output이 리턴하는 값은 실행 환경에 따라 이미 StructuredRequest
+    인스턴스일 수도, 그 필드를 담은 dict일 수도 있습니다. 둘 다 여기서 StructuredRequest로
+    통일해서 이후 코드가 항상 같은 타입을 다루게 합니다. 그 외 타입은 정규화할 방법이
+    없으므로 TypeError를 던집니다.
+    """
+
+    if isinstance(value,StructuredRequest) :
+        return value
+    if isinstance(value,dict):
+        return StructuredRequest.model_validate(value)
+    raise TypeError("dict/StructuredRequest type만이 사용되야합니다.")
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
-    """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
+    """자연어 문장 하나를 별도 LLM 호출로 구조화해 StructuredRequest 하나를 반환합니다.
 
-    ...
+    Week 2 agent와 달리 이 함수는 batch(StructuredRequestBatch)가 아니라 단건만 다루는
+    "bridge" 함수입니다. Week 3 이상에서 agent를 새로 띄우지 않고, 이미 만든 chat_model에
+    with_structured_output(StructuredRequest)을 붙여 즉석에서 자연어를 구조화할 때 씁니다.
+    system 메시지는 Week 2 system prompt를 그대로 재사용해 구조화 기준(kind 판단 규칙,
+    priority 규칙 등)을 동일하게 따르게 합니다.
+    """
+
+    structured_model = chat_model().with_structured_output(
+        StructuredRequest,
+        method = "function_calling"
+    )
+
+    result = structured_model.invoke([
+        {"role": "system", "content": week02_system_prompt()},
+        {"role": "user", "content" : text}
+    ])
+
+    return _coerce_structured_request(result)
 
 
 @tool
 def extract_schedule_request(query: str) -> str:
-    """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
+    """Week 3 이상 agent가 저장/조회 전에 호출하는 구조화 bridge tool입니다.
 
-    ...
+    사용자의 자연어 요청(query)을 extract_structured_request로 구조화한 뒤,
+    그 StructuredRequest를 그대로 저장 tool(save_structured_request)에 넘길 수 있도록
+    ok/tool_name/base_date와 함께 JSON 문자열로 감싸 반환합니다. agent는 이 tool을 먼저
+    호출해 자연어를 구조화하고, 반환된 structured_request 필드를 다음 저장 tool 호출의
+    인자로 그대로 사용합니다.
+    """
+
+    structured = extract_structured_request(query)
+
+    return json.dumps({
+        "ok" : True,
+        "tool_name" : "extract_schedule_request",
+        "base_date" : current_app_date_iso(),
+        "structured_request" : structured.model_dump()
+    }, ensure_ascii=False
+    )
 
 
 def week02_tools() -> list[Any]:
