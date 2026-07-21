@@ -228,7 +228,7 @@ def add_personal_reference_dict(
     # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
     reference = REFERENCE_STORE.add_personal_reference(title=title, content=content, tags=tags)
 
-    return reference.dict()
+    return reference
 
 
 
@@ -242,15 +242,15 @@ def search_personal_reference_hits(
 
     # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
         
-    hits = REFERENCE_STORE.search_personal_references(query=query, top_k=top_k)
+    hits = REFERENCE_STORE.search_personal_references(query=query, limit=top_k)
     return [
         {
-            "id": hit.id,
-            "content": hit.content,
-            "distance": hit.distance,
+            "id": hit["id"],
+            "content": hit["content"],
+            "distance": hit["distance"],
             "metadata": {
-                "title": hit.metadata.get("title"),
-                "tags": hit.metadata.get("tags"),
+                "title": hit.get("title"),
+                "tags": hit.get("tags"),
             },
         }
         for hit in hits]
@@ -265,8 +265,13 @@ def search_saved_request_rows(
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
+
+    safe_top_k = safe_limit(top_k, default=3, maximum=50)
     
-    rows = AppSQLiteStore.search_saved_requests(query=query, limit=top_k)
+    rows = sqlite_store.search_saved_requests(query=query, limit=safe_top_k)
+    if rows is None:
+        rows = []
+
     return rows
 
 
