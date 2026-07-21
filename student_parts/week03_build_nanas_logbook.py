@@ -381,7 +381,10 @@ def list_saved_requests(
     """SQLite에 저장된 구조화 요청 원본을 kind 상관없이 목록으로 조회합니다.
     todo/reminder를 포함하거나 kind가 불명확한 조회, 여러 kind를 한 번에 봐야 할 때 사용합니다.
     schedule만 확인하거나 수정/삭제 후보(schedule_id)가 필요하면 personal_list_saved_schedules를,
-    이미 request_id를 알고 있으면 get_saved_request를 대신 사용하세요."""
+    이미 request_id를 알고 있으면 get_saved_request를 대신 사용하세요.
+    사용자가 날짜를 직접 언급하지 않았다면 date_from/date_to를 채우지 말고 비워서 전체 기간을 조회하세요.
+    시스템 프롬프트의 '오늘' 날짜는 상대 날짜 표현 변환용일 뿐, 사용자가 날짜를 언급하지 않은
+    조회 요청에 임의로 date_from/date_to를 채우는 근거로 쓰지 마세요."""
 
     rows = _store().list_saved_requests(kind=kind, date_from=date_from, date_to=date_to)
     return json_payload(tool_result("list_saved_requests", rows=rows))
@@ -406,11 +409,13 @@ def personal_list_saved_schedules(
 ) -> str:
     """앱 DB에 저장된 personal_schedule/group_schedule 일정만 날짜 필터로 반환합니다.
     todo/reminder는 포함하지 않으므로 그런 요청에는 list_saved_requests를 사용하세요.
-    사용자가 일정을 물어보거나 이후 수정/삭제 대상 schedule_id를 확인할 때 우선 사용합니다."""
+    사용자가 일정을 물어보거나 이후 수정/삭제 대상 schedule_id를 확인할 때 우선 사용합니다.
+    사용자가 날짜를 직접 언급하지 않았다면 date_from/date_to를 채우지 말고 비워서 전체 기간을 조회하세요.
+    시스템 프롬프트의 '오늘' 날짜는 상대 날짜 표현 변환용일 뿐, 사용자가 날짜를 언급하지 않은
+    조회 요청에 임의로 date_from/date_to를 채우는 근거로 쓰지 마세요."""
 
-    effective_kind = kind or "personal_schedule"
-    schedules = _store().list_schedules(limit=limit, kind=effective_kind, date_from=date_from, date_to=date_to)
-    filters = {"limit": limit, "kind": effective_kind, "date_from": date_from, "date_to": date_to}
+    schedules = _store().list_schedules(limit=limit, kind=kind, date_from=date_from, date_to=date_to)
+    filters = {"limit": limit, "kind": kind, "date_from": date_from, "date_to": date_to}
     return json_payload(tool_result("personal_list_saved_schedules", filters=filters, schedules=schedules))
 
 

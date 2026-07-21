@@ -140,15 +140,15 @@ def test_get_saved_request_returns_none_for_missing_id(use_temp_config):
 
 # --- personal_list_saved_schedules (메인과제) ---
 
-def test_personal_list_saved_schedules_defaults_kind_to_personal_schedule(use_temp_config):
+def test_personal_list_saved_schedules_defaults_kind_to_both_personal_and_group(use_temp_config):
     save_structured_request.invoke({"kind": "personal_schedule", "title": "코칭", "date": "2026-07-16", "start_time": "10:00"})
     save_structured_request.invoke(
         {"kind": "group_schedule", "title": "동아리", "date": "2026-07-18", "start_time": "15:00", "members": ["철수"]}
     )
     result = json.loads(personal_list_saved_schedules.invoke({}))
-    assert result["filters"]["kind"] == "personal_schedule"
-    assert len(result["schedules"]) == 1
-    assert result["schedules"][0]["title"] == "코칭"
+    assert result["filters"]["kind"] is None
+    assert len(result["schedules"]) == 2
+    assert {s["title"] for s in result["schedules"]} == {"코칭", "동아리"}
 
 
 def test_personal_list_saved_schedules_respects_limit(use_temp_config):
