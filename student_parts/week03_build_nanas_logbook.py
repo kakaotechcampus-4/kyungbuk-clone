@@ -286,9 +286,10 @@ class SaveStructuredRequestInput(StructuredRequest):
         if members is None:
             members = data.get("attendees_json")
 
+        normalized_members = _json_list(members)
         kind = data.get("kind") or data.get("request_kind")
         if kind is None and any(key in data for key in ("attendees", "attendees_json", "schedule_id", "id")):
-            kind = "personal_schedule"
+            kind = "group_schedule" if normalized_members else "personal_schedule"
 
         return {
             "kind": kind or "unknown",
@@ -296,7 +297,7 @@ class SaveStructuredRequestInput(StructuredRequest):
             "date": data.get("date") or data.get("due_date"),
             "start_time": data.get("start_time"),
             "end_time": data.get("end_time"),
-            "members": _json_list(members),
+            "members": normalized_members,
             "priority": data.get("priority"),
             "reason": data.get("reason"),
             "original_text": data.get("original_text") or data.get("query") or data.get("text") or "",
@@ -325,7 +326,7 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
         try:
             data = json.loads(text)
         except json.JSONDecodeError:
-            structured = extract_structured_request(data)
+            structured = extract_structured_request(text)
             return _save_input_from(structured)
         
         if isinstance(data, dict):
@@ -553,7 +554,7 @@ def personal_list_saved_schedules(
     # TODO: filters와 schedules를 포함한 JSON 문자열을 반환하세요.
     res = _store().list_schedules(
         limit=limit,
-        kind=kind if kind != None else 'personal_schedule',
+        kind=kind,
         date_from=date_from,
         date_to=date_to
     )
@@ -561,7 +562,7 @@ def personal_list_saved_schedules(
     ret = {
         'filters': {
             'limit':limit,
-            'kind':kind if kind != None else 'personal_schedule',
+            'kind':kind,
             'date_from':date_from,
             'date_to':date_to
         },
