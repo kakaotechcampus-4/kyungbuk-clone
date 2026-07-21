@@ -68,45 +68,35 @@ def _coerce_structured_request(value: Any) -> StructuredRequest:
     )
 
 
-def extract_structured_request(text: str) -> StructuredRequest:
-    """자연어 요청 하나를 StructuredRequest로 구조화합니다."""
+def extract_structured_request(query: str) -> StructuredRequest:
 
-    agent = build_week02_agent()
+    if not query.strip():
+        raise ValueError("구조화할 요청이 비어 있습니다.")
 
-    result = agent.invoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": text,
-                }
-            ]
-        }
+    if not CONFIG.has_openai_key:
+        raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
+
+    structured_model = chat_model().with_structured_output(
+        StructuredRequestBatch
     )
 
-    structured_response = result.get("structured_response")
-
-    if structured_response is None:
-        raise ValueError("structured_response를 반환받지 못했습니다.")
-
-    if isinstance(structured_response, StructuredRequestBatch):
-        if not structured_response.requests:
-            raise ValueError("구조화된 요청이 비어 있습니다.")
-
-        return structured_response.requests[0]
-
-    if isinstance(structured_response, dict):
-        batch = StructuredRequestBatch.model_validate(structured_response)
-
-        if not batch.requests:
-            raise ValueError("구조화된 요청이 비어 있습니다.")
-
-        return batch.requests[0]
-
-    raise TypeError(
-        "지원하지 않는 structured_response 타입입니다: "
-        f"{type(structured_response).__name__}"
+    result = structured_model.invoke(
+        [
+            ("system", week02_system_prompt()),
+            ("user", query),
+        ]
     )
+
+    batch = (
+        result
+        if isinstance(result, StructuredRequestBatch)
+        else StructuredRequestBatch.model_validate(result)
+    )
+
+    if not batch.requests:
+        raise ValueError("구조화된 요청을 추출하지 못했습니다.")
+
+    return batch.requests[0]
 
 
 @tool
