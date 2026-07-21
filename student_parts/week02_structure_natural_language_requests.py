@@ -160,52 +160,48 @@ class StructuredRequestBatch(BaseModel):
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
-    """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
+    """LangChain structured output 결과를 StructuredRequest로 정규화합니다."""
 
     if isinstance(value, StructuredRequest):
         return value
-    if isinstance(value, StructuredRequestBatch):
-        return value.requests[0] if value.requests else StructuredRequest()
-
-    original_text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return StructuredRequest(
-                kind="unknown",
-                reason="자연어 원문만 있어 세부 필드는 agent structured output에서 판단해야 합니다.",
-                original_text=value,
-            )
-
-    if not isinstance(value, dict):
-        return StructuredRequest(kind="unknown", reason="지원하지 않는 입력 형식입니다.", original_text=original_text)
-
-    if isinstance(value.get("requests"), list):
-        first_request = value["requests"][0] if value["requests"] else {}
-        return _coerce_structured_request(first_request)
-
-    schedule = value.get("created_schedule") if isinstance(value.get("created_schedule"), dict) else value
-    data = dict(schedule)
-    if "attendees" in data and "members" not in data:
-        data["members"] = data.pop("attendees") or []
-    data.setdefault("kind", "personal_schedule" if value.get("created_schedule") else "unknown")
-    data.setdefault("original_text", original_text)
-    return StructuredRequest.model_validate(data)
+    if isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
+    raise RuntimeError(
+        "StructuredRequest 또는 dict 형태의 structured output이 필요합니다. "
+        f"현재 타입: {type(value).__name__}"
+    )
 
 
 def extract_structured_request(text: str) -> StructuredRequest:
-    """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
+    """Week 3 이상에서 agent를 새로 띄우지 않고 자연어를 StructuredRequest로 바꿉니다."""
 
-    return _coerce_structured_request(text)
+    structured_model = chat_model().with_structured_output(
+        StructuredRequest,
+        method="function_calling",
+    )
+    result = structured_model.invoke(
+        [
+            {"role": "system", "content": join_system_prompt(week02_prompt_parts())},
+            {"role": "user", "content": text},
+        ]
+    )
+    return _coerce_structured_request(result)
 
 
 @tool
 def extract_schedule_request(query: str) -> str:
-    """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
+    """Week 3 이상 agent가 저장/조율 전에 호출하는 구조화 bridge tool입니다."""
 
-    request = extract_structured_request(query)
-    return json.dumps(request.model_dump(), ensure_ascii=False)
+    structured = extract_structured_request(query)
+    return json.dumps(
+        {
+            "ok": True,
+            "tool_name": "extract_schedule_request",
+            "base_date": current_app_date_iso(),
+            "structured_request": structured.model_dump(),
+        },
+        ensure_ascii=False,
+    )
 
 
 def week02_tools() -> list[Any]:
