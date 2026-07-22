@@ -226,7 +226,17 @@ def add_personal_reference_dict(
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
     # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
-    ...
+    if tags is None:
+        tags = []
+    stored_reference = reference_store.add_personal_reference(
+        title=title,
+        content=content,
+        tags=tags,
+    )
+    return {
+        "reference_backend": stored_reference.pop("backend"),
+        "reference": stored_reference,
+    }
 
 
 def search_personal_reference_hits(
@@ -285,7 +295,13 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
     # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
-    ...
+    reference_payload = add_personal_reference_dict(
+        REFERENCE_STORE,
+        title=title,
+        content=content,
+        tags=tags,
+    )
+    return json_payload(reference_payload)
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
