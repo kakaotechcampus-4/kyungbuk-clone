@@ -22,6 +22,7 @@ venv/
 node_modules/
 dist/
 CLAUDE.md
+.claude/
 
 # Keep later-week student files local until their assignment is published.
 student_parts/week05_load_kanas_past_conversations.py
