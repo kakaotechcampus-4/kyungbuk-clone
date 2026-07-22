@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
@@ -27,11 +27,17 @@ from student_parts.week02_structure_natural_language_requests import (
 
 _WEEK03_AGENT: Any | None = None
 
+# schedules 테이블에는 일정 kind만 들어간다(todo는 todos, reminder는 reminders 테이블).
+# 그래서 일정 조회 tool의 kind는 RequestKind 전체가 아니라 아래 두 값만 받는다.
+ScheduleKind = Literal["personal_schedule", "group_schedule"]
+
 SQLITE_MEMORY_PROMPT = (
     "Week 3부터 일정/할 일/알림은 앱 SQLite DB에 영속 저장된다. "
     "Week 1 임시 메모리와 달리 새 대화를 시작해도 저장된 기록은 사라지지 않는다. "
     "따라서 저장된 일정/할 일/알림에 대한 질문은 기억이나 이전 대화 내용에 의존하지 말고 "
-    "반드시 personal_list_saved_schedules 또는 list_saved_requests tool로 DB를 조회한 결과를 기준으로 답한다. "
+    "반드시 DB 조회 tool 결과를 기준으로 답한다. "
+    "이때 개인/그룹 일정은 personal_list_saved_schedules로, 할 일(todo)과 알림(reminder)은 "
+    "list_saved_requests(kind=...)로 조회한다. "
     "Week 1 임시 조회 tool(personal_list_schedules)은 SQLite에 저장된 기록을 보지 못하므로 "
     "저장된 기록 조회에 사용하지 않는다."
 )
@@ -43,9 +49,15 @@ WEEK03_TOOL_CALL_PROMPT = """Week 3 tool 호출 순서 규칙:
 - ok/tool_name/base_date 같은 wrapper 키 자체를 save_structured_request 인자로 넘기지 않습니다.
 - 일정 생성/저장 요청은 personal_create_schedule이 아니라 위의
   extract_schedule_request → save_structured_request 순서로 처리합니다.
-- 저장된 일정 조회는 personal_list_saved_schedules를, 저장 요청 원본 확인은 list_saved_requests/get_saved_request를 사용합니다.
+- 조회 tool은 대상에 따라 다음 기준으로 고릅니다.
+  · 개인/그룹 "일정" 조회: personal_list_saved_schedules (kind는 personal_schedule/group_schedule만 받습니다)
+  · "할 일"(todo), "알림"(reminder) 등 구조화 요청 조회: list_saved_requests(kind="todo" 또는 "reminder")
+  · request_id를 이미 아는 단건 조회: get_saved_request
+- "저장한 할 일 보여줘", "알림 뭐 있어?" 같은 요청에 personal_list_saved_schedules를 쓰지 않습니다.
+  할 일/알림은 schedules 테이블에 없어 항상 빈 목록이 나옵니다. 반드시 list_saved_requests로 조회합니다.
 - personal_list_saved_schedules는 kind를 지정하지 않으면 개인 일정(personal_schedule)만 반환합니다.
   그룹 일정은 kind=group_schedule로 조회하고, "모든 일정" 요청이면 두 kind를 각각 조회해 합쳐서 답합니다.
+- 일정·할 일·알림을 가리지 않는 "저장한 거 전부 보여줘" 요청은 kind 없이 list_saved_requests를 호출합니다.
 - 저장 일정 수정/삭제 전에는 personal_list_saved_schedules로 후보 schedule_id를 먼저 확인합니다.
   이때 사용자가 날짜를 말하지 않았다면 date_from/date_to를 넣지 말고 전체에서 제목으로 찾습니다.
   수정은 personal_update_saved_schedule에 바꿀 필드만 전달하고(전달하지 않은 필드는 유지됨),
@@ -91,11 +103,14 @@ WEEK03_TOOL_CALL_PROMPT = """Week 3 tool 호출 순서 규칙:
 #
 #   2. list_saved_requests / get_saved_request
 #      - list는 kind/date_from/date_to 필터를 AppSQLiteStore.list_saved_requests(...)에 그대로 넘깁니다.
+#      - 할 일(todo)/알림(reminder) 조회는 schedules 테이블이 아니라 이 tool로 합니다.
 #      - get은 request_id 하나로 단건 조회합니다.
 #      - 조회 결과가 없어도 예외를 던지지 말고 rows=[] 또는 row=None 형태를 유지합니다.
 #
 #   3. personal_list_saved_schedules
-#      - 저장된 일정 목록을 반환해 "내 일정 보여줘" 같은 조회 질문과 이후 수정/삭제 후보 확인에 씁니다.
+#      - 저장된 "일정" 목록을 반환해 "내 일정 보여줘" 같은 조회 질문과 이후 수정/삭제 후보 확인에 씁니다.
+#      - kind는 ScheduleKind(personal_schedule/group_schedule)만 받습니다. todo/reminder는 schedules 테이블에
+#        없으므로 스키마 단계에서 막고, 할 일/알림 조회는 list_saved_requests로 보냅니다.
 #      - 날짜가 명확한 조회는 date_from/date_to로 범위를 좁히고, 너무 많은 row가 들어가지 않게 limit을 사용합니다.
 #
 # 추가 과제 구현 대상
@@ -184,9 +199,11 @@ WEEK03_TOOL_CALL_PROMPT = """Week 3 tool 호출 순서 규칙:
 #
 #   - [메인] list_saved_requests(...) / get_saved_request(...)
 #     SQLite에 저장된 structured_requests 원본 기록을 목록 또는 단건으로 조회합니다.
+#     할 일(todo)/알림(reminder) 조회 경로도 이쪽입니다.
 #
 #   - [메인] personal_list_saved_schedules(...)
-#     저장된 일정 row를 조회합니다. 수정/삭제 전 후보 schedule_id를 확인하거나 사용자의 일정 조회 질문에 답할 때 사용합니다.
+#     저장된 "일정" row만 조회합니다. 수정/삭제 전 후보 schedule_id를 확인하거나 일정 조회 질문에 답할 때 사용합니다.
+#     kind는 ScheduleKind로 제한돼 todo/reminder를 넘기면 Pydantic 검증에서 막힙니다.
 #
 #   - [추가] delete_saved_schedules_dict(...)
 #     테스트나 내부 코드에서 tool invoke 없이 삭제 로직을 호출할 수 있게 만든 dict 반환 helper입니다.
@@ -310,7 +327,15 @@ class SavedScheduleListInput(BaseModel):
     """저장 일정 목록 조회 입력입니다."""
 
     limit: int = Field(default=50, ge=1, le=200)
-    kind: RequestKind | None = None
+    # 일정 종류만 허용한다. todo/reminder는 schedules 테이블에 없어 조회해도 항상 0건이므로,
+    # 프롬프트 지시가 아니라 스키마 검증이 잘못된 tool 호출을 막는다.
+    kind: ScheduleKind | None = Field(
+        default=None,
+        description=(
+            "일정 종류만 지정합니다(personal_schedule/group_schedule). 미지정 시 personal_schedule. "
+            "할 일(todo)·알림(reminder)은 이 tool이 아니라 list_saved_requests로 조회하세요."
+        ),
+    )
     date_from: str | None = None
     date_to: str | None = None
 
@@ -487,7 +512,7 @@ def list_saved_requests(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """SQLite에 저장된 구조화 요청 목록을 조회합니다."""
+    """SQLite에 저장된 구조화 요청을 조회합니다. 할 일(kind='todo')·알림(kind='reminder') 조회는 이 tool을 쓰고, kind를 비우면 전체를 반환합니다."""
 
     rows = _store().list_saved_requests(kind=kind, date_from=date_from, date_to=date_to)
     return json_payload(tool_result("list_saved_requests", rows=rows))
@@ -505,11 +530,11 @@ def get_saved_request(request_id: str) -> str:
 @tool(args_schema=SavedScheduleListInput)
 def personal_list_saved_schedules(
     limit: int = 50,
-    kind: RequestKind | None = None,
+    kind: ScheduleKind | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
+    """앱 DB에 저장된 개인/그룹 '일정'만 반환합니다. 일정 조회와 수정/삭제 후보 확인용이며, 할 일·알림은 list_saved_requests로 조회하세요."""
 
     store = _store()
     resolved_kind = kind or "personal_schedule"
@@ -663,6 +688,8 @@ Week 3 tool 선택 기준: 일정/할 일/알림의 저장과 저장된 기록�
 SQLite tool(save_structured_request, personal_list_saved_schedules, list_saved_requests,
 get_saved_request, personal_update_saved_schedule, personal_delete_saved_schedules)을
 우선 사용하고, Week 1 임시 tool은 사용하지 않습니다.
+조회 tool은 대상으로 구분합니다. 일정은 personal_list_saved_schedules,
+할 일·알림은 list_saved_requests, ID를 아는 단건은 get_saved_request입니다.
 Week 3에서는 RAG와 외부 멤버 일정 조율을 하지 않습니다.""",
     ]
 
