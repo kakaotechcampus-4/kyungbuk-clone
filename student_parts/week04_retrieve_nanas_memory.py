@@ -365,7 +365,6 @@ def week04_tools() -> list[Any]:
         add_personal_reference,
         search_personal_references,
         search_saved_requests,
-        search_conversation_messages,
     ]
 
 
@@ -380,7 +379,12 @@ def week04_prompt_parts() -> list[str]:
 
     return [
         *week03_prompt_parts(),
-        # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        (
+            "개인 메모나 선호처럼 사용자가 직접 기록해 둔 참고자료를 물어보면 "
+            "search_personal_references를 사용하세요. "
+            "일정, 할 일, 알림처럼 구조화되어 저장된 기록을 물어보면 search_saved_requests를 사용하세요. "
+            "필요하면 두 tool을 모두 호출해 답변 근거를 모을 수 있습니다."
+        ),
     ]
 
 
