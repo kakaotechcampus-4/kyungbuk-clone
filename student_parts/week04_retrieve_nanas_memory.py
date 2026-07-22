@@ -224,10 +224,8 @@ def add_personal_reference_dict(
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
-
-    # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
-    ...
-
+    return reference_store.add_personal_reference(title, content, tags or [])
+    
 
 def search_personal_reference_hits(
     reference_store: PersonalReferenceStore,
@@ -284,8 +282,9 @@ def search_conversation_message_rows(
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
-    # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
-    ...
+    result = add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags)
+    reference_backend = result.pop("backend")
+    return json_payload({"reference_backend": reference_backend, "reference": result})
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
