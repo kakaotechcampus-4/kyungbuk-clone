@@ -448,16 +448,13 @@ def search_nana_memory(
     # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
     safe = safe_limit(limit, default=5, maximum=20)
 
-    # 1. 개인 참고자료 검색
     reference_hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=safe)
 
-    # 2. SQLite 일정 조회 (date_from/date_to는 DB 쿼리로, attendee는 파이썬에서 필터)
     schedules = SQLITE_STORE.list_schedules(limit=safe * 5, date_from=date_from, date_to=date_to)
     if attendee:
         schedules = [s for s in schedules if attendee in s.get("attendees", [])]
     schedules = schedules[:safe]
 
-    # 3. 두 출처를 사람이 읽기 쉬운 context 문자열로 합치기
     context_lines = ["[개인 참고자료]"]
     if reference_hits:
         for hit in reference_hits:
