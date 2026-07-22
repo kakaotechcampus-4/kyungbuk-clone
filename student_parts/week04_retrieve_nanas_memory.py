@@ -27,7 +27,7 @@ _WEEK04_AGENT: Any | None = None
 WEEK04_RAG_SOURCE_PROMPT = (
     "Week 4부터 Nana는 저장된 기억을 출처별로 검색한다. "
     "취향/선호/메모 같은 자연어 참고자료 질문은 search_personal_references(ChromaDB 참고자료)로 찾는다. "
-    "'회의 언제 잡는 게 좋을까'처럼 일정/회의/시간에 대한 조언·추천을 요청받으면, "
+    "'언제 ~하는 게 좋을까', '~해도 괜찮을까'처럼 일정·회의·시간을 어떻게 할지 조언이나 추천을 요청받으면, "
     "일반 상식으로 바로 답하지 말고 먼저 search_personal_references로 저장된 선호를 확인해 그 결과를 우선 근거로 답한다. "
     "저장된 일정/할 일/알림 기록에서 근거를 찾을 때는 search_saved_requests(SQLite 구조화 기록)로 찾는다. "
     "일정으로 저장하지 않고 채팅으로만 말했던 내용은 search_conversation_messages(지난 대화 RAG)로 찾는다. "
@@ -36,12 +36,88 @@ WEEK04_RAG_SOURCE_PROMPT = (
 )
 
 # 검색 결과를 근거로만 답하게 해서, 기록에 없는 내용을 지어내는 답변을 막는다.
+# query 지침은 검색 방식별로 다르다. 처음엔 모든 tool에 "짧은 핵심어"를 일괄 지시했는데,
+# 벡터 검색은 구체적인 문장이 유리해서(짧은 query가 관련 선호를 recall에서 밀어냄) 분리했다.
 WEEK04_RAG_ANSWER_PROMPT = (
-    "검색 tool의 query에는 사용자 질문에서 고른 짧은 핵심 명사나 구를 넣는다. "
-    "검색 결과 hits/rows가 비어 있으면 관련 기록이 없다고 답하고 내용을 지어내지 않는다. "
+    "query는 검색 방식에 맞게 만든다. search_saved_requests는 키워드(LIKE) 검색이므로 "
+    "제목/원문에 있을 법한 핵심 키워드만 넣고, 벡터 검색인 search_personal_references와 "
+    "search_conversation_messages에는 사용자 질문을 그대로 넣거나 충분히 구체적인 문구를 넣는다. "
+    "선호처럼 관련 기록이 여러 개일 수 있는 검색은 top_k를 3 이상으로 요청한다. "
+    "검색 결과가 비어 있는 것은 '그 출처에 없다'는 뜻일 뿐이므로, "
+    "질문에 해당하는 다른 출처까지 확인한 뒤에만 관련 기록이 없다고 답하고 내용을 지어내지 않는다. "
+    "검색 결과가 질문과 무관한 내용이면 억지로 근거로 쓰지 않는다. "
     "지난 대화 검색 결과에서는 assistant 발화만으로 사실을 확정하지 말고 user 발화를 우선 근거로 삼는다. "
     "최종 답변에는 어떤 출처의 기록을 근거로 했는지 짧게 언급한다."
 )
+
+# 검색 tool 세 개가 각자 어떤 출처를 보고 어떤 질문에 맞는지 정리한 표다.
+# 0건 결과에 "남은 출처" 안내(empty_result_note)를 실을 때 쓴다.
+WEEK04_SEARCH_SOURCES = {
+    "search_personal_references": {
+        "what": "개인 참고자료(취향·선호·원칙 메모)",
+        "when": "적어 둔 취향/선호/원칙을 묻거나 일정·시간 조언에 선호 근거가 필요할 때",
+    },
+    "search_saved_requests": {
+        "what": "SQLite에 저장된 일정/할 일/알림 기록",
+        "when": "저장된 일정/할 일/알림 기록을 키워드로 되짚어 찾을 때",
+    },
+    "search_conversation_messages": {
+        "what": "예전 채팅 대화 내용",
+        "when": "'전에 말했잖아', '내가 ~라고 했지'처럼 지난 채팅에서 오간 말을 찾을 때",
+    },
+}
+
+
+def empty_result_note(tool_name: str) -> str:
+    """검색 0건일 때 tool 결과 JSON에 실어 보내는 다음 행동 안내문을 만듭니다.
+
+    tool마다 한 출처만 보므로 0건은 "기억이 없다"가 아니라 "이 출처에는 없다"입니다.
+    앱 검증에서 agent가 한 출처 0건만 보고 기억이 없다고 단정하는 실패가 반복 재현돼서,
+    시스템 프롬프트(모든 턴에 멀리 있음)보다 잘 지켜지는 tool 결과 안(방금 받은 지시)에 안내를 심습니다.
+    """
+
+    searched = WEEK04_SEARCH_SOURCES[tool_name]["what"]
+    return (
+        f"{searched}에는 결과가 없습니다. 이것만으로 기억이 없다고 단정하지 마세요. "
+        f"남은 출처: {_remaining_sources(tool_name)}. "
+        f"사용자 질문이 남은 출처에 해당하면 그 tool로 한 번 더 검색한 뒤에 답하세요."
+    )
+
+
+def _remaining_sources(tool_name: str) -> str:
+    """tool_name을 제외한 나머지 검색 출처를 "언제 쓰는지 → tool 이름"으로 나열합니다."""
+
+    return " / ".join(
+        f"{guide['when']} → {name}"
+        for name, guide in WEEK04_SEARCH_SOURCES.items()
+        if name != tool_name
+    )
+
+
+# 앱 trace 실측에서 질문과 관련 있는 참고자료 hit는 distance 1.0~1.3, 무관한 hit는 1.6 이상이었다.
+# 그 사이 1.45를 "이 hit들이 질문과 무관할 수 있다"는 안내를 붙이는 기준으로 쓴다.
+# 검색 결과를 잘라내는 필터가 아니라 안내만 붙이므로, 기준이 조금 어긋나도 답이 사라지지는 않는다.
+REFERENCE_FAR_DISTANCE = 1.45
+
+
+def reference_hits_note(hits: list[dict[str, Any]]) -> str | None:
+    """참고자료 검색 결과가 없거나 전부 질문과 멀 때 다음 행동 안내문을 만듭니다.
+
+    벡터 검색은 관련이 없어도 항상 top_k개를 돌려주므로, "0건"만 보면
+    무관한 hit를 받고도 안내가 빠진다. 그래서 hit가 전부 먼 경우까지 같이 본다.
+    """
+
+    if not hits:
+        return empty_result_note("search_personal_references")
+    distances = [hit["distance"] for hit in hits if isinstance(hit.get("distance"), (int, float))]
+    if distances and min(distances) > REFERENCE_FAR_DISTANCE:
+        return (
+            f"검색된 참고자료가 모두 질문과 의미상 멉니다(최소 distance {min(distances):.2f}). "
+            "질문과 무관하면 근거로 쓰지 말고, 기억이 없다고 단정하지도 마세요. "
+            f"남은 출처: {_remaining_sources('search_personal_references')}. "
+            "사용자 질문이 남은 출처에 해당하면 그 tool로 한 번 더 검색한 뒤에 답하세요."
+        )
+    return None
 
 
 # [4주차 수강생 구현 가이드]
@@ -357,22 +433,41 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
-    """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
+    """개인 참고자료(취향·선호·원칙 메모)를 ChromaDB 벡터 검색으로 찾습니다.
+
+    적어 둔 선호를 묻는 질문뿐 아니라, 일정·회의·시간을 어떻게 할지 조언·추천이
+    필요한 질문에도 일반 상식으로 답하기 전에 먼저 사용합니다.
+    벡터 검색이므로 query에는 사용자 질문을 그대로 넣거나 충분히 구체적인 문구를 넣고,
+    관련 선호가 여러 개일 수 있으면 top_k를 3 이상으로 요청합니다.
+    """
 
     top_k = safe_limit(top_k, default=2, maximum=20)
     hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)
     # course 계약대로 top-level hits 키를 유지한다. 결과가 없어도 hits=[]로 답한다.
-    return json_payload({"ok": True, "tool_name": "search_personal_references", "query": query, "top_k": top_k, "hits": hits})
+    result = {"ok": True, "tool_name": "search_personal_references", "query": query, "top_k": top_k, "hits": hits}
+    # 0건이거나 hit가 전부 질문과 먼 경우, 남은 출처를 안내해 한 출처만 보고 단정하는 것을 막는다.
+    note = reference_hits_note(hits)
+    if note:
+        result["note"] = note
+    return json_payload(result)
 
 
 @tool(args_schema=SearchSavedRequestsInput)
 def search_saved_requests(query: str, top_k: int = 3) -> str:
-    """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
+    """SQLite에 저장된 구조화 일정/할 일/알림 기록을 키워드로 검색합니다.
+
+    "저장한 일정/할 일 중에 ~ 있었나"처럼 저장된 기록을 되짚어 찾을 때 사용합니다.
+    일정으로 저장하지 않고 채팅으로만 말한 내용은 search_conversation_messages가 담당합니다.
+    LIKE 검색이므로 query에는 문장이 아니라 제목/원문에 있을 법한 핵심 키워드를 넣습니다.
+    """
 
     top_k = safe_limit(top_k, default=3, maximum=50)
     rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=top_k)
     # course 계약대로 top-level rows 키를 유지한다. 결과가 없어도 rows=[]로 답한다.
-    return json_payload({"ok": True, "tool_name": "search_saved_requests", "query": query, "top_k": top_k, "rows": rows})
+    result = {"ok": True, "tool_name": "search_saved_requests", "query": query, "top_k": top_k, "rows": rows}
+    if not rows:
+        result["note"] = empty_result_note("search_saved_requests")
+    return json_payload(result)
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -381,7 +476,12 @@ def search_conversation_messages(
     top_k: int = 5,
     conversation_id: str | None = None,
 ) -> str:
-    """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
+    """예전 채팅 대화 내용을 대화 단위 ChromaDB RAG로 검색합니다.
+
+    "전에 말했잖아", "내가 ~라고 했지"처럼 지난 대화에서 오간 말을 찾는 질문에 사용합니다.
+    일정·참고자료로 저장하지 않은 일상 대화 내용은 이 tool로만 찾을 수 있습니다.
+    벡터 검색이므로 query에는 사용자 질문을 그대로 넣거나 충분히 구체적인 문구를 넣습니다.
+    """
 
     top_k = safe_limit(top_k, default=5, maximum=50)
     result = search_conversation_messages_dict(
@@ -391,7 +491,10 @@ def search_conversation_messages(
         top_k=top_k,
         conversation_id=conversation_id,
     )
-    return json_payload({"ok": True, "tool_name": "search_conversation_messages", "query": query, "top_k": top_k, **result})
+    payload = {"ok": True, "tool_name": "search_conversation_messages", "query": query, "top_k": top_k, **result}
+    if not result["hits"]:
+        payload["note"] = empty_result_note("search_conversation_messages")
+    return json_payload(payload)
 
 
 def search_nana_memory_dict(
