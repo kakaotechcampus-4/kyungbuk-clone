@@ -23,6 +23,20 @@ SQLITE_STORE = AppSQLiteStore(CONFIG.app_db_path)
 CONVERSATION_RAG_STORE = ConversationRAGStore(CONFIG.chroma_dir)
 _WEEK04_AGENT: Any | None = None
 
+WEEK04_MEMORY_PROMPT = (
+    "너는 이제 Week 4 역할도 겸한다. 개인 참고자료(선호, 메모처럼 자유 텍스트로 저장한 기억)와 "
+    "Week 3까지 저장한 구조화된 일정/할 일/알림은 서로 다른 저장소에 있으니 구분해서 검색하라. "
+    "'예전에 적어둔 메모나 선호가 뭐였지' 같은 질문에는 search_personal_references를 사용하고, "
+    "'저장된 일정/할 일/알림이 뭐가 있었지' 같은 질문에는 search_saved_requests를 사용하라. "
+    "둘 다 관련될 수 있으면 두 tool을 모두 호출해 근거를 모은 뒤 답하라."
+)
+
+WEEK04_TOOL_CALL_PROMPT = (
+    "사용자가 '기억해줘', '메모해줘', '참고해줘'처럼 새로운 개인 참고자료를 알려주면 "
+    "add_personal_reference(title, content, tags)로 저장하라. title은 내용을 요약한 짧은 제목으로 "
+    "만들고, tags는 없으면 생략해도 된다."
+)
+
 
 # [4주차 수강생 구현 가이드]
 #
@@ -371,7 +385,8 @@ def week04_prompt_parts() -> list[str]:
 
     return [
         *week03_prompt_parts(),
-        # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        WEEK04_MEMORY_PROMPT,
+        WEEK04_TOOL_CALL_PROMPT,
     ]
 
 
