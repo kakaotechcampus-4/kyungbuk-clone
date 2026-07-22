@@ -321,10 +321,7 @@ def search_conversation_message_rows(
         conversation_id=conversation_id
         )["hits"]
 
-#   1. add_personal_reference
-#      - title/content/tags를 REFERENCE_STORE.add_personal_reference에 넘깁니다.
-#      - tags가 None이면 빈 list로 바꿉니다.
-#      - 이 tool 안에서 reference_backend와 reference가 있는 JSON payload를 완성합니다.
+
 @tool(args_schema=AddPersonalReferenceInput)
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
@@ -434,6 +431,7 @@ def week04_prompt_parts() -> list[str]:
     - add_personal_reference: 개인참고 자료를 추가하는 도구이다. 사용자가 개인참고 자료에 추가해달라고 요청할 시 해당 정보를 추가한다.
     - search_personal_references: 개인참고 자료를 탐색하는 도구이다. 사용자의 요청에 개인참고 자료 검색이 필요할 시 사용한다.
     - search_saved_requests: schedule/todo/reminder를 검색할 때 사용한다. 사용자가 일정/할 일/알람 조회를 요청할 시 검색할 때 사용한다.
+        Week 3의 personal_list_saved_schedules 대신, 저장된 일정/할 일/알림을 찾는 요청에는 <반드시> search_saved_requests를 사용한다.
     - search_conversation_messages: 다른 대화의 정보가 필요할 떄 사용한다. 사용자가 다른 대화에 있는 정보를 명시적으로 요구할 때 사용한다.
     """
     
