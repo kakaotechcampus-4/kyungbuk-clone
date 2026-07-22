@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field
 from fixed.config import CONFIG
 from fixed.conversation_rag_store import ConversationRAGStore
 from fixed.llm import chat_model
-from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
 from fixed.reference_store import PersonalReferenceStore
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
@@ -226,7 +225,7 @@ def add_personal_reference_dict(
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
     # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
-    reference = REFERENCE_STORE.add_personal_reference(title=title, content=content, tags=tags)
+    reference = PersonalReferenceStore.add_personal_reference(title=title, content=content, tags=tags)
 
     return reference
 
@@ -242,7 +241,7 @@ def search_personal_reference_hits(
 
     # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
         
-    hits = REFERENCE_STORE.search_personal_references(query=query, limit=top_k)
+    hits = reference_store.search_personal_references(query=query, limit=top_k)
     return [
         {
             "id": hit["id"],
