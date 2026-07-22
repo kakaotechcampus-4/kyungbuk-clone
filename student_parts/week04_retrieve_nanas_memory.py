@@ -393,6 +393,9 @@ def week04_prompt_parts() -> list[str]:
           add_personal_reference로 개인 참고자료에 저장한다.
         - "내가 적어 둔", "내 선호", "내 규칙"처럼 저장한 참고자료를 찾는 질문에는
           search_personal_references를 사용한다.
+        - "내가 ~해도 된다고 했었나", "내가 선호하는 시간이 언제였지", "내 규칙이 뭐였지"처럼
+          과거에 저장한 개인 취향이나 규칙을 확인하는 질문은 날짜나 저장 위치를 되묻지 말고
+          search_personal_references를 즉시 호출한다.
         - SQLite에 구조화해 저장한 일정/할 일/알림을 핵심어로 찾는 질문에는
           search_saved_requests를 사용한다. 정확한 날짜 범위의 일정 목록은 Week 3 일정 조회 tool을 사용할 수 있다.
 
