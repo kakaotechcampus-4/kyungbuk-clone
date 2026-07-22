@@ -288,26 +288,8 @@ def search_conversation_messages_dict(
 ) -> dict[str, Any]:
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
-    sync_result = conversation_rag_store.sync_from_sqlite(sqlite_store)
-    exclude_conversation_id: str | None = None
-    if conversation_id is None:
-        session_scope = current_session_scope()
-        if session_scope != DEFAULT_SESSION_SCOPE:
-            exclude_conversation_id = session_scope
-
-    hits = conversation_rag_store.search(
-        query=query,
-        top_k=top_k,
-        exclude_conversation_id=exclude_conversation_id,
-        conversation_id=conversation_id,
-    )
-    return {
-        "hits": hits,
-        "rows": hits,
-        "context": conversation_rag_store.context_from_hits(hits),
-        "rag_backend": conversation_rag_store.backend_info(),
-        "sync": sync_result,
-    }
+    # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
+    ...
 
 
 def search_conversation_message_rows(
@@ -319,14 +301,8 @@ def search_conversation_message_rows(
 ) -> list[dict[str, Any]]:
     """앱 SQLite에 저장된 일반 채팅 대화 청크를 RAG 검색합니다."""
 
-    result = search_conversation_messages_dict(
-        sqlite_store,
-        CONVERSATION_RAG_STORE,
-        query=query,
-        top_k=top_k,
-        conversation_id=conversation_id,
-    )
-    return result["hits"]
+    # TODO: search_conversation_messages_dict(...) 결과에서 hits만 반환하세요.
+    ...
 
 
 @tool(args_schema=AddPersonalReferenceInput)
@@ -368,15 +344,8 @@ def search_conversation_messages(
 ) -> str:
     """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
-    limit = safe_limit(top_k, default=5, maximum=50)
-    result = search_conversation_messages_dict(
-        SQLITE_STORE,
-        CONVERSATION_RAG_STORE,
-        query=query,
-        top_k=limit,
-        conversation_id=conversation_id,
-    )
-    return json_payload(result)
+    # TODO: 앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색하고 JSON 문자열로 반환하세요.
+    ...
 
 
 @tool(args_schema=SearchNanaMemoryInput)
@@ -389,49 +358,8 @@ def search_nana_memory(
 ) -> str:
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
-    safe = safe_limit(limit, default=5, maximum=20)
-    reference_hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=safe)
-    schedules = SQLITE_STORE.list_schedules(
-        limit=safe * 5,
-        date_from=date_from,
-        date_to=date_to,
-    )
-    if attendee:
-        schedules = [
-            schedule
-            for schedule in schedules
-            if attendee in (schedule.get("attendees") or _decode_attendees(schedule.get("attendees_json")))
-        ]
-    schedules = schedules[:safe]
-
-    context_lines = ["[개인 참고자료]"]
-    if reference_hits:
-        for hit in reference_hits:
-            title = (hit.get("metadata") or {}).get("title") or "제목 없음"
-            context_lines.append(f"- {title}: {hit.get('content') or ''}")
-    else:
-        context_lines.append("- 관련 참고자료 없음")
-
-    context_lines.append("[저장된 일정]")
-    if schedules:
-        for schedule in schedules:
-            attendees = schedule.get("attendees") or _decode_attendees(schedule.get("attendees_json"))
-            attendee_text = ", ".join(attendees) if attendees else "참석자 없음"
-            context_lines.append(
-                f"- {schedule.get('date')} {schedule.get('start_time')}~{schedule.get('end_time')} "
-                f"{schedule.get('title')} ({attendee_text})"
-            )
-    else:
-        context_lines.append("- 관련 일정 없음")
-
-    return json_payload(
-        {
-            "reference_backend": REFERENCE_STORE.backend_info(),
-            "reference_hits": reference_hits,
-            "schedules": schedules,
-            "context": "\n".join(context_lines),
-        }
-    )
+    # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
+    ...
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
@@ -467,18 +395,9 @@ def week04_prompt_parts() -> list[str]:
           search_personal_references를 사용한다.
         - SQLite에 구조화해 저장한 일정/할 일/알림을 핵심어로 찾는 질문에는
           search_saved_requests를 사용한다. 정확한 날짜 범위의 일정 목록은 Week 3 일정 조회 tool을 사용할 수 있다.
-        - "예전에 무슨 이야기를 했지", "지난 대화에서"처럼 일반 채팅 발화 자체를 찾는 질문에는
-          search_conversation_messages를 사용한다. 이 tool은 conversation_id가 없으면 현재 대화를 제외한다.
-        - "예전에", "전에 이야기한", "지난 대화", "무슨 이야기를 했지"가 포함된 질문은
-          검색 위치를 사용자에게 되묻지 말고 search_conversation_messages를 즉시 호출한다.
-          특정 주제명이 함께 있어도 개인 참고자료와 대화 기록 중 어디를 찾을지 다시 질문하지 않는다.
-        - 과거 대화 검색 결과가 비어 있고 질문이 개인 취향이나 규칙에 관한 것이라면
-          그때 search_personal_references를 추가로 호출한다.
 
         검색 결과 사용 규칙:
-        - 참고자료 hits, SQLite rows, 대화 hits는 서로 다른 출처의 근거이므로 섞어서 확정하지 않는다.
-        - 과거 assistant 발화만으로 일정이나 할 일의 실제 저장 상태를 확정하지 않는다.
-          실제 저장 상태가 필요하면 SQLite 검색 또는 조회 tool로 다시 확인한다.
+        - 참고자료 hits와 SQLite rows는 서로 다른 출처의 근거이므로 섞어서 확정하지 않는다.
         - 검색 결과가 비어 있으면 근거를 지어내지 말고 찾지 못했다고 답한다.
         """,
     ]
