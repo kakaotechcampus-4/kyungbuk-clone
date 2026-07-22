@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """현재 활성 주차에 맞는 student_parts agent를 찾아 실행하는 registry입니다.
 
-main 브랜치는 Week 1-3 학생 문제를 공개하므로 이 registry도 Week 1-3 agent를
+main 브랜치는 Week 1-4 학생 문제를 공개하므로 이 registry도 Week 1-4 agent를
 매핑합니다. 전체 Week 1-6 흐름은 `week_1_to_6f` 브랜치에 보존되어 있습니다.
 """
 
@@ -25,6 +25,7 @@ WEEK_AGENT_MODULES = {
     1: "student_parts.week01_wake_up_nana",
     2: "student_parts.week02_structure_natural_language_requests",
     3: "student_parts.week03_build_nanas_logbook",
+    4: "student_parts.week04_retrieve_nanas_memory",
 }
 
 
