@@ -47,22 +47,79 @@ class StructuredRequestBatch(BaseModel):
 
 
 def _coerce_structured_request(value: Any) -> StructuredRequest:
-    """이후 회차에서 사용할 StructuredRequest 정규화 예약 함수입니다."""
+    """다양한 형태의 값을 StructuredRequest로 정규화합니다."""
 
-    ...
+    if isinstance(value, StructuredRequest):
+        return value
+
+    if isinstance(value, dict):
+        return StructuredRequest.model_validate(value)
+
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("StructuredRequest로 변환할 수 없는 문자열입니다.") from exc
+
+        return StructuredRequest.model_validate(parsed)
+
+    raise TypeError(
+        f"StructuredRequest로 변환할 수 없는 타입입니다: {type(value).__name__}"
+    )
 
 
-def extract_structured_request(text: str) -> StructuredRequest:
-    """이후 회차에서 사용할 단건 구조화 예약 함수입니다."""
+def extract_structured_request(query: str) -> StructuredRequest:
 
-    ...
+    if not query.strip():
+        raise ValueError("구조화할 요청이 비어 있습니다.")
+
+    if not CONFIG.has_openai_key:
+        raise RuntimeError("PROXY_TOKEN이 .env에 필요합니다.")
+
+    structured_model = chat_model().with_structured_output(
+        StructuredRequestBatch
+    )
+
+    result = structured_model.invoke(
+        [
+            ("system", week02_system_prompt()),
+            ("user", query),
+        ]
+    )
+
+    batch = (
+        result
+        if isinstance(result, StructuredRequestBatch)
+        else StructuredRequestBatch.model_validate(result)
+    )
+
+    if not batch.requests:
+        raise ValueError("구조화된 요청을 추출하지 못했습니다.")
+
+    return batch.requests[0]
 
 
 @tool
 def extract_schedule_request(query: str) -> str:
-    """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
+    """자연어 요청을 StructuredRequest JSON 문자열로 반환합니다."""
 
-    ...
+    try:
+        structured = extract_structured_request(query)
+
+        return json.dumps(
+            structured.model_dump(),
+            ensure_ascii=False,
+        )
+
+    except Exception as exc:
+        return json.dumps(
+            {
+                "ok": False,
+                "error": str(exc),
+                "query": query,
+            },
+            ensure_ascii=False,
+        )
 
 
 def week02_tools() -> list[Any]:
