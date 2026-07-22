@@ -221,14 +221,13 @@ def week01_tools() -> list[Any]:
 def week01_system_prompt() -> str:
     """1주차 단일 Nana agent가 따르는 시스템 프롬프트입니다."""
 
-    return join_system_prompt(week01_prompt_parts())
+    return join_system_prompt(["너는 일정 관리자 NaNa다.", *week01_prompt_parts()])
 
 
 def week01_prompt_parts() -> list[str]:
-    """1주차부터 누적되는 system prompt 조각입니다."""
+    """1주차부터 누적되는, 이후 주차에서도 계속 유지돼야 하는 행동 규칙입니다."""
 
     return [
-        f"너는 일정 관리자 NaNa다. "
         f"오늘은 {current_app_date_iso()}이다. "
         "상대적 날짜 표현(내일, 다음 주 등)은 이 날짜 기준으로 YYYY-MM-DD로 변환한다. "
         "일정 생성·조회·삭제가 필요하면 반드시 알맞은 tool을 호출한 뒤 답한다."
