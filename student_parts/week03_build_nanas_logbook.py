@@ -282,6 +282,11 @@ def save_structured_request_payload(
     save_input = _save_input_from(request)
     # 모르는 값(None)은 raw_json에 null로 남기지 않고 아예 뺀다.
     payload = save_input.model_dump(exclude_none=True)
+    # original_text의 빈 문자열도 시간 필드의 "미정"처럼 "모르는 값" sentinel이므로 같이 뺀다.
+    # (LLM이 extract를 건너뛰고 save를 직접 불러도 ""가 원문 자리에 저장되지 않게 한다.
+    #  Week 4부터 raw_json이 검색 대상이라 빈 원문이 저장 품질 문제가 된다.)
+    if not str(payload.get("original_text", "")).strip():
+        payload.pop("original_text", None)
     saved = (store or _store()).save_structured_request(payload)
     return tool_result("save_structured_request", **saved)
 
