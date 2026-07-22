@@ -27,6 +27,8 @@ _WEEK04_AGENT: Any | None = None
 WEEK04_RAG_SOURCE_PROMPT = (
     "Week 4부터 Nana는 저장된 기억을 출처별로 검색한다. "
     "취향/선호/메모 같은 자연어 참고자료 질문은 search_personal_references(ChromaDB 참고자료)로 찾는다. "
+    "'회의 언제 잡는 게 좋을까'처럼 일정/회의/시간에 대한 조언·추천을 요청받으면, "
+    "일반 상식으로 바로 답하지 말고 먼저 search_personal_references로 저장된 선호를 확인해 그 결과를 우선 근거로 답한다. "
     "저장된 일정/할 일/알림 기록에서 근거를 찾을 때는 search_saved_requests(SQLite 구조화 기록)로 찾는다. "
     "일정으로 저장하지 않고 채팅으로만 말했던 내용은 search_conversation_messages(지난 대화 RAG)로 찾는다. "
     "사용자가 기억해 달라는 취향/메모는 add_personal_reference로 참고자료에 저장한다. "
