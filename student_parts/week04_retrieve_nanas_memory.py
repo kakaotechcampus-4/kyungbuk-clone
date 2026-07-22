@@ -225,7 +225,7 @@ def add_personal_reference_dict(
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
     # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
-    reference = PersonalReferenceStore.add_personal_reference(title=title, content=content, tags=tags)
+    reference = reference_store.add_personal_reference(title=title, content=content, tags=tags)
 
     return reference
 
