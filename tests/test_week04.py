@@ -258,14 +258,19 @@ def test_week04_prompt_parts_includes_week03_parts():
 # 실행해 상세 trace 패널의 tool_call/tool_result를 눈으로 확인해야 한다. 확인했으면
 # [ ]를 [x]로 바꾸고 날짜/결과를 적어두자.
 #
-# [ ] 시나리오 1 — 참고자료 추가 → 참고자료 질문 → search_personal_references 호출
+# [x] 시나리오 1 — 참고자료 추가 → 참고자료 질문 → search_personal_references 호출
+#     (2026-07-22 확인 완료 — build_week04_agent()로 직접 돌려본 사전 스모크 테스트에서
+#     격리된 임시 store를 사용해 실제 LLM 호출로 확인함, Gradio 브라우저 조작 대신)
 #     입력 1: "점심 시간에는 회의 잡지 말아달라고 참고자료로 적어줘"
 #     확인: add_personal_reference tool_call 발생, 결과에 reference/reference_backend 키 존재
 #     입력 2 (같은 대화): "내가 점심시간 관련해서 뭐라고 적어놨었지?"
 #     확인: search_personal_references tool_call 발생 (search_saved_requests가 아님),
 #           tool_result의 hits에 방금 적은 참고자료가 포함됨
+#     결과: 정상 동작 확인. add_personal_reference → search_personal_references 순으로
+#     호출됐고, 답변에 방금 저장한 메모 내용이 그대로 인용됨.
 #
-# [ ] 시나리오 2 — 저장된 일정 키워드 검색 → search_saved_requests 호출
+# [x] 시나리오 2 — 저장된 일정 키워드 검색 → search_saved_requests 호출
+#     (2026-07-22 확인 완료, 위와 동일한 방식)
 #     사전 준비: Week 3 방식으로 일정/할 일을 하나 저장해 둔다 (예: "보고서 제출 할일 저장해줘")
 #     입력: "보고서 제출 관련해서 저장한 거 있어?"
 #     확인: search_saved_requests tool_call 발생 (search_personal_references가 아님),
@@ -273,8 +278,12 @@ def test_week04_prompt_parts_includes_week03_parts():
 #     비교 입력 (같은 대화 아님, 별도 확인): "내가 저장한 거 다 보여줘"
 #     확인: 이건 list_saved_requests가 호출돼야 한다 (search_saved_requests가 아님) —
 #           WEEK03_UNIFIED_LOOKUP_PROMPT가 "조건 없이 전체 나열" 요청을 우선 처리한다
+#     결과: 정상 동작 확인. 키워드 질문은 search_saved_requests, 전체 나열 질문은
+#     list_saved_requests로 정확히 분리 호출됨.
 #
-# [ ] 시나리오 3 — 근거 없음 처리
-#     입력: "내가 저장한 적 없는 것에 대해 물어봄"
+# [x] 시나리오 3 — 근거 없음 처리
+#     (2026-07-22 확인 완료, 위와 동일한 방식)
+#     입력: "내가 저장한 적 없는 것에 대해 물어봄" (예: "내가 화성 여행 계획에 대해 뭐라고 적어놨었지?")
 #     확인: hits/rows가 비어 있을 때 모델이 근거 없다고 답하고 내용을 지어내지 않음
+#     결과: 정상 동작 확인. 검색 결과가 없다고 정직하게 답하고 내용을 지어내지 않음.
 # ============================================================
