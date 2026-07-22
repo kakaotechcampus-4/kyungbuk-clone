@@ -224,10 +224,14 @@ def add_personal_reference_dict(
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
+    reference = reference_store.add_personal_reference(title, content, tags or [])
 
-    # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
-    ...
-
+    return {
+        # reference_backend : 저장소 설정 정보 (Java 의 DataSource 메타정보와 유사)
+        # reference : 실제 Entity
+        "reference_backend": reference_store.backend_info(), 
+        "reference": reference,
+    }
 
 def search_personal_reference_hits(
     reference_store: PersonalReferenceStore,
@@ -237,9 +241,22 @@ def search_personal_reference_hits(
 ) -> list[dict[str, Any]]:
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
-    # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
-    ...
+    # ChromaDB 에 벡터 검색(query)를 통해 top_k 의 자료를 found 에 저장 
+    found = reference_store.search_personal_references(query, top_k)
 
+    # found 의 원소를 한 개 씩 hit 형태로 반환해 리스트 컴프리헨션 진행
+    return [
+        {
+            "id": hit["id"],
+            "content": hit["content"],
+            "distance": hit["distance"],
+            "metadata": {
+                "title": hit["title"],
+                "tags": hit["tags"],
+            },
+        }
+        for hit in found
+    ]
 
 def search_saved_request_rows(
     sqlite_store: AppSQLiteStore,
@@ -249,8 +266,8 @@ def search_saved_request_rows(
 ) -> list[dict[str, Any]]:
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
-    # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
-    ...
+    # limit top_k 만큼 데이터를 반환
+    return sqlite_store.search_saved_requests(query, limit=top_k)
 
 
 def search_conversation_messages_dict(
