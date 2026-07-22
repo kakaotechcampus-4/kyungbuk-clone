@@ -389,9 +389,15 @@ def week04_prompt_parts() -> list[str]:
 
     return [
         *week03_prompt_parts(),
-        # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        "너는 WEEK 4 에이전트야. WEEK 3까지는 RAG 검색을 하지 않았어. "
+        "이제 WEEK 4부터는 그 제약을 풀고 참고자료와 저장 기록까지 검색할 수 있어.",
+        "개인 참고자료는 search_personal_references로 찾고 결과는 hits 형태로 가져와. "
+        "저장된 일정·할 일 기록은 search_saved_requests로 찾고 결과는 rows 로 가져와. "
+        "날짜/일정과 상관 없는 나의 성향이나 선호는 add_personal_reference로 저장해. "
+        "회의나 일정 시간을 추천·제안하기 전에는 반드시 먼저 search_personal_references를 호출해서 "
+        "내 선호를 확인하고, 확인 없이 일반적인 조언으로 답하지 마. "
+        "검색 결과에 없는 내용은 지어내지 말고, 어느 출처에서 찾았는지 밝혀서 답해.",
     ]
-
 
 def build_week04_agent() -> object:
     """Week 1-4 누적 tool 목록을 노출하는 단일 LangChain agent를 만듭니다."""
