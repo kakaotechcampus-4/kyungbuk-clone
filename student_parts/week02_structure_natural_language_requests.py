@@ -168,19 +168,16 @@ def extract_structured_request(text: str) -> StructuredRequest:
 @tool
 def extract_schedule_request(query: str) -> str:
     """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
-    structured_request: dict[str, Any] | None
-    try: 
-        structured_request = extract_structured_request(query).model_dump()
-    except:
-        structured_request = None
-    res = {
-        **structured_request,
-        "ok": structured_request is not None,
-        "tool_name": extract_schedule_request.name,
-        "base_date": current_app_date_iso()
-    }
-    ret = json.dumps(res, ensure_ascii=False)
-    return ret
+    structured_request = extract_structured_request(query)
+    return json.dumps(
+        {
+            "ok": True,
+            "tool_name": extract_schedule_request.name,
+            "base_date": current_app_date_iso(),
+            "structured_request": structured_request.model_dump(),
+        },
+        ensure_ascii=False,
+    )
 
 
 def week02_tools() -> list[Any]:
@@ -207,9 +204,9 @@ def week02_prompt_parts() -> list[str]:
         "사용자의 요청을 StructuredRequest 필드로 구조화 하고, StructedRequestBatch를 사용해서 반환하라.",
         "최종 structured JSON은 정확히 한 번만 반환하라.",
         "요청을 따로 데이터베이스에 저장하거나, RAG로 저장하지 않고, 외부 멤버와의 일정 조율이 없을 예정이다.",
-        # "tool의 반환 JSON을 받은 경우 payload를 읽어 structed_response로 만들어라.",
         "만약 요청이 1개 뿐이라도, StructuredRequestBatch를 사용해서 List에 하나를 담아라.",
-        "일정 생성시 personal_create_schedule의 반환값중 실제 저장된 일정 데이터인 created_schedule을 읽어 필드를 채워라."
+        "일정 생성시 personal_create_schedule의 반환값중 실제 저장된 일정 데이터인 created_schedule을 읽어 필드를 채워라.",
+        "kind를 결정할때에는 반드시 일정의 목적만 고려하라. tool의 이름에 따라서 personal로 판단해서는 안된다."
     ]
 
 
