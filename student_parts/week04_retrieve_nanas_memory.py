@@ -301,10 +301,13 @@ def search_saved_request_rows(
 
     # AppSQLiteStore.search_saved_requests(...)로 저장된 요청을 검색 및 반환
 
-    return sqlite_store.search_saved_requests(
+    rows = sqlite_store.search_saved_requests(
         query=query,
         limit=top_k
     )
+    for row in rows:
+        row["members"] = _decode_attendees(row.pop("members_json", None))
+    return rows
 
 # 추가 과제
 def search_conversation_messages_dict(
