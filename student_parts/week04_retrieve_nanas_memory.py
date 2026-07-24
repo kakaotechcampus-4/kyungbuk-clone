@@ -249,7 +249,7 @@ def add_personal_reference_dict(
         tags=tags or [],
     )
     return {
-        "reference_backend": reference["backend"],
+        "reference_backend": reference_store.backend_info(),
         "reference": reference,
     }
 
