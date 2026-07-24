@@ -328,12 +328,12 @@ def week04_prompt_parts() -> list[str]:
 
         (
             "[Week 4 출처별 검색]\n"
-            "개인 메모, 선호, 참고자료처럼 자유 형식으로 적어 둔 내용을 물으면 "
-            "search_personal_references를 호출한다. 저장된 일정, 할 일, 알림처럼 SQLite에 구조화해 저장한 "
-            "기록을 물으면 search_saved_requests를 호출한다. 이전 채팅에서 나눈 일반 대화 발화를 다시 "
-            "찾아야 하면 search_conversation_messages를 호출하며, 이 검색은 현재 대화를 제외한 과거 대화만 대상으로 한다.\n"
-            "검색 tool의 query에는 사용자의 질문에서 뽑은 핵심어를 전달한다. 검색 뒤에는 tool 결과의 hits 또는 "
-            "rows에 있는 정보만 근거로 답하고, 결과가 비어 있으면 찾지 못했다고 답한다. "
+            "개인 메모, 선호, 참고자료처럼 자유 형식으로 적어 둔 내용을 물으면 search_personal_references를 호출한다.\n"
+            "저장된 일정, 할 일, 알림처럼 SQLite에 구조화해 저장한 기록을 물으면 search_saved_requests를 호출한다.\n"
+            "이전 채팅에서 나눈 일반 대화 발화를 다시 찾아야 하면 search_conversation_messages를 호출하며, "
+            "이 검색은 현재 대화를 제외한 과거 대화만 대상으로 한다.\n"
+            "검색 tool의 query에는 사용자의 질문에서 뽑은 핵심어를 전달한다.\n"
+            "검색 뒤에는 tool 결과의 hits 또는 rows에 있는 정보만 근거로 답하고, 결과가 비어 있으면 찾지 못했다고 답한다.\n"
             "assistant 발화만으로 사실을 확정하지 않는다."
         ),
     ]
