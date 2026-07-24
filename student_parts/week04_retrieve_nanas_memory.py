@@ -198,7 +198,7 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
         REFERENCE_STORE,
         title=title,
         content=content,
-        tags=tags or [],
+        tags=tags,
     )
     return json_payload(payload)
 
