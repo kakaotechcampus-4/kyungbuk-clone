@@ -150,11 +150,9 @@ def search_conversation_messages_dict(
 
     sync = conversation_rag_store.sync_from_sqlite(sqlite_store)
 
-    exclude_conversation_id = None
-    if not conversation_id:
-        scope = current_session_scope()
-        if scope != DEFAULT_SESSION_SCOPE:
-            exclude_conversation_id = scope
+    current_scope = current_session_scope()
+    should_exclude_current_scope = not conversation_id and current_scope != DEFAULT_SESSION_SCOPE
+    exclude_conversation_id = current_scope if should_exclude_current_scope else None
 
     hits = conversation_rag_store.search(
         query=query,
