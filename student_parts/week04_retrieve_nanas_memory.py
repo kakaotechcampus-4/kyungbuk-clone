@@ -280,7 +280,7 @@ def search_conversation_messages_dict(
     # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
     limit = safe_limit(limit=top_k)
     sync_res = conversation_rag_store.sync_from_sqlite(sqlite_store=sqlite_store)
-    exclude_conversation_id = conversation_id if conversation_id is None else DEFAULT_SESSION_SCOPE
+    exclude_conversation_id = conversation_id if conversation_id is not None else current_session_scope()
     hits = conversation_rag_store.search(query=query, top_k=limit, exclude_conversation_id=exclude_conversation_id)
     ret = {
         'hits': hits,
@@ -303,14 +303,15 @@ def search_conversation_message_rows(
     """앱 SQLite에 저장된 일반 채팅 대화 청크를 RAG 검색합니다."""
 
     # TODO: search_conversation_messages_dict(...) 결과에서 hits만 반환하세요.
-    res = search_conversation_messages_dict(sqlite_store=sqlite_store, query=query, top_k=top_k, conversation_id=conversation_id)
+    conversation_rag_store = CONVERSATION_RAG_STORE
+    res = search_conversation_messages_dict(conversation_rag_store=conversation_rag_store, sqlite_store=sqlite_store, query=query, top_k=top_k, conversation_id=conversation_id)
     return res['hits']
 
 #   1. add_personal_reference
 #      - title/content/tags를 REFERENCE_STORE.add_personal_reference에 넘깁니다.
 #      - tags가 None이면 빈 list로 바꿉니다.
 #      - 이 tool 안에서 reference_backend와 reference가 있는 JSON payload를 완성합니다.
-@tool(args_schema=AddPersonalReferenceInput)
+@tool(args_schema=AddPersonalReferenceInput, description="tags에는 참고 자료의 대분류와 간단한 내용을 영어 단어로 포함시킨다. 점심시간은 식사를 위해 일정을 비워둔다 -> ['preference', 'lunch']")
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
@@ -336,7 +337,7 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     ret = {
         "hits": res
     }
-    return ret
+    return json_payload(ret)
 
     
 
@@ -355,7 +356,7 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     ret = {
         "rows": res
     }
-    return ret
+    return json_payload(ret)
 
 # 추가 과제 구현 대상
 #   1. search_conversation_messages
@@ -400,7 +401,13 @@ def search_nana_memory(
     if attendee is not None:
         new_schedules = []
         for schedule in schedules:
-            members = _decode_attendees(schedule['members_json'])
+            members: list[str] = []
+            if('members_json' in schedule):
+                members = _decode_attendees(schedule['members_json'])
+            elif('attendees' in schedule):
+                members = schedule['attendees']
+            else:
+                continue
             if attendee in members:
                 new_schedules.append(schedules)
         schedules = new_schedules
@@ -423,6 +430,7 @@ def week04_tools() -> list[Any]:
         search_personal_references,
         search_saved_requests,
         search_conversation_messages,
+        search_nana_memory
     ]
 
 
@@ -439,11 +447,14 @@ def week04_prompt_parts() -> list[str]:
         *week03_prompt_parts(),
         # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
         """
+        이 프롬프트는 Week 4의 프롬프트이다. 이전 프롬프트보다 높은 우선 순위를 가진다.
+        저장된 일정을 묻는 질문에는 personal_list_saved_schedules이나 personal_list_schedules 등을 사용하지 않고 search_nana_memory를 사용한다.
         사용자의 질문이 과거에 저장한 정보, 선호, 일정, 할 일, 알림, 이전 대화 기억을 묻는 경우에는 먼저 적절한 memory tool을 호출해 근거를 확인한 뒤 답한다.
         search_personal_references: 개인 선호, 장기 기억, 참고자료, 사용자가 따로 저장해 둔 메모를 묻는 경우
         search_saved_requests: 앱 SQLite에 저장된 일정, 할 일, 알림, 구조화 요청을 찾는 경우.
         search_conversation_messages: 일반 채팅에서 예전에 말했던 내용이나 이전 대화 맥락을 찾는 경우
         search_nana_memory: 구버전 호환이 필요하거나 개인 참고자료와 저장 일정을 한 번에 확인해야 하는 경우
+        - 개인 참고자료와 저장 일정을 한번에 확인해야 하는 경우에는 2개의 값을 동시에 전달해주는 search_nana_memeory를 사용한다.
         - tool이 반환한 context, hits, rows, schedules를 답변의 근거로 사용한다.
         - 일정/할 일/알림처럼 날짜와 시간이 중요한 답변은 검색 결과의 date, start_time, end_time을 확인해 구체적으로 답한다.
         """,
