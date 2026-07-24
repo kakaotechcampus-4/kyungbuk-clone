@@ -16,7 +16,6 @@ htmlcov/
 .DS_Store
 .vscode/
 .idea/
-study/
 venv/
 .venv/
 node_modules/
