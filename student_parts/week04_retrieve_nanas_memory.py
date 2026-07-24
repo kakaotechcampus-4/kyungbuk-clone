@@ -148,6 +148,7 @@ def search_conversation_messages_dict(
 ) -> dict[str, Any]:
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
+    resolved_top_k = safe_limit(top_k, default=5, maximum=50)
     sync = conversation_rag_store.sync_from_sqlite(sqlite_store)
 
     current_scope = current_session_scope()
@@ -156,7 +157,7 @@ def search_conversation_messages_dict(
 
     hits = conversation_rag_store.search(
         query=query,
-        top_k=top_k,
+        top_k=resolved_top_k,
         exclude_conversation_id=exclude_conversation_id,
         conversation_id=conversation_id,
     )
@@ -235,12 +236,11 @@ def search_conversation_messages(
 ) -> str:
     """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
-    resolved_top_k = safe_limit(top_k, default=5, maximum=50)
     payload = search_conversation_messages_dict(
         SQLITE_STORE,
         CONVERSATION_RAG_STORE,
         query=query,
-        top_k=resolved_top_k,
+        top_k=top_k,
         conversation_id=conversation_id,
     )
     return json_payload(payload)
