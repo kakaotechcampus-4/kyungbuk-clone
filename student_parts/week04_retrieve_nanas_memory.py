@@ -23,12 +23,16 @@ SQLITE_STORE = AppSQLiteStore(CONFIG.app_db_path)
 CONVERSATION_RAG_STORE = ConversationRAGStore(CONFIG.chroma_dir)
 _WEEK04_AGENT: Any | None = None
 
+PERSONAL_REFERENCE_DISTANCE_THRESHOLD = 1.4
+
 WEEK04_MEMORY_PROMPT = (
     "너는 이제 Week 4 역할도 겸한다. 개인 참고자료(선호, 메모처럼 자유 텍스트로 저장한 기억)와 "
     "Week 3까지 저장한 구조화된 일정/할 일/알림은 서로 다른 저장소에 있으니 구분해서 검색하라. "
     "'예전에 적어둔 메모나 선호가 뭐였지' 같은 질문에는 search_personal_references를 사용하고, "
     "'저장된 일정/할 일/알림이 뭐가 있었지' 같은 질문에는 search_saved_requests를 사용하라. "
-    "둘 다 관련될 수 있으면 두 tool을 모두 호출해 근거를 모은 뒤 답하라."
+    "둘 다 관련될 수 있으면 두 tool을 모두 호출해 근거를 모은 뒤 답하라. "
+    "search_personal_references 결과 hits가 비어 있으면 관련된 참고자료가 없다는 뜻이니, "
+    "억지로 답을 만들지 말고 참고자료가 없다고 솔직히 답하라."
 )
 
 WEEK04_TOOL_CALL_PROMPT = (
@@ -270,6 +274,7 @@ def search_personal_reference_hits(
             },
         }
         for hit in raw_hits
+        if hit.get("distance") is not None and hit["distance"] <= PERSONAL_REFERENCE_DISTANCE_THRESHOLD
     ]
 
 
