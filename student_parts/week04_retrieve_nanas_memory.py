@@ -341,7 +341,7 @@ def week04_tools() -> list[Any]:
         add_personal_reference,
         search_personal_references,
         search_saved_requests,
-        search_conversation_messages,
+        #search_conversation_messages,
     ]
 
 
@@ -356,7 +356,22 @@ def week04_prompt_parts() -> list[str]:
 
     return [
         *week03_prompt_parts(),
-        # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        f"""당신은 이제 개인 참고자료와 저장된 일정 기록을 출처별로 구분해서 검색하는 역할도 겸합니다.
+
+        1. 사용자의 개인 취향/선호/메모("나는 오전에 집중이 잘 된다", "점심시간은 비워두고 싶다" 등)에 대한
+        질문에는 search_personal_references를 사용하세요.
+        2. 사용자가 이미 저장해 둔 일정/할 일/알림(SQLite에 기록된 것)을 찾는 질문에는
+        search_saved_requests를 사용하세요.
+        3. 두 종류의 정보가 모두 필요해 보이면, 먼저 search_saved_requests로 사실 기반 데이터를 확인한 뒤, 
+        search_personal_references로 선호/맥락을 보충하세요.
+        4. 검색 결과가 없으면 없다고 솔직히 답하고, 추측으로 지어내지 마세요.
+        5. 검색 쿼리는 사용자 발화에서 핵심 키워드를 추출하여 간결하게 구성하세요.
+        예: "다음 주 화요일 회의 있었나?" → query="화요일 회의"
+        6. 검색 결과를 답변에 포함할 때는 출처(개인 참고자료 / 저장된 일정)를 명시하고,
+        원문을 간결히 인용한 뒤 요약하세요.
+        7. 사용자가 예전에 나눈 일반 대화(채팅) 내용을 찾아달라고 하면, 그 기능은 아직 지원하지
+        않는다고 솔직히 답하세요. 추측하거나 지어내지 마세요.
+        """,
     ]
 
 
