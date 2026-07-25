@@ -350,7 +350,11 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
-    """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
+    """사용자가 add_personal_reference로 미리 적어 둔 메모/선호/참고자료 문서를 찾을 때 쓴다.
+
+    대화에서 지나가듯 말한 내용이나 저장된 일정 row를 찾는 질문에는 쓰지 않는다.
+    ChromaDB + OpenAI embedding 기반 검색이다.
+    """
 
     top_k = safe_limit(top_k, default=2, maximum=20)
     hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)
@@ -359,7 +363,11 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
 
 @tool(args_schema=SearchSavedRequestsInput)
 def search_saved_requests(query: str, top_k: int = 3) -> str:
-    """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
+    """사용자가 명시적으로 등록/저장을 요청해서 SQLite structured_requests에 들어간 일정·할 일·알림 row를 검색할 때만 쓴다.
+
+    잡담이나 과거 발화 내용을 찾는 질문에는 쓰지 않는다(그건 search_conversation_messages).
+    query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣는다.
+    """
 
     top_k = safe_limit(top_k, default=3, maximum=50)
     rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=top_k)
@@ -372,7 +380,14 @@ def search_conversation_messages(
     top_k: int = 5,
     conversation_id: str | None = None,
 ) -> str:
-    """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
+    """과거 채팅에서 사용자가 실제로 무슨 말을 했는지 찾을 때 쓴다.
+
+    "내가 예전에 ~ 얘기한 적 있어?", "전에 ~에 대해 뭐라고 했지?"처럼 묻는 질문,
+    취미·근황·잡담처럼 일정으로 저장되지 않은 발화를 찾는 질문이 여기에 해당한다.
+    앱 SQLite 대화 기록을 대화 단위로 ChromaDB에 sync해 검색한다.
+    일정/할 일/알림 row 검색에는 쓰지 않는다(그건 search_saved_requests).
+    query에는 LLM이 고른 짧은 핵심 명사나 구를 넣는다.
+    """
 
     top_k = safe_limit(top_k, default=5, maximum=50)
     payload = search_conversation_messages_dict(
