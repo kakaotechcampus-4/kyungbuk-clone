@@ -226,8 +226,9 @@ def add_personal_reference_dict(
 
     # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
     reference = reference_store.add_personal_reference(title=title, content=content, tags=tags)
+    backend = reference.pop("backend", None)
 
-    return reference
+    return {"backend" : backend, "reference" : reference}
 
 
 
