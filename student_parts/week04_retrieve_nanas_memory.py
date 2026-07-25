@@ -324,11 +324,14 @@ def search_conversation_message_rows(
     """앱 SQLite에 저장된 일반 채팅 대화 청크를 RAG 검색합니다."""
 
     # 이 helper는 rag store를 인자로 받지 않으므로 파일 상단의 공용 인스턴스를 쓴다.
+    # tool을 안 거치고 이 helper를 직접 부르는 경로에서도 top_k가 무보정으로 들어가지 않도록,
+    # 실사용 tool과 똑같이 safe_limit로 범위를 맞춘 뒤 넘긴다.
+    limit = safe_limit(top_k, default=5, maximum=50)
     result = search_conversation_messages_dict(
         sqlite_store,
         CONVERSATION_RAG_STORE,
         query=query,
-        top_k=top_k,
+        top_k=limit,
         conversation_id=conversation_id,
     )
     return result.get("hits", [])
@@ -404,13 +407,16 @@ def search_nana_memory(
     # 예전 trace는 이 tool 하나로 참고자료 + 일정 기록을 함께 받았다. 그 계약을 유지한다.
     top_k = safe_limit(limit, default=5, maximum=20)
     reference_hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)
-    saved_rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=top_k)
+    # '저장된 일정 chunk'의 근거는 요청 원문(structured_requests)이 아니라 확정 일정(schedules)에서 뽑는다.
+    # 같은 일정을 여러 번 요청해도 schedules에는 하나로 정리돼 있고, date/start_time 컬럼이 있어
+    # 일정 chunk를 date/start_time과 함께 만들기에도 이쪽이 맞는 출처다.
+    saved_schedules = SQLITE_STORE.find_schedules(title=query, limit=top_k)
 
     chunks: list[str] = []
     for hit in reference_hits:
         metadata = hit.get("metadata") or {}
         chunks.append(f"[참고자료] {metadata.get('title', '')}: {hit.get('content', '')}".strip())
-    for row in saved_rows:
+    for row in saved_schedules:
         date = row.get("date") or "날짜 미정"
         start_time = row.get("start_time") or ""
         chunks.append(f"[저장기록] {row.get('title', '')} ({date} {start_time})".strip())
@@ -426,7 +432,7 @@ def search_nana_memory(
             "context": context,
             "chunks": chunks,
             "hits": reference_hits,
-            "rows": saved_rows,
+            "rows": saved_schedules,
         }
     )
 
