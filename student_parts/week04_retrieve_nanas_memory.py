@@ -246,17 +246,54 @@ def empty_result_note(tool_name: str) -> str:
     LLM이 목록 첫 번째를 집고 멈추는 오답이 실측됐기 때문입니다.
     """
 
-    searched = MEMORY_SOURCES[tool_name]["what"]
+    return f"'{MEMORY_SOURCES[tool_name]['what']}'에는 없습니다. {_other_sources_hint(tool_name)}"
+
+
+def relevance_check_note(tool_name: str, hits: list[dict[str, Any]]) -> str:
+    """검색 결과가 있지만 질문과 무관할 수 있을 때, 내용으로 판단하라고 안내합니다.
+
+    ChromaDB 벡터 검색에는 임계값이 없어서 질문과 관련이 적어도 top_k개를 항상 돌려줍니다.
+    그래서 empty_result_note는 hits가 빌 때만 나오는데, 참고자료 검색에서는 hits가 거의
+    비지 않아 사실상 발동하지 않습니다(멘토 리뷰 [P5]).
+
+    distance로 잘라내거나 라우팅을 강제하는 방식은 실측에서 반례가 있었습니다.
+    관련 질의(1.04)와 무관 질의(1.24)의 거리 구간이 겹쳐서 임계값으로 가를 수 없었습니다.
+    그래서 결과를 자르지 않고 그대로 두되, (1) 가장 가까운 distance를 눈에 띄게 노출하고
+    (2) "벡터 검색은 무관해도 결과를 준다"는 사실과 함께 내용으로 판단하라고 안내만 합니다.
+    최종 판단은 숫자가 아니라 LLM이 hit 내용과 질문을 견줘 내리게 합니다.
+    """
+
+    return (
+        "아래 hits는 벡터 검색이 질문과의 거리순으로 돌려준 것입니다. "
+        "벡터 검색은 관련이 적어도 top_k개를 항상 반환하므로, 결과가 있다는 사실만으로 근거가 되지 않습니다. "
+        "각 hit의 content가 사용자 질문에 실제로 답하는지 직접 확인하세요(distance는 참고용이며 클수록 멉니다). "
+        f"어느 hit도 질문 내용과 맞지 않으면 이 출처에는 답이 없는 것으로 보고, {_other_sources_hint(tool_name)}"
+    )
+
+
+def _other_sources_hint(tool_name: str) -> str:
+    """이 tool이 못 찾았을 때 확인할 나머지 두 출처를, '어떤 질문일 때 쓰는지'와 함께 안내합니다.
+
+    남은 출처를 이름만 나열했더니 LLM이 목록 첫 번째를 집고 멈추는 오답이 실측됐습니다.
+    그래서 이름이 아니라 "어떤 질문에 답하는 출처인가"(when)로 라우팅 단서를 줍니다.
+    """
+
     remaining = " / ".join(
         f"{source['when']} → {name}" for name, source in MEMORY_SOURCES.items() if name != tool_name
     )
     return (
-        f"'{searched}'에는 없습니다. Nana의 기억은 출처가 셋으로 나뉘어 있고 이 tool은 그중 하나만 봅니다. "
-        f"따라서 이 결과만으로 '그런 기억이 없다'고 단정할 수 없습니다. "
+        f"Nana의 기억은 출처가 셋으로 나뉘어 있고 이 tool은 그중 하나만 봅니다. "
         f"아직 확인하지 않은 출처 — {remaining}. "
-        f"사용자 질문이 위 둘 중 하나에 해당하면 그 tool로 반드시 한 번 더 찾아본 뒤에 답하세요. "
+        f"사용자 질문이 위 둘 중 하나에 해당하면 그 tool로 한 번 더 찾아본 뒤에 답하세요. "
         f"해당하는 출처를 모두 확인했는데도 근거가 없으면 그때는 없다고 답해도 됩니다."
     )
+
+
+def nearest_distance(hits: list[dict[str, Any]]) -> float | None:
+    """hit 목록에서 가장 가까운(작은) distance를 꺼냅니다. 값이 없으면 None."""
+
+    distances = [hit["distance"] for hit in hits if hit.get("distance") is not None]
+    return min(distances) if distances else None
 
 
 class AddPersonalReferenceInput(BaseModel):
@@ -425,10 +462,19 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
         "query": query,
         "top_k": resolved_top_k,
         "reference_backend": REFERENCE_STORE.backend_info(),
+        # 벡터 검색은 무관해도 top_k개를 돌려주므로, LLM이 관련성을 판단할 수 있게
+        # 가장 가까운 거리를 최상위로 끌어올려 눈에 띄게 노출한다.
+        "nearest_distance": nearest_distance(hits),
         "hits": hits,
     }
-    if not hits:
-        result["note"] = empty_result_note("search_personal_references")
+    # 참고자료 검색은 hits가 거의 비지 않는다(멘토 리뷰 [P5]). 그래서 0건 안내만으로는
+    # "관련 없는 결과를 근거로 쓰는" 실패를 못 막는다. 결과가 있으면 자르지 않고 그대로 두되,
+    # 내용으로 관련성을 판단하라는 안내를 붙인다. distance로 강제 필터링하지는 않는다.
+    result["note"] = (
+        empty_result_note("search_personal_references")
+        if not hits
+        else relevance_check_note("search_personal_references", hits)
+    )
     return json_payload(result)
 
 
