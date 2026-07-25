@@ -355,8 +355,14 @@ def search_nana_memory(
 ) -> str:
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
-    # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
-    ...
+    safe_limit_value = safe_limit(limit, default=5, maximum=20)
+    reference_hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=safe_limit_value)
+    saved_rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=safe_limit_value)
+
+    reference_lines = [f"[참고자료] {hit['content']}" for hit in reference_hits]
+    saved_lines = [f"[저장 일정] {row.get('title')} | {row.get('date')} {row.get('start_time')}" for row in saved_rows]
+    context = "\n".join(reference_lines + saved_lines)
+    return json_payload({"context": context, "reference_backend": REFERENCE_STORE.backend_info()})
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
