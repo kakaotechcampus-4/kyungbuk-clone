@@ -166,6 +166,15 @@ def json_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def tool_result(tool_name: str, *, ok: bool = True, **fields: Any) -> str:
+    """모든 tool이 공통으로 쓰는 결과 envelope(ok/tool_name)을 붙여 JSON 문자열로 만듭니다.
+
+    tool 수가 늘어도 어느 tool의 성공/실패 결과인지 payload만 보고 알 수 있게 합니다.
+    """
+
+    return json_payload({"ok": ok, "tool_name": tool_name, **fields})
+
+
 def safe_limit(limit: int, default: int = 5, maximum: int = 50) -> int:
     """사용자/LLM이 넘긴 limit 값을 안전한 양의 정수 범위로 보정합니다."""
 
@@ -225,7 +234,9 @@ def add_personal_reference_dict(
 ) -> dict[str, Any]:
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
-    return reference_store.add_personal_reference(title=title, content=content, tags=tags or [])
+    saved = reference_store.add_personal_reference(title=title, content=content, tags=tags or [])
+    reference = {key: value for key, value in saved.items() if key != "backend"}
+    return {"reference_backend": saved.get("backend"), "reference": reference}
 
 
 def search_personal_reference_hits(
@@ -295,8 +306,7 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
     saved = add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags)
-    reference_backend = saved.pop("backend", None)
-    return json_payload({"reference_backend": reference_backend, "reference": saved})
+    return tool_result("add_personal_reference", **saved)
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
@@ -305,7 +315,7 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
 
     limit = safe_limit(top_k, default=2, maximum=20)
     hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=limit)
-    return json_payload({"hits": hits})
+    return tool_result("search_personal_references", hits=hits)
 
 
 @tool(args_schema=SearchSavedRequestsInput)
@@ -314,7 +324,7 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
 
     limit = safe_limit(top_k, default=3, maximum=50)
     rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=limit)
-    return json_payload({"rows": rows})
+    return tool_result("search_saved_requests", rows=rows)
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -350,7 +360,6 @@ def week04_tools() -> list[Any]:
         add_personal_reference,
         search_personal_references,
         search_saved_requests,
-        search_conversation_messages,
     ]
 
 
@@ -360,12 +369,23 @@ def week04_system_prompt() -> str:
     return join_system_prompt(week04_prompt_parts())
 
 
+WEEK04_MEMORY_ROUTING_PROMPT = (
+    "Week 4 메모리 tool 사용 기준:\n"
+    "- 사용자의 선호/습관/팀 규칙처럼 앞으로 참고할 개인 지식은 add_personal_reference로 저장한다.\n"
+    "- '내가 전에 뭘 선호한다고 했었지' 같은 개인 참고자료 질문은 search_personal_references를 쓴다.\n"
+    "- '다음 일정/할 일/알림이 언제였지' 같은 구조화된 일정·할 일 질문은 search_saved_requests를 쓴다. "
+    "이 결과가 일정/할 일의 최신 상태를 담은 정본(canonical source)이다.\n"
+    "- 질문이 어느 쪽인지 애매하면 두 tool을 모두 시도해 근거를 확인한 뒤 답한다."
+)
+
+
 def week04_prompt_parts() -> list[str]:
     """1~4주차 system prompt 조각을 누적합니다."""
 
     return [
         *week03_prompt_parts(),
         # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        WEEK04_MEMORY_ROUTING_PROMPT,
     ]
 
 

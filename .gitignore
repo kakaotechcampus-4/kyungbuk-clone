@@ -17,6 +17,8 @@ htmlcov/
 .vscode/
 .idea/
 
+tests/
+
 venv/
 .venv/
 node_modules/
