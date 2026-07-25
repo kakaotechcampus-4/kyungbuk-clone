@@ -434,6 +434,16 @@ def test_add_personal_reference_description_points_to_structured_save():
     assert "save_structured_request" in add_personal_reference.description
 
 
+def test_add_personal_reference_description_instructs_tags_to_always_be_filled():
+    # 멘토 리뷰(PR #158): tags가 채워질 법한 문장에도 LLM이 종종 생략해서, tool description에
+    # "항상 채워라" + 예시를 명시적으로 추가했다. optional 필드라 LLM이 생략하기 쉬우므로
+    # docstring이 이 지시를 실제로 담고 있는지 검증한다.
+    description = add_personal_reference.description
+    assert "tags" in description
+    assert "항상" in description
+    assert "preference" in description and "meeting" in description
+
+
 def test_search_personal_references_description_cross_references_search_saved_requests():
     assert "search_saved_requests" in search_personal_references.description
 

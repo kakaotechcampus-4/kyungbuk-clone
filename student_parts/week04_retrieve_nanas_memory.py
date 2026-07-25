@@ -318,7 +318,9 @@ def search_conversation_message_rows(
 @tool(args_schema=AddPersonalReferenceInput)
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
     """자유 형식의 개인 메모/선호/참고자료를 ChromaDB에 저장합니다.
-    구조화된 일정/할 일/알림 저장은 Week 3의 save_structured_request를 사용하세요."""
+    구조화된 일정/할 일/알림 저장은 Week 3의 save_structured_request를 사용하세요.
+    tags에는 내용을 요약하는 1~3개의 짧은 키워드를 생략하지 말고 항상 채워서 넣으세요.
+    예: "회의는 오전보다 오후를 선호한다"는 메모라면 tags=["preference", "meeting"]처럼 넣습니다."""
 
     result = add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags)
     return json_payload({"ok": True, "tool_name": "add_personal_reference", **result})
