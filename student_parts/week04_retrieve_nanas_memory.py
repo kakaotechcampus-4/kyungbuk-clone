@@ -291,8 +291,8 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
     result = add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags)
-    reference_backend = result.pop("backend")
-    return json_payload({"reference_backend": reference_backend, "reference": result})
+    result.pop("backend", None)
+    return json_payload({"reference_backend": REFERENCE_STORE.backend_info(), "reference": result})
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
