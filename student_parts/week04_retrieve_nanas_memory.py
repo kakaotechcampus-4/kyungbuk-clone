@@ -384,7 +384,52 @@ def search_nana_memory(
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
     # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
-    ...
+    corrected_limit = safe_limit(limit, default=5, maximum=20)
+    reference_hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=corrected_limit)
+
+    fetch_limit = corrected_limit * 5 if attendee else corrected_limit
+    schedule_rows = SQLITE_STORE.list_schedules(date_from=date_from, date_to=date_to, limit=fetch_limit)
+
+    matched_schedules = []
+    for schedule in schedule_rows:
+        if attendee:
+            needle = attendee.strip().lower()
+            attendees = schedule.get("attendees") or []
+            if not any(needle in str(name).strip().lower() for name in attendees):
+                continue
+        matched_schedules.append(schedule)
+    matched_schedules = matched_schedules[:corrected_limit]
+
+    reference_lines = [f"- {hit['content']}" for hit in reference_hits] or ["조회된 참고자료가 없습니다."]
+
+    schedule_lines = []
+    for schedule in matched_schedules:
+        title = schedule.get("title") or "제목 없음"
+        date_text = schedule.get("date") or "날짜 미정"
+        start_time = schedule.get("start_time") or "시간 미정"
+        end_time = schedule.get("end_time") or "시간 미정"
+        attendees = schedule.get("attendees") or []
+        attendee_text = ", ".join(attendees) if attendees else "참석자 미정"
+        schedule_lines.append(f"- {title} | {date_text} {start_time}-{end_time} | {attendee_text}")
+    if not schedule_lines:
+        schedule_lines = ["조회된 일정이 없습니다."]
+
+    context = "\n\n".join(
+        [
+            "[개인 참고자료]",
+            "\n".join(reference_lines),
+            "[SQLite 일정 기록]",
+            "\n".join(schedule_lines),
+        ]
+    )
+
+    payload = {
+        "reference_backend": REFERENCE_STORE.backend_info(),
+        "hits": reference_hits,
+        "schedules": matched_schedules,
+        "context": context,
+    }
+    return json_payload(payload)
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
@@ -395,6 +440,7 @@ def week04_tools() -> list[Any]:
         search_personal_references,
         search_saved_requests,
         search_conversation_messages,
+        search_nana_memory,
     ]
 
 
