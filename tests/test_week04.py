@@ -5,11 +5,17 @@ import pytest
 
 import student_parts.week04_retrieve_nanas_memory as w4
 from fixed.app_store import AppSQLiteStore
+from fixed.conversation_rag_store import ConversationRAGStore
 from fixed.reference_store import OpenAIEmbeddingFunction, PersonalReferenceStore
+from fixed.session_scope import DEFAULT_SESSION_SCOPE, conversation_session_scope
 from student_parts.week04_retrieve_nanas_memory import (
     add_personal_reference,
     add_personal_reference_dict,
     safe_limit,
+    search_conversation_message_rows,
+    search_conversation_messages,
+    search_conversation_messages_dict,
+    search_nana_memory,
     search_personal_reference_hits,
     search_personal_references,
     search_saved_request_rows,
@@ -35,7 +41,18 @@ def use_temp_stores(tmp_path, monkeypatch):
     """REFERENCE_STORE/SQLITE_STORE를 tmp_path 기준 임시 store로 교체하고,
     embedding 호출이 실제 네트워크로 나가지 않도록 가짜 벡터로 대체합니다.
     week04 store들은 import 시점에 이미 생성돼 있으므로 CONFIG가 아니라
-    모듈 전역(w4.REFERENCE_STORE/w4.SQLITE_STORE) 자체를 바꿔치기합니다."""
+    모듈 전역(w4.REFERENCE_STORE/w4.SQLITE_STORE) 자체를 바꿔치기합니다.
+
+    save_structured_request(group_schedule/personal_schedule)는 AppSQLiteStore 인스턴스가
+    무엇이든 상관없이 fixed.app_store의 외부 MCP 동기화 함수를 무조건 호출해 실제
+    data/kanana_external_people.sqlite3에 subprocess로 접근한다. test_week03.py의
+    _reset_week03_state와 동일하게 여기서도 반드시 stub 처리해야 진짜 외부 DB가
+    테스트로 오염되지 않는다."""
+
+    monkeypatch.setattr("fixed.app_store.sync_personal_schedule_to_shared", lambda schedule: {"ok": True, "status": "stubbed"})
+    monkeypatch.setattr("fixed.app_store.sync_group_schedule_to_shared", lambda schedule: {"ok": True, "status": "stubbed"})
+    monkeypatch.setattr("fixed.app_store.delete_personal_schedule_from_shared", lambda request_id: {"ok": True, "deleted": []})
+    monkeypatch.setattr("fixed.app_store.delete_group_schedule_from_shared", lambda schedule: {"ok": True, "deleted": []})
 
     monkeypatch.setattr(OpenAIEmbeddingFunction, "__call__", lambda self, input: _fake_embed(input))
     monkeypatch.setattr(OpenAIEmbeddingFunction, "embed_query", lambda self, input: _fake_embed(input))
@@ -43,9 +60,25 @@ def use_temp_stores(tmp_path, monkeypatch):
 
     test_reference_store = PersonalReferenceStore(tmp_path / "chroma")
     test_sqlite_store = AppSQLiteStore(tmp_path / "app.sqlite3")
+    test_conversation_rag_store = ConversationRAGStore(tmp_path / "chroma")
     monkeypatch.setattr(w4, "REFERENCE_STORE", test_reference_store)
     monkeypatch.setattr(w4, "SQLITE_STORE", test_sqlite_store)
-    return SimpleNamespace(reference_store=test_reference_store, sqlite_store=test_sqlite_store)
+    monkeypatch.setattr(w4, "CONVERSATION_RAG_STORE", test_conversation_rag_store)
+    return SimpleNamespace(
+        reference_store=test_reference_store,
+        sqlite_store=test_sqlite_store,
+        conversation_rag_store=test_conversation_rag_store,
+    )
+
+
+def _seed_conversation(sqlite_store, *, title, messages):
+    """title/messages로 conversation 하나를 만들고 conversation_id를 반환합니다."""
+
+    conversation = sqlite_store.create_conversation(title=title)
+    conversation_id = conversation["conversation_id"]
+    for role, content in messages:
+        sqlite_store.append_message(conversation_id, role, content)
+    return conversation_id
 
 
 # --- add_personal_reference_dict (메인과제) ---
@@ -214,6 +247,183 @@ def test_search_saved_requests_tool_returns_empty_rows_when_no_match(use_temp_st
     assert result["rows"] == []
 
 
+# --- search_conversation_messages_dict (추가과제 Step 1) ---
+
+
+def test_search_conversation_messages_dict_syncs_and_finds_matching_conversation(use_temp_stores):
+    conversation_id = _seed_conversation(
+        use_temp_stores.sqlite_store,
+        title="여행 얘기",
+        messages=[("user", "제주도 여행 언제 갈지 얘기했었잖아"), ("assistant", "9월 초가 좋겠다고 했었어요")],
+    )
+
+    result = search_conversation_messages_dict(
+        use_temp_stores.sqlite_store,
+        use_temp_stores.conversation_rag_store,
+        query="제주도 여행 언제 갈지 얘기했었잖아",
+        top_k=5,
+    )
+
+    assert result["sync"]["total"] == 1
+    assert result["sync"]["upserted"] == 1
+    assert len(result["hits"]) == 1
+    assert result["hits"][0]["conversation_id"] == conversation_id
+    assert result["rows"] == result["hits"]
+    assert "제주도" in result["context"]
+    assert result["rag_backend"]["vector_store"] == "chromadb"
+
+
+def test_search_conversation_messages_dict_direct_tool_call_scope_does_not_exclude_anything(use_temp_stores):
+    conversation_id = _seed_conversation(
+        use_temp_stores.sqlite_store,
+        title="여행 얘기",
+        messages=[("user", "제주도 여행 언제 갈지 얘기했었잖아")],
+    )
+
+    # current_session_scope()는 conversation_session_scope로 감싸지 않으면
+    # DEFAULT_SESSION_SCOPE sentinel을 반환한다. 이 값이 실제 conversation_id로
+    # 오인되어 제외되지 않아야 한다.
+    result = search_conversation_messages_dict(
+        use_temp_stores.sqlite_store,
+        use_temp_stores.conversation_rag_store,
+        query="제주도 여행 언제 갈지 얘기했었잖아",
+        top_k=5,
+    )
+
+    assert [hit["conversation_id"] for hit in result["hits"]] == [conversation_id]
+
+
+def test_search_conversation_messages_dict_excludes_current_conversation_when_real_scope_active(use_temp_stores):
+    conversation_a = _seed_conversation(
+        use_temp_stores.sqlite_store,
+        title="대화 A",
+        messages=[("user", "여행 준비물 뭐 챙길지 얘기했었잖아")],
+    )
+    _seed_conversation(
+        use_temp_stores.sqlite_store,
+        title="대화 B",
+        messages=[("user", "여행 준비물 뭐 챙길지 얘기했었잖아")],
+    )
+
+    with conversation_session_scope(conversation_a):
+        result = search_conversation_messages_dict(
+            use_temp_stores.sqlite_store,
+            use_temp_stores.conversation_rag_store,
+            query="여행 준비물 뭐 챙길지 얘기했었잖아",
+            top_k=5,
+        )
+
+    conversation_ids = [hit["conversation_id"] for hit in result["hits"]]
+    assert conversation_a not in conversation_ids
+    assert len(conversation_ids) == 1
+
+
+def test_search_conversation_messages_dict_explicit_conversation_id_overrides_exclusion(use_temp_stores):
+    conversation_a = _seed_conversation(
+        use_temp_stores.sqlite_store,
+        title="대화 A",
+        messages=[("user", "여행 준비물 뭐 챙길지 얘기했었잖아")],
+    )
+    _seed_conversation(
+        use_temp_stores.sqlite_store,
+        title="대화 B",
+        messages=[("user", "여행 준비물 뭐 챙길지 얘기했었잖아")],
+    )
+
+    with conversation_session_scope(conversation_a):
+        result = search_conversation_messages_dict(
+            use_temp_stores.sqlite_store,
+            use_temp_stores.conversation_rag_store,
+            query="여행 준비물 뭐 챙길지 얘기했었잖아",
+            top_k=5,
+            conversation_id=conversation_a,
+        )
+
+    assert [hit["conversation_id"] for hit in result["hits"]] == [conversation_a]
+
+
+def test_search_conversation_messages_dict_returns_empty_when_no_conversations_synced(use_temp_stores):
+    result = search_conversation_messages_dict(
+        use_temp_stores.sqlite_store,
+        use_temp_stores.conversation_rag_store,
+        query="아무것도 없는 검색어",
+        top_k=5,
+    )
+
+    assert result["hits"] == []
+    assert result["sync"]["total"] == 0
+
+
+# --- search_conversation_message_rows (추가과제 Step 1) ---
+
+
+def test_search_conversation_message_rows_returns_only_hits_list(use_temp_stores):
+    _seed_conversation(
+        use_temp_stores.sqlite_store,
+        title="여행 얘기",
+        messages=[("user", "제주도 여행 언제 갈지 얘기했었잖아")],
+    )
+
+    dict_result = search_conversation_messages_dict(
+        use_temp_stores.sqlite_store,
+        use_temp_stores.conversation_rag_store,
+        query="제주도 여행 언제 갈지 얘기했었잖아",
+        top_k=5,
+    )
+    rows = search_conversation_message_rows(
+        use_temp_stores.sqlite_store,
+        query="제주도 여행 언제 갈지 얘기했었잖아",
+        top_k=5,
+    )
+
+    assert rows == dict_result["hits"]
+
+
+# --- search_conversation_messages tool (추가과제 Step 2) ---
+
+
+def test_search_conversation_messages_tool_returns_expected_keys(use_temp_stores):
+    _seed_conversation(
+        use_temp_stores.sqlite_store,
+        title="여행 얘기",
+        messages=[("user", "제주도 여행 언제 갈지 얘기했었잖아")],
+    )
+
+    raw = search_conversation_messages.invoke({"query": "제주도 여행 언제 갈지 얘기했었잖아", "top_k": 5})
+    result = json.loads(raw)
+
+    assert set(result.keys()) == {"hits", "rows", "context", "rag_backend", "sync"}
+    assert len(result["hits"]) == 1
+
+
+def test_search_conversation_messages_tool_excludes_current_conversation_via_invoke(use_temp_stores):
+    conversation_a = _seed_conversation(
+        use_temp_stores.sqlite_store,
+        title="대화 A",
+        messages=[("user", "여행 준비물 뭐 챙길지 얘기했었잖아")],
+    )
+    _seed_conversation(
+        use_temp_stores.sqlite_store,
+        title="대화 B",
+        messages=[("user", "여행 준비물 뭐 챙길지 얘기했었잖아")],
+    )
+
+    with conversation_session_scope(conversation_a):
+        raw = search_conversation_messages.invoke(
+            {"query": "여행 준비물 뭐 챙길지 얘기했었잖아", "top_k": 5}
+        )
+    result = json.loads(raw)
+
+    conversation_ids = [hit["conversation_id"] for hit in result["hits"]]
+    assert conversation_a not in conversation_ids
+    assert len(conversation_ids) == 1
+
+
+def test_search_conversation_messages_description_cross_references_other_tools():
+    assert "search_personal_references" in search_conversation_messages.description
+    assert "search_saved_requests" in search_conversation_messages.description
+
+
 # --- tool description 상호 참조 (Step 4 — agent가 tool을 고르는 1차 근거) ---
 # LangChain @tool은 함수 docstring을 그대로 tool.description으로 써서 LLM에게 전달한다.
 # system prompt보다 이 description이 tool 선택에 더 직접적으로 쓰이므로, 서로 반대되는
@@ -243,6 +453,12 @@ def test_week04_prompt_parts_mentions_all_three_tool_names():
     assert "add_personal_reference" in joined
 
 
+def test_week04_prompt_parts_mentions_search_conversation_messages():
+    joined = " ".join(w4.week04_prompt_parts())
+
+    assert "search_conversation_messages" in joined
+
+
 def test_week04_prompt_parts_includes_week03_parts():
     from student_parts.week03_build_nanas_logbook import week03_prompt_parts
 
@@ -251,8 +467,84 @@ def test_week04_prompt_parts_includes_week03_parts():
         assert part in prompt_parts
 
 
+# --- search_nana_memory (추가과제 Step 3, 참고 코드 — week04_tools()에는 노출 안 함) ---
+
+
+def test_search_nana_memory_combines_reference_and_saved_request_chunks(use_temp_stores):
+    add_personal_reference_dict(
+        use_temp_stores.reference_store,
+        title="회의 선호",
+        content="오전 회의를 선호한다",
+    )
+    use_temp_stores.sqlite_store.save_structured_request(
+        {"kind": "todo", "title": "보고서 제출", "date": "2026-07-25", "priority": "high", "reason": "마감 임박"}
+    )
+
+    raw = search_nana_memory.invoke({"query": "보고서 제출"})
+    result = json.loads(raw)
+
+    assert result["ok"] is True
+    assert result["tool_name"] == "search_nana_memory"
+    assert any(chunk.startswith("[참고자료]") for chunk in result["chunks"])
+    assert any(chunk.startswith("[저장기록]") for chunk in result["chunks"])
+    assert "[참고자료]" in result["context"]
+    assert "[저장기록]" in result["context"]
+    assert "reference_backend" in result
+
+
+def test_search_nana_memory_filters_saved_rows_by_date_range(use_temp_stores):
+    use_temp_stores.sqlite_store.save_structured_request(
+        {"kind": "todo", "title": "보고서 제출", "date": "2026-07-25"}
+    )
+    use_temp_stores.sqlite_store.save_structured_request(
+        {"kind": "todo", "title": "보고서 제출 리마인드", "date": "2026-08-25"}
+    )
+
+    raw = search_nana_memory.invoke(
+        {"query": "보고서 제출", "date_from": "2026-08-01", "date_to": "2026-08-31", "limit": 10}
+    )
+    result = json.loads(raw)
+
+    titles = [row["title"] for row in result["rows"]]
+    assert "보고서 제출 리마인드" in titles
+    assert "보고서 제출" not in titles
+    assert not any(chunk.startswith("[저장기록] 보고서 제출 (") for chunk in result["chunks"])
+
+
+def test_search_nana_memory_filters_saved_rows_by_attendee(use_temp_stores):
+    use_temp_stores.sqlite_store.save_structured_request(
+        {
+            "kind": "group_schedule",
+            "title": "팀 회의",
+            "date": "2026-07-30",
+            "start_time": "15:00",
+            "members": ["민수", "지아"],
+        }
+    )
+    use_temp_stores.sqlite_store.save_structured_request(
+        {
+            "kind": "group_schedule",
+            "title": "다른 팀 회의",
+            "date": "2026-07-31",
+            "start_time": "10:00",
+            "members": ["철수"],
+        }
+    )
+
+    raw = search_nana_memory.invoke({"query": "팀 회의", "attendee": "민수", "limit": 10})
+    result = json.loads(raw)
+
+    titles = [row["title"] for row in result["rows"]]
+    assert titles == ["팀 회의"]
+
+
+def test_search_nana_memory_not_exposed_in_week04_tools():
+    tool_names = {getattr(tool, "name", "") for tool in w4.week04_tools()}
+    assert "search_nana_memory" not in tool_names
+
+
 # ============================================================
-# 수동 E2E 테스트 체크리스트 (./run.sh --week4 또는 KANANA_ACTIVE_WEEK=4) — 메인과제만
+# 수동 E2E 테스트 체크리스트 (./run.sh --week4 또는 KANANA_ACTIVE_WEEK=4)
 # ============================================================
 # pytest가 검증하지 않는 "실제 LLM이 문맥만으로 알맞은 tool을 고르는지"는 앱을 직접
 # 실행해 상세 trace 패널의 tool_call/tool_result를 눈으로 확인해야 한다. 확인했으면
@@ -286,4 +578,36 @@ def test_week04_prompt_parts_includes_week03_parts():
 #     입력: "내가 저장한 적 없는 것에 대해 물어봄" (예: "내가 화성 여행 계획에 대해 뭐라고 적어놨었지?")
 #     확인: hits/rows가 비어 있을 때 모델이 근거 없다고 답하고 내용을 지어내지 않음
 #     결과: 정상 동작 확인. 검색 결과가 없다고 정직하게 답하고 내용을 지어내지 않음.
+#
+# --- 추가과제 시나리오 (search_conversation_messages / search_nana_memory) ---
+#
+# [x] 시나리오 4 — 일반 채팅 발화 검색 + 현재 대화 제외
+#     (2026-07-25 확인 완료 — AgentRuntime.run_agent()로 직접 돌려본 사전 스모크 테스트에서
+#     CONFIG.app_db_path/chroma_dir/external_db_path를 임시 디렉터리로 격리하고
+#     fixed.app_store의 외부 MCP 동기화 함수도 no-op으로 패치한 뒤 실제 LLM 호출로 확인함,
+#     Gradio 브라우저 조작 대신. 실제 앱 데이터는 건드리지 않음.)
+#     입력 1 (대화 A): "다음 주에 부산 여행 갈 계획인데 해운대 근처 숙소 좀 추천해줄래?"
+#     입력 2 (대화 B, 별도 대화): "지난 달에 부산 여행 갔을 때 해운대에서 회 먹었던 게 진짜 맛있었어"
+#     입력 3 (대화 A 안에서, 같은 대화): "내가 전에 채팅으로 부산 여행 관련해서 뭐라고 했었는지 찾아줄 수 있어?"
+#     확인: search_conversation_messages tool_call 발생 (query="부산 여행"), tool_result의
+#           hits에 대화 B의 conversation_id만 포함되고 대화 A(현재 대화)는 제외됨
+#     결과: 정상 동작 확인. hits == [대화 B]였고 대화 A는 정확히 빠짐. 답변도 대화 B의
+#     발화를 근거로 인용했고, 방금 turn3에서 한 말이 검색 결과에 섞이지 않음.
+#
+# [x] 시나리오 5 — search_nana_memory 호환 tool 필터링 (agent 미노출, 직접 .invoke() 확인)
+#     (2026-07-25 확인 완료, 위와 동일한 격리 환경에서 직접 .invoke() 호출)
+#     사전 준비: add_personal_reference로 참고자료 1건, save_structured_request로
+#     group_schedule 2건(날짜/참석자 다르게) 저장
+#     확인 1: 필터 없이 호출 → 참고자료+저장기록 chunk가 context에 함께 나옴
+#     확인 2: date_from/date_to 지정 → 범위 밖 저장기록이 rows/context에서 빠짐
+#     확인 3: attendee 지정 → 참석자 목록에 없는 저장기록이 빠짐
+#     확인 4: week04_tools() 목록에 search_nana_memory가 없음 (agent에 노출 안 됨)
+#     결과: 4개 확인 모두 통과.
+#
+# 참고: 이 확인 과정에서 tests/test_week04.py의 use_temp_stores fixture가 외부 MCP
+# 동기화 함수(sync_group_schedule_to_shared 등)를 stub하지 않고 있어서, group_schedule을
+# 저장하는 기존/신규 테스트가 실행될 때마다 실제 data/kanana_external_people.sqlite3에
+# 테스트용 "팀 회의"/"다른 팀 회의" row가 leak되고 있었음을 발견했다 (test_week03.py는
+# 이미 stub 처리돼 있었으나 test_week04.py에는 빠져 있던 기존 버그). fixture에 동일한
+# stub 4줄을 추가해 재발을 막았고, 이미 leak된 36건은 실제 DB에서 삭제해 정리했다.
 # ============================================================

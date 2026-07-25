@@ -146,3 +146,205 @@ Week 1~3은 `weekN_system_prompt()`에 그 주차만의 역할/경계 문장을 
    표현을 어떻게 분류할지 예문이 없다. 실제로 "팀"을 group_schedule의 참석자처럼 취급해버리는 걸 확인함.
    이 규칙은 구현 가이드에 명시된 게 아니라 이전 구현 시점에 임의로 추가한 휴리스틱으로 보임 — 멘토님께
    "집단 명사(팀/다들/동료들)는 personal/group 중 어느 쪽으로 분류해야 하는지" 질문할 예정.
+
+---
+
+# Week 4 구현 계획 — 추가과제 (다음 세션에서 진행)
+
+## Context
+
+메인과제(위 내용)는 완성/테스트 통과 상태. 이번에 구현할 건 같은 파일(`student_parts/week04_retrieve_nanas_memory.py`)에 남아있는 **추가 과제** 2개 기능(함수 4개, 전부 TODO 스텁):
+
+1. **`search_conversation_messages`** — 앱 SQLite에 자동으로 쌓이는 일반 채팅 대화(`conversations`/`messages` 표, `fixed/agent_runtime.py`가 매 turn마다 무조건 기록)를 ChromaDB로 lazy sync한 뒤 의미 기반으로 검색하는 agentic RAG. "방금 한 말"이 검색 결과에 과거 기록처럼 섞이지 않도록 현재 대화는 기본적으로 제외한다.
+2. **`search_nana_memory`** — 이전 버전 호환용 통합 검색. 개인 참고자료(메모) hit와 SQLite 저장 일정 row를 한 번에 묶어 하나의 `context` 문자열로 반환한다. 가이드 주석(파일 87~91번째 줄)이 이 tool을 "참고 코드"로, 나머지 4개를 "학생 핵심 구현 대상"으로 명확히 구분하고 있고 `week04_tools()`(이미 완성된 코드)도 이 tool을 포함하지 않으므로, **agent에는 노출하지 않는다** (함수/tool은 만들되 `week04_tools()`는 손대지 않음).
+
+필요한 부품(`ConversationRAGStore`, `current_session_scope`/`DEFAULT_SESSION_SCOPE`, `PersonalReferenceStore.backend_info`)은 `fixed/`에 이미 완성되어 있어 호출만 하면 된다. git history 커밋 `7266835`(나중에 되돌려짐)에 한 번 구현됐던 버전이 남아있어 반환 JSON 키 구조의 신뢰할 만한 참고 자료가 된다.
+
+**1~3주차에 대한 영향**: 없음(확인 완료). import는 week04→03→02→01 단방향이고, `CONFIG`는 읽기 전용, 새 로직은 `conversations`/`messages`에 SELECT만 하고 별도 ChromaDB 컬렉션에만 쓴다. 유일한 실행 주의사항은 테스트 격리(아래 참고).
+
+## 설계 결정
+
+- **`search_nana_memory`의 `date_from`/`date_to`/`attendee`는 실제로 필터링한다.** `fixed/app_store.py`의 `structured_requests` 테이블에는 이미 `date`/`start_time`/`members_json` 컬럼이 있고, `search_saved_requests()`가 반환하는 row에도 이 값들이 그대로 들어있다. `fixed/` 코드를 건드릴 필요 없이, `search_saved_request_rows`로 넉넉히 가져온 뒤 **week04 파일(학생 코드) 안에서 Python으로 후처리 필터링**한다. 이미 파일에 있지만 안 쓰이던 `_decode_attendees(raw)` 헬퍼를 `members_json` 디코딩에 재사용한다.
+- **`search_nana_memory`는 `week04_tools()`에 추가하지 않는다** (가이드 주석 + 기존 완성 코드 근거).
+- **참고자료(메모) hit에는 날짜/참석자 개념이 없으므로, `date_from`/`date_to`/`attendee` 필터는 저장 기록(`saved_rows`) 쪽에만 적용**하고 참고자료 검색에는 적용하지 않는다.
+
+## 구현 대상 함수 (pseudocode 수준)
+
+### 1. `search_conversation_messages_dict(sqlite_store, conversation_rag_store, *, query, top_k=5, conversation_id=None) -> dict`
+
+```python
+sync = conversation_rag_store.sync_from_sqlite(sqlite_store)
+
+exclude_conversation_id = None
+if conversation_id is None:
+    active = current_session_scope()
+    if active != DEFAULT_SESSION_SCOPE:
+        exclude_conversation_id = active
+
+hits = conversation_rag_store.search(
+    query=query, top_k=top_k,
+    conversation_id=conversation_id,
+    exclude_conversation_id=exclude_conversation_id,
+)
+return {
+    "hits": hits,
+    "rows": hits,
+    "context": conversation_rag_store.context_from_hits(hits),
+    "rag_backend": conversation_rag_store.backend_info(),
+    "sync": sync,
+}
+```
+
+### 2. `search_conversation_message_rows(sqlite_store, *, query, top_k=5, conversation_id=None) -> list[dict]`
+
+`search_conversation_messages_dict(sqlite_store, CONVERSATION_RAG_STORE, ...)`를 호출해 `hits`만 반환 (모듈 전역 `CONVERSATION_RAG_STORE`를 직접 참조 — 테스트가 monkeypatch할 수 있도록 호출 시점에 읽음).
+
+### 3. `search_conversation_messages` tool
+
+```python
+@tool(args_schema=SearchConversationMessagesInput)
+def search_conversation_messages(query, top_k=5, conversation_id=None):
+    """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다.
+    개인 참고자료는 search_personal_references, 구조화된 저장 일정/할 일/알림은
+    search_saved_requests를 사용하세요."""
+    limit = safe_limit(top_k, default=5, maximum=50)
+    result = search_conversation_messages_dict(
+        SQLITE_STORE, CONVERSATION_RAG_STORE, query=query, top_k=limit, conversation_id=conversation_id,
+    )
+    return json_payload(result)  # bare {hits, rows, context, rag_backend, sync} — search_personal_references/search_saved_requests와 동일한 규칙(ok/tool_name 래핑 없음)
+```
+
+### 4. `search_nana_memory` tool (실제 필터링 포함)
+
+```python
+@tool(args_schema=SearchNanaMemoryInput)
+def search_nana_memory(query, date_from=None, date_to=None, attendee=None, limit=5):
+    """이전 버전 호환용 통합 검색 tool입니다. 지금은 search_personal_references /
+    search_saved_requests / search_conversation_messages로 출처를 나눠 찾는 것이
+    표준이며, 이 tool은 예전 trace와의 호환을 위해 유지됩니다."""
+
+    top_k = safe_limit(limit, default=5, maximum=20)
+    reference_hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)
+
+    # 필터링 여지를 남기기 위해 넉넉히 가져온 뒤 Python에서 후처리
+    fetch_k = safe_limit(top_k * 4, default=20, maximum=50)
+    candidate_rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=fetch_k)
+
+    def _row_matches(row):
+        if date_from and (not row.get("date") or row["date"] < date_from):
+            return False
+        if date_to and (not row.get("date") or row["date"] > date_to):
+            return False
+        if attendee and attendee not in _decode_attendees(row.get("members_json")):
+            return False
+        return True
+
+    saved_rows = [row for row in candidate_rows if _row_matches(row)][:top_k]
+
+    chunks = []
+    for hit in reference_hits:
+        metadata = hit.get("metadata") or {}
+        chunks.append(f"[참고자료] {metadata.get('title', '')}: {hit.get('content', '')}".strip())
+    for row in saved_rows:
+        date = row.get("date") or "날짜 미정"
+        start_time = row.get("start_time") or ""
+        chunks.append(f"[저장기록] {row.get('title', '')} ({date} {start_time})".strip())
+    context = "\n".join(chunks) if chunks else "관련된 개인 참고자료나 저장 기록을 찾지 못했습니다."
+
+    return json_payload({
+        "ok": True, "tool_name": "search_nana_memory", "query": query,
+        "filters": {"date_from": date_from, "date_to": date_to, "attendee": attendee},
+        "reference_backend": REFERENCE_STORE.backend_info(),
+        "context": context, "chunks": chunks,
+        "hits": reference_hits, "rows": saved_rows,
+    })
+```
+
+`search_nana_memory`는 `week04_tools()`에 **추가하지 않는다**.
+
+## `week04_tools()` / `week04_prompt_parts()` 업데이트
+
+- **`week04_tools()`: 변경 없음.** 이미 `search_conversation_messages`까지 포함되어 있고 `search_nana_memory`는 의도적으로 제외.
+- **`week04_prompt_parts()`: 기존 리스트에 문장 하나만 추가** (main과제와 같은 방식 — 별도 모듈 상수로 안 빼고 인라인):
+  > "예전에 채팅으로 나눈 일반 대화 내용을 물으면(예: '전에 채팅으로 여행 얘기할 때 뭐라고 했었지?') search_conversation_messages를 쓴다. 이 tool은 conversation_id를 따로 지정하지 않으면 지금 하고 있는 대화는 자동으로 검색에서 제외하므로, 방금 한 말이 과거 기록처럼 섞여 나오지 않는다."
+- **Docstring 상호 참조**: `search_conversation_messages`는 `search_personal_references`/`search_saved_requests`를 언급, `search_nana_memory`는 세 개 표준 tool을 모두 언급(예전 방식임을 명시). 이미 완성된 메인과제 tool들의 docstring은 건드리지 않는다.
+
+## 진행 순서 (메인과제와 동일한 cadence: 구현 → 테스트 → pytest → 설명 → 승인 → 다음 step)
+
+**Step 1 — 대화 검색 핵심 로직**
+- `search_conversation_messages_dict`, `search_conversation_message_rows` 구현
+- `tests/test_week04.py`의 `use_temp_stores` fixture 확장 (`w4.CONVERSATION_RAG_STORE`도 tmp_path 기반으로 monkeypatch)
+- helper 단위 테스트 작성 후 `pytest tests/test_week04.py -k conversation_message` 실행
+
+**Step 2 — `search_conversation_messages` tool**
+- tool 구현, docstring 상호 참조 추가
+- `week04_prompt_parts()`에 라우팅 문장 추가
+- tool-level 테스트 추가, 전체 `pytest tests/test_week04.py` 실행
+
+**Step 3 — `search_nana_memory` 호환 tool (실제 필터링 포함)**
+- tool 구현 (`_decode_attendees` 재사용)
+- `week04_tools()`에는 추가하지 않음을 재확인
+- 필터링 테스트 포함해 전체 `pytest tests/test_week04.py` 실행
+
+**Step 4 — 수동 E2E 체크리스트 추가**
+- `tests/test_week04.py` 하단 체크리스트에 대화 검색/호환 tool 시나리오 추가 (`[ ]` 상태로, 실제 앱 실행 확인은 사용자 몫)
+
+## 테스트 추가 (`tests/test_week04.py`)
+
+### fixture 확장
+```python
+from fixed.conversation_rag_store import ConversationRAGStore
+from fixed.session_scope import conversation_session_scope, DEFAULT_SESSION_SCOPE
+
+# use_temp_stores 안에 추가:
+test_conversation_rag_store = ConversationRAGStore(tmp_path / "chroma")
+monkeypatch.setattr(w4, "CONVERSATION_RAG_STORE", test_conversation_rag_store)
+```
+
+### 새 테스트 함수 (이름 + 검증 내용)
+
+**`search_conversation_messages_dict`**
+- `test_..._syncs_and_finds_matching_conversation` — 대화 하나 생성 후 검색, `sync` 카운트/`hits`/`context`/`rag_backend` 확인
+- `test_..._direct_tool_call_scope_does_not_exclude_anything` — `conversation_session_scope` 없이 호출 시 `DEFAULT_SESSION_SCOPE` sentinel이 제외 대상으로 오인되지 않음을 확인
+- `test_..._excludes_current_conversation_when_real_scope_active` — 두 대화(A, B) 중 A를 `conversation_session_scope(A)`로 감싸고 호출 시 A 제외, B는 검색됨
+- `test_..._explicit_conversation_id_overrides_exclusion` — 같은 상황에서 `conversation_id=A`를 명시하면 A가 다시 나옴
+- `test_..._returns_empty_when_no_conversations_synced` — 빈 SQLite에서 `hits == [] and sync["total"] == 0`
+
+**`search_conversation_message_rows`**
+- `test_..._returns_only_hits_list` — dict 결과의 `hits`와 동일한 리스트 반환 확인
+
+**`search_conversation_messages` tool**
+- `test_..._tool_returns_expected_keys` — `.invoke()` 결과 키가 `{hits, rows, context, rag_backend, sync}` (ok/tool_name 래핑 없음)
+- `test_..._tool_excludes_current_conversation_via_invoke` — tool 경유로도 제외 동작 확인
+- `test_..._description_cross_references_...` — docstring에 다른 tool 이름 포함 확인
+
+**`week04_prompt_parts`**
+- `test_..._mentions_search_conversation_messages`
+
+**`search_nana_memory`**
+- `test_..._combines_reference_and_saved_request_chunks` — 참고자료+저장기록 둘 다 매칭될 때 `context`에 `[참고자료]`/`[저장기록]` 둘 다 포함
+- `test_..._filters_saved_rows_by_date_range` — `date_from`/`date_to` 지정 시 범위 밖 저장기록이 `rows`/`context`에서 빠짐
+- `test_..._filters_saved_rows_by_attendee` — `attendee` 지정 시 `members_json`에 없는 행이 빠짐 (`_decode_attendees` 재사용 확인)
+- `test_..._not_exposed_in_week04_tools` — `search_nana_memory`가 `week04_tools()` 목록에 없음을 확인
+
+## 재사용할 기존 코드
+
+| 함수/클래스 | 위치 | 용도 |
+|---|---|---|
+| `ConversationRAGStore` | `fixed/conversation_rag_store.py` | 대화 lazy sync + 검색 (수정 불필요, 호출만) |
+| `current_session_scope`, `DEFAULT_SESSION_SCOPE` | `fixed/session_scope.py` | 현재 대화 제외 판단 (이미 import됨) |
+| `PersonalReferenceStore.backend_info` | `fixed/reference_store.py` | `search_nana_memory`의 `reference_backend` |
+| `_decode_attendees` | 이 파일 상단 (기존, 지금까지 미사용) | `members_json` → list 디코딩, 드디어 사용됨 |
+| `search_personal_reference_hits`, `search_saved_request_rows`, `safe_limit`, `json_payload` | 이 파일 (메인과제에서 이미 구현) | 그대로 재사용 |
+
+## 검증 방법
+
+- `pytest tests/test_week04.py -v` (repo 루트) — 새 테스트 포함 전체 통과 확인
+- `pytest` 전체 스위트 — week01~04 기존 테스트에 회귀 없는지 확인
+- 수동 E2E (앱 실행, `./run.sh --week4`): 이전 세션에서 나눈 잡담을 다른 세션에서 "전에 무슨 얘기했었지?"로 검색해 `search_conversation_messages` 호출과 현재 대화 제외를 trace에서 확인. `search_nana_memory`는 agent에 노출 안 되므로 REPL 등에서 직접 `.invoke()` 호출로 확인.
+
+## 범위 밖 (건드리지 않음)
+
+- Week 3 `personal_create_schedule` 미구현 스텁
+- Week 2 "팀"류 집단명사 personal/group 분류 애매함
+- 메인과제(`add_personal_reference`, `search_personal_references`, `search_saved_requests`)의 기존 코드/테스트
