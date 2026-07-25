@@ -350,10 +350,10 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
     # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
     if tags is None :
         tags = []
-    reference_dict = add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags)
+    reference_result = add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags)
     return json_payload({
-        "reference_backend": "chroma",
-        "reference": reference_dict,
+        "reference_backend": reference_result["backend"],
+        "reference": reference_result["reference"],
     })
 
 
