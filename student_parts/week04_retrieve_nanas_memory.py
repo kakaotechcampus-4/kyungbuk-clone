@@ -301,7 +301,30 @@ def search_conversation_messages_dict(
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
     # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
-    ...
+    safe_k = safe_limit(top_k, default=5, maximum=50)
+
+    sync = conversation_rag_store.sync_from_sqlite(sqlite_store)
+
+    active_scope_id = current_session_scope()
+    exclude_id = active_scope_id if conversation_id is None else None
+    
+    hits = conversation_rag_store.search(
+        query=query,
+        top_k = safe_k,
+        exclude_conversation_id=exclude_id,
+        conversation_id=conversation_id,
+    )
+
+    context = conversation_rag_store.context_from_hits(hits)
+
+    return {
+        "ok": True,
+        "context": context,
+        "hits": hits,
+        "rows": hits,
+        "rag_backend": conversation_rag_store.backend_info(),
+        "sync": sync,
+    }
 
 
 def search_conversation_message_rows(
@@ -314,7 +337,15 @@ def search_conversation_message_rows(
     """앱 SQLite에 저장된 일반 채팅 대화 청크를 RAG 검색합니다."""
 
     # TODO: search_conversation_messages_dict(...) 결과에서 hits만 반환하세요.
-    ...
+    result = search_conversation_messages_dict(
+        sqlite_store,
+        CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id
+    )
+
+    return result.get("hits", [])
 
 
 @tool(args_schema=AddPersonalReferenceInput)
@@ -369,7 +400,15 @@ def search_conversation_messages(
     """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
     # TODO: 앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색하고 JSON 문자열로 반환하세요.
-    ...
+    payload = search_conversation_messages_dict(
+        SQLITE_STORE,
+        CONVERSATION_RAG_STORE,
+        query=query,
+        top_k=top_k,
+        conversation_id=conversation_id,
+    )
+
+    return json_payload(payload)
 
 
 @tool(args_schema=SearchNanaMemoryInput)
@@ -383,7 +422,7 @@ def search_nana_memory(
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
     # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
-    ...
+    
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
@@ -413,11 +452,13 @@ def week04_prompt_parts() -> list[str]:
         "너는 아래의 단계에 따라 작동해야 한다.\n\n",
         "1. [요청 의도 분류] : 사용자 요청이 새로운 정보 등록인가, 아니면 과거 정보/일정 조회 및 검색인가?\n",
         "2. [등록 처리 분기] : \n",
-        "- 일정/할 일/알림 신규 등록 -> `extract_schedule_request` 후 `save_structured_requst` 실행\n",
+        "- 일정/할 일/알림 신규 등록 -> `extract_schedule_request` 후 `save_structured_request` 실행\n",
         "- 개인 reference 등록 -> `add_personal_reference` 실행\n",
         "3. [검색/조회 출처 판별] : \n",
-        "- 개인 reference 관련 질의 -> `search_personal_reference` 호출\n",
+        "- 개인 reference 관련 질의 -> `search_personal_references` 호출\n",
         "- DB에 저장된 일정/할 일/알림 요청 기록 질의 -> `search_saved_requests` 호출\n",
+        "- 이전 대화 내용 및 과거 채팅 관련 질의 -> `search_conversation_messages` 호출\n",
+        "- 단순 캘린더 일정 목록 확인 -> `personal_list_saved_schedules` 호출\n",
         "4. [근거 기반 답변] : 검색 도구 실행 결과로 반환된 `hits` 또는 `rows` 내부 데이터에 기초해서 사실대로 답변\n\n",
     ]
 
