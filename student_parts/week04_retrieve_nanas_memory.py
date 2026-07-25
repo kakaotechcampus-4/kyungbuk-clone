@@ -241,8 +241,8 @@ def search_personal_reference_hits(
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
     # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
-        
-    hits = reference_store.search_personal_references(query=query, limit=top_k)
+    safe_top_k = safe_limit(top_k, default = 2, maximum=50)
+    hits = reference_store.search_personal_references(query=query, limit=safe_top_k)
     return [
         {
             "id": hit.get("id"),
@@ -286,6 +286,7 @@ def search_conversation_messages_dict(
     """SQLite 대화 목록을 lazy sync한 뒤 ChromaDB conversation RAG 결과를 반환합니다."""
 
     # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
+    safe_top_k = safe_limit(top_k,default=5,maximum=50)
 
     sync_result = conversation_rag_store.sync_from_sqlite(sqlite_store)
 
@@ -297,7 +298,7 @@ def search_conversation_messages_dict(
 
     hits = conversation_rag_store.search(
         query=query,
-        top_k=top_k,
+        top_k=safe_top_k,
         conversation_id=conversation_id,
         exclude_conversation_id=exclude_conversation_id
     )
@@ -373,6 +374,7 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     """
 
     # TODO: query/top_k로 개인 참고자료 vector store를 검색하고 top-level hits를 반환하세요.
+
 
     hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)
     return json_payload({"hits": hits})
