@@ -209,9 +209,12 @@ def safe_limit(limit: int, default: int = 5, maximum: int = 50) -> int:
 class AddPersonalReferenceInput(BaseModel):
     """개인 참고자료 추가 입력입니다."""
 
-    title: str
-    content: str
-    tags: list[str] | None = None
+    title: str = Field(description="참고자료의 제목입니다.")
+    content: str = Field(description="참고자료의 구체적인 내용입니다.")
+    tags: list[str] | None = Field(
+        default=None,
+        description="비슷한 자료를 묶기 위한 정규화된 태그입니다. ['업무', '기획', '개발', '선호도', '개인정보', '기타'] 중 가장 적절한 태그를 최소 1개 이상 포함해 부여하도록 합니다."
+    )
 
 
 class SearchPersonalReferencesInput(BaseModel):
@@ -499,8 +502,10 @@ def week04_prompt_parts() -> list[str]:
     return [
         *week03_prompt_parts(),
         # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
-        "Week 4에서는 질문의 출처를 나눠서 답하도록 합니다. 개인 참고자료, 선호, 메모를 묻는 질문이면 search_personal_references를 사용하도록 합니다.",
-        "저장된 일정, 할 일, 알림, 구조화된 기록을 묻는 질문이면 search_saved_requests를 사용하도록 합니다.",
+        "[중요] 사용자가 '기억해줘', '참고해', '~를 선호해' 등 개인적인 선호도나 메모를 알려주는 경우에 절대로 말로만 '기억하겠습니다'라고 답하지 않고 반드시 add_personal_reference 도구를 호출하여 저장하도록 합니다.",
+        "Week 4에서는 질문의 출처를 나눠서 답하도록 합니다.",
+        "[중요] 저장된 일정이나 할 일을 검색하거나 특정 키워드로 찾을 때는 Week 3의 personal_list_saved_schedules를 사용하지 않고 반드시 search_saved_requests를 사용하도록 합니다.",
+        "개인 참고자료, 선호도, 메모 등을 묻는 질문이면 search_personal_references를 사용하도록 합니다.",
         "이전 대화나 일반 채팅 발화를 찾는 질문이면 search_conversation_messages를 사용하도록 합니다. 필요하면 여러 tool을 함께 호출해 근거를 모으도록 합니다.",
         "기존 호환용 통합 검색이 필요하면 search_nana_memory를 사용하도록 합니다.",
     ]
