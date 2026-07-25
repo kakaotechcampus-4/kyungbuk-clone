@@ -228,7 +228,7 @@ def add_personal_reference_dict(
     # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
     reference = reference_store.add_personal_reference(title=title, content=content, tags=tags or [])
     return {
-        "reference_backend": "chroma",
+        "reference_backend": reference_store.backend_info(),
         "reference": reference,
     }
 
@@ -284,7 +284,7 @@ def search_conversation_messages_dict(
     hits = conversation_rag_store.search(query=query, top_k=top_k, conversation_id=conversation_id, exclude_conversation_id=current_session_scope(),)
     return {
         "context": conversation_rag_store.context_from_hits(hits),
-        "rag_backend": "chroma",
+        "rag_backend": conversation_rag_store.backend_info(),
         "sync": sync_result,
         "hits": hits,
         "rows": hits,
@@ -384,7 +384,6 @@ def search_nana_memory(
 
     # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
     date_from = date_from or "2000-01-01"
-    date_to = date_to or current_app_date_iso()
     limit = safe_limit(limit, default=5, maximum=20)
 
     reference_hits = search_personal_reference_hits(
@@ -408,7 +407,7 @@ def search_nana_memory(
         {
             "ok": True,
             "tool_name": "search_nana_memory",
-            "reference_backend": "chroma",
+            "reference_backend": REFERENCE_STORE.backend_info(),
             "context": context,
             "hits": reference_hits,
             "rows": rows,
@@ -452,6 +451,12 @@ def week04_prompt_parts() -> list[str]:
           위 세 tool로 충분히 답할 수 있는 상황이면 항상 그쪽을 우선합니다.
         질문 성격에 따라 적절한 tool을 선택하고, 필요하면 여러 tool을 조합해 답변 근거를 구성하세요.
         """,
+        "## Week 4 tool 선택 예시 (혼동 방지)\n"
+        "- \"내가 전에 ~라고 말한 적 있어?\", \"예전에 ~ 얘기했었나?\"처럼 사용자가 과거 대화에서 무슨 말을\n"
+        "  했는지 묻는 질문은 항상 search_conversation_messages를 사용합니다. 잡담/취미/생각 같은 내용을\n"
+        "  일정이나 할 일로 착각해 search_saved_requests로 검색하지 않습니다.\n"
+        "- \"내가 저장한 일정/할 일 있어?\"처럼 명시적으로 저장을 요청했던 항목을 물을 때만\n"
+        "  search_saved_requests를 사용합니다.\n"
     ]
 
 
