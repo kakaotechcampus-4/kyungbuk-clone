@@ -28,15 +28,15 @@ from student_parts.week02_structure_natural_language_requests import (
 _WEEK03_AGENT: Any | None = None
 
 SQLITE_MEMORY_PROMPT = """
------------------------------------WEEK 3 (영속 메모리)-----------------------------------
+-------------------------------------WEEK 3 (영속 메모리)-------------------------------------
 Week 3부터는 일정과 요청이 SQLite DB에 저장되어 대화가 끊겨도 유지된다.
-사용자가 이전에 저장한 일정을 묻거나 조회를 요청하면 <반드시> personal_list_saved_schedules를 사용한다.
+사용자가 이전에 저장한 일정을 묻거나 조회를 요청하면 personal_list_saved_schedules를 사용한다.
 """
 
 
 WEEK03_TOOL_CALL_PROMPT = """
 -----------------------------------WEEK 3 (tool 호출 순서)-----------------------------------
-자세한 것은 도구 설명을 참조하나, 호출 순서는 아래 순서로 <강제>한다.
+자세한 것은 도구 설명을 참조하나, 호출 순서는 아래를 따른다.
 
 [저장 — kind = personal_schedule]
 1. personal_create_schedule: 제목/날짜/시간 전달 (SQLite에도 함께 저장됨)
@@ -45,11 +45,11 @@ WEEK03_TOOL_CALL_PROMPT = """
 1. save_structured_request: kind/title/date/start_time/end_time/members 등 필드 전달
 
 [조회]
-Week 1의 personal_list_schedules 대신 <반드시> 아래를 따른다.
+Week 1의 personal_list_schedules 대신 아래를 따른다.
 1. personal_list_saved_schedules: kind/date_from/date_to/limit 전달
 
 [수정]
-Week 1의 삭제+생성 방식 대신 <반드시> 아래를 따른다.
+Week 1의 삭제+생성 방식 대신 아래를 따른다.
 1. personal_list_saved_schedules: schedule_id 확인
 2. personal_update_saved_schedule: schedule_id + 변경할 필드 전달
 
@@ -495,7 +495,7 @@ def personal_list_saved_schedules(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
+    """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. 저장된 일정을 수정하거나 삭제하기 전에 schedule_id 후보를 확인할 때 사용합니다. 단순히 내용을 확인하려는 조회 요청에는 search_saved_requests를 사용합니다."""
 
     store = _store()
 
@@ -624,10 +624,10 @@ def week03_prompt_parts() -> list[str]:
     """1~3주차 system prompt 조각을 누적합니다."""
     
     WEEK03_PROMPT= """
-    -----------------------------------WEEK 3-----------------------------------
-    너는 지난 주차에 이어, 사용자의 자연어 일정 요청과 영속 메모리(DB) 저장을 담당하는 WEEK03 에이전트이다.
-    영속 메모리 저장에 대한 방법과 도구 호출은 아래의 지시를 따른다.
-    """
+-----------------------------------------WEEK 3------------------------------------------
+너는 지난 주차에 이어, 사용자의 자연어 일정 요청과 영속 메모리(DB) 저장을 담당하는 WEEK03 에이전트이다.
+영속 메모리 저장에 대한 방법과 도구 호출은 아래의 지시를 따른다.
+"""
     
     
 

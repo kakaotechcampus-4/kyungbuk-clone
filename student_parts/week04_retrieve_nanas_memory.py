@@ -15,7 +15,7 @@ from fixed.app_store import AppSQLiteStore
 from fixed.reference_store import PersonalReferenceStore
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 from student_parts.week01_wake_up_nana import join_system_prompt
-from student_parts.week03_build_nanas_logbook import week03_prompt_parts, week03_tools
+from student_parts.week03_build_nanas_logbook import tool_result, week03_prompt_parts, week03_tools
 
 
 REFERENCE_STORE = PersonalReferenceStore(CONFIG.chroma_dir)
@@ -225,12 +225,13 @@ def add_personal_reference_dict(
 ) -> dict[str, Any]:
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
-
-    return reference_store.add_personal_reference(
+    saved = reference_store.add_personal_reference(
         title=title,
         content=content,
         tags=tags
     )
+    backend = saved.pop("backend")
+    return {"reference_backend": backend, "reference": saved}
 
 
 def search_personal_reference_hits(
@@ -244,21 +245,21 @@ def search_personal_reference_hits(
     
     results = reference_store.search_personal_references(
         query=query,
-        limit=top_k
+        limit=safe_limit(top_k, default=2, maximum=20)
     )
 
     return [
         {
-            "id": r["id"],
-            "content": r["content"],
-            "distance": r["distance"],
-            "metadata": 
+            "id": raw_reference["id"],
+            "content": raw_reference["content"],
+            "distance": raw_reference["distance"],
+            "metadata":
                 {
-                "title": r["title"],
-                "tags": r["tags"]
+                "title": raw_reference["title"],
+                "tags": raw_reference["tags"]
                 }
         }
-        for r in results
+        for raw_reference in results
     ]
 
 def search_saved_request_rows(
@@ -272,7 +273,7 @@ def search_saved_request_rows(
 
     return sqlite_store.search_saved_requests(
         query=query,
-        limit=top_k
+        limit=safe_limit(top_k, default=3, maximum=50)
     )
 
 
@@ -333,9 +334,7 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
         content=content,
         tags=tags or list()
     )
-    
-    # backend 정보가 중복되긴 하지면 명세가 없으므로 남김
-    return json_payload({"reference_backend": result_dict["backend"], "reference": result_dict})
+    return json_payload(tool_result("add_personal_reference", **result_dict)) # ok=True (실패시 예외처리됨, 이 라인 실행 시 실패한 경우가 없음)
     
     
 
@@ -348,23 +347,23 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     hits = search_personal_reference_hits(
         reference_store=REFERENCE_STORE,
         query=query,
-        top_k=safe_limit(limit=top_k)
+        top_k=top_k
     )
-    return json_payload({"hits": hits})
+    return json_payload(tool_result("search_personal_references", ok=bool(hits), hits=hits))  # 검색 결과가 없으면 ok=False
 
 
 @tool(args_schema=SearchSavedRequestsInput)
 def search_saved_requests(query: str, top_k: int = 3) -> str:
-    """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
+    """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. 저장된 내용을 확인하려는 조회 요청에 사용합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
 
     
     result = search_saved_request_rows(
         sqlite_store=SQLITE_STORE,
         query=query,
-        top_k=safe_limit(top_k)
+        top_k=top_k
     )
     
-    return json_payload({"rows": result})
+    return json_payload(tool_result("search_saved_requests", ok=bool(result), rows=result))  # 검색 결과가 없으면 ok=False
     
 
 
@@ -385,7 +384,7 @@ def search_conversation_messages(
         conversation_id=conversation_id
     )
     
-    return json_payload(results)
+    return json_payload(tool_result("search_conversation_messages", ok=bool(results["hits"]), **results))  # 검색 결과가 없으면 ok=False
 
 
 @tool(args_schema=SearchNanaMemoryInput)
@@ -425,15 +424,20 @@ def week04_prompt_parts() -> list[str]:
     """1~4주차 system prompt 조각을 누적합니다."""
     
     WEEK04_PROMPT = """
-    -----------------------------------WEEK 4-----------------------------------
-    너는 지난 주차에 이어, 요청별 자료 검색(RAG)을 세분화시킨 WEEK4 AGENT이다.
-    너는 추가로 4가지 도구를 사용할 수 있으며, 각 도구의 사용처는 다음과 같다.
-    - add_personal_reference: 개인참고 자료를 추가하는 도구이다. 사용자가 개인참고 자료에 추가해달라고 요청할 시 해당 정보를 추가한다.
-    - search_personal_references: 개인참고 자료를 탐색하는 도구이다. 사용자의 요청에 개인참고 자료 검색이 필요할 시 사용한다.
-    - search_saved_requests: schedule/todo/reminder를 검색할 때 사용한다. 사용자가 일정/할 일/알람 조회를 요청할 시 검색할 때 사용한다.
-        Week 3의 personal_list_saved_schedules 대신, 저장된 일정/할 일/알림을 찾는 요청에는 <반드시> search_saved_requests를 사용한다.
-    - search_conversation_messages: 다른 대화의 정보가 필요할 떄 사용한다. 사용자가 다른 대화에 있는 정보를 명시적으로 요구할 때 사용한다.
-    """
+-----------------------------------------WEEK 4------------------------------------------
+너는 지난 주차에 이어, 요청별 자료 검색(RAG)을 세분화시킨 WEEK4 AGENT이다.
+너는 추가로 4가지 도구를 사용할 수 있으며, 각 도구의 사용처는 다음과 같다.
+- add_personal_reference: 개인참고 자료를 추가하는 도구이다. 사용자가 개인참고 자료에 추가해달라고 요청할 시 해당 정보를 추가한다.
+- search_personal_references: 개인참고 자료를 탐색하는 도구이다. 사용자의 요청에 개인참고 자료 검색이 필요할 시 사용한다.
+- search_saved_requests: schedule/todo/reminder 검색 tool이다. 언제 쓰는지는 아래 [저장된 일정/할 일/알림 조회 시 tool 선택 기준]을 따른다.
+- search_conversation_messages: 다른 대화의 정보가 필요할 떄 사용한다. 사용자가 다른 대화에 있는 정보를 명시적으로 요구할 때 사용한다.
+
+[저장된 일정/할 일/알림 조회 시 tool 선택 기준]
+Week 4부터, 내용을 확인만 하려는 조회 목적에는 personal_list_saved_schedules를 사용하지 않는다.
+- 내용을 확인하려는 목적이면 search_saved_requests를 사용한다.
+- 이후 해당 항목을 수정하거나 삭제하려는 목적일 때만 personal_list_saved_schedules로 schedule_id를 먼저 확인한 뒤 기존 수정/삭제 절차를 따른다.
+  (search_saved_requests가 조회하는 structured_requests에는 schedule_id가 없어 수정/삭제에 쓸 수 없다)
+"""
     
 
     return [
