@@ -244,9 +244,9 @@ def search_personal_reference_hits(
     hits = reference_store.search_personal_references(query=query, limit=top_k)
     return [
         {
-            "id": hit["id"],
-            "content": hit["content"],
-            "distance": hit["distance"],
+            "id": hit.get("id"),
+            "content": hit.get("content"),
+            "distance": hit.get("distance"),
             "metadata": {
                 "title": hit.get("title"),
                 "tags": hit.get("tags"),
