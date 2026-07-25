@@ -464,7 +464,9 @@ def week04_prompt_parts() -> list[str]:
         "필요하면 여러 tool을 함께 호출해 근거를 모은 뒤 답한다. "
         "search_conversation_messages가 찾은 과거 assistant 발화만으로 사실을 단정하지 않고, "
         "필요하면 다른 tool 결과와 함께 교차 확인한다. "
-        "새 참고자료를 저장해 달라는 요청을 받으면 add_personal_reference를 사용한다.",
+        "새 참고자료를 저장해 달라는 요청을 받으면 add_personal_reference를 사용한다. "
+        "특정 날짜 범위나 참석자로 좁혀서 개인 참고자료와 저장된 일정을 한 번에 확인하고 싶다는 요청에는 "
+        "search_personal_references와 search_saved_requests를 따로 부르는 대신 search_nana_memory 하나로 조회한다.",
     ]
 
 
