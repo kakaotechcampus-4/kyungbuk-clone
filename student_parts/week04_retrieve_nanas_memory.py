@@ -175,36 +175,13 @@ def safe_limit(limit: int, default: int = 5, maximum: int = 50) -> int:
     return max(1, min(value, maximum))
 
 
-def normalize_reference_tags(title: str, content: str, tags: list[str] | None) -> list[str]:
-    """자유 형식 태그를 작은 공통 어휘로 정리하고, 비어 있으면 핵심어로 보완합니다."""
+def normalize_reference_tags(tags: list[str] | None) -> list[str]:
+    """LLM이 생성한 태그의 표기와 중복만 정리합니다."""
 
-    alias_to_tag = {
-        "group_meeting": "meeting",
-        "business_appointment": "meeting",
-        "회의": "meeting",
-        "미팅": "meeting",
-        "선호": "preference",
-        "취향": "preference",
-        "점심": "lunch",
-        "집중": "focus",
-    }
     normalized: list[str] = []
     for raw_tag in tags or []:
         tag = str(raw_tag).strip().lower().replace(" ", "_")
-        canonical_tag = alias_to_tag.get(tag, tag)
-        if canonical_tag and canonical_tag not in normalized:
-            normalized.append(canonical_tag)
-
-    text = f"{title} {content}"
-    inferred_tags = [
-        ("meeting", ("회의", "미팅")),
-        ("preference", ("선호", "좋아", "피하고", "하지_않")),
-        ("lunch", ("점심",)),
-        ("focus", ("집중",)),
-    ]
-    compact_text = text.replace(" ", "_")
-    for tag, keywords in inferred_tags:
-        if tag not in normalized and any(keyword in compact_text for keyword in keywords):
+        if tag and tag not in normalized:
             normalized.append(tag)
     return normalized
 
@@ -214,7 +191,14 @@ class AddPersonalReferenceInput(BaseModel):
 
     title: str
     content: str
-    tags: list[str] | None = None
+    tags: list[str] = Field(
+        min_length=2,
+        max_length=5,
+        description=(
+            "내용 전체를 의미적으로 요약한 2~5개의 재사용 가능한 영문 소문자 태그. "
+            "특정 문장에만 맞는 긴 합성어보다 넓은 개념의 명사를 사용합니다."
+        ),
+    )
 
 
 class SearchPersonalReferencesInput(BaseModel):
@@ -258,7 +242,7 @@ def add_personal_reference_dict(
 ) -> dict[str, Any]:
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
-    normalized_tags = normalize_reference_tags(title, content, tags)
+    normalized_tags = normalize_reference_tags(tags)
     saved = reference_store.add_personal_reference(
         title=title,
         content=content,
@@ -364,7 +348,7 @@ def search_conversation_message_rows(
 
 
 @tool(args_schema=AddPersonalReferenceInput)
-def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
+def add_personal_reference(title: str, content: str, tags: list[str]) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
     result = add_personal_reference_dict(
@@ -451,14 +435,15 @@ def week04_prompt_parts() -> list[str]:
         *week03_prompt_parts(),
         """
         Week 4에서는 기억의 출처를 구분해 알맞은 검색 tool을 선택한다.
-        너 자신이 Nana의 일정 비서이며, 사용자는 Nana가 아니다.
+        너는 병윤의 일정 비서 Nana다. 사용자는 병윤이며, Nana는 너 자신을 가리킨다.
 
         저장 및 검색 tool 선택 규칙:
         - 날짜가 정해진 일정/할 일/알림의 생성·수정·삭제는 Week 3 SQLite tool을 사용한다.
         - 사용자가 개인 취향, 반복 규칙, 배경지식을 "기억해줘", "참고해줘"라고 하면
           add_personal_reference로 개인 참고자료에 저장한다.
-          tags에는 preference, meeting, schedule, todo, reminder, team, lunch, focus처럼
-          짧고 재사용 가능한 공통 단어를 우선 사용한다.
+          이때 내용 전체의 의미를 일반화한 영문 소문자 태그를 2~5개 직접 생성한다.
+          특정 문장이나 사례에만 맞는 긴 합성어는 피하고, 다른 참고자료에서도 재사용할 수 있는
+          넓은 개념의 명사를 사용한다. 코드에 정해진 주제 목록이 있다고 가정하지 않는다.
         - "내가 적어 둔", "내 선호", "내 규칙"처럼 저장한 참고자료를 찾는 질문에는
           search_personal_references를 사용한다.
         - "내가 ~해도 된다고 했었나", "내가 선호하는 시간이 언제였지", "내 규칙이 뭐였지"처럼
