@@ -449,9 +449,26 @@ def search_nana_memory(
 
     reference_hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=safe)
 
-    schedules = SQLITE_STORE.list_schedules(limit=safe * 5, date_from=date_from, date_to=date_to)
-    if attendee:
-        schedules = [s for s in schedules if attendee in s.get("attendees", [])]
+    # SQLite 일정 조회: attendee는 list_schedules가 지원하지 않아 파이썬에서 필터링.
+    # attendee가 희소하면 한 번의 fetch로는 safe개를 못 채울 수 있어 limit을 키워가며 재조회한다.
+    MAX_FETCH_LIMIT = 500
+    FETCH_MULTIPLIER = 5
+
+    fetch_limit = safe * FETCH_MULTIPLIER
+    schedules: list[dict[str, Any]] = []
+    while True:
+        candidates = SQLITE_STORE.list_schedules(limit=fetch_limit, date_from=date_from, date_to=date_to)
+        if attendee:
+            schedules = [s for s in candidates if attendee in s.get("attendees", [])]
+        else:
+            schedules = candidates
+
+        got_enough = len(schedules) >= safe
+        table_exhausted = len(candidates) < fetch_limit
+        if got_enough or table_exhausted or fetch_limit >= MAX_FETCH_LIMIT:
+            break
+        fetch_limit = min(fetch_limit * FETCH_MULTIPLIER, MAX_FETCH_LIMIT)
+
     schedules = schedules[:safe]
 
     context_lines = ["[개인 참고자료]"]
