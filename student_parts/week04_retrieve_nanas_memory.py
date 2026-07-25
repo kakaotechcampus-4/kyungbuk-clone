@@ -449,8 +449,6 @@ def search_nana_memory(
 
     reference_hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=safe)
 
-    # SQLite 일정 조회: attendee는 list_schedules가 지원하지 않아 파이썬에서 필터링.
-    # attendee가 희소하면 한 번의 fetch로는 safe개를 못 채울 수 있어 limit을 키워가며 재조회한다.
     MAX_FETCH_LIMIT = 500
     FETCH_MULTIPLIER = 5
 
@@ -469,6 +467,7 @@ def search_nana_memory(
             break
         fetch_limit = min(fetch_limit * FETCH_MULTIPLIER, MAX_FETCH_LIMIT)
 
+    possibly_incomplete = not got_enough and not table_exhausted
     schedules = schedules[:safe]
 
     context_lines = ["[개인 참고자료]"]
@@ -487,6 +486,8 @@ def search_nana_memory(
                 f"- {schedule.get('date')} {schedule.get('start_time')}~{schedule.get('end_time')} "
                 f"{schedule.get('title')} ({attendees})"
             )
+        if possibly_incomplete:
+            context_lines.append("- (주의: 검색 범위 상한에 도달해 더 있을 수도 있음, 결과가 전체가 아닐 수 있음)")
     else:
         context_lines.append("- 관련 일정 없음")
 
@@ -496,6 +497,7 @@ def search_nana_memory(
         "reference_backend": REFERENCE_STORE.backend_info(),
         "reference_hits": reference_hits,
         "schedules": schedules,
+        "possibly_incomplete": possibly_incomplete,
         "context": context,
     })
 
