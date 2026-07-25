@@ -187,7 +187,7 @@ class AddPersonalReferenceInput(BaseModel):
 class SearchPersonalReferencesInput(BaseModel):
     """개인 참고자료 검색 입력입니다."""
 
-    query: str
+    query: str = Field(min_length=1)
     top_k: int = Field(default=2, ge=1, le=20)
 
 
@@ -209,7 +209,7 @@ class SearchConversationMessagesInput(BaseModel):
 class SearchNanaMemoryInput(BaseModel):
     """Week 4 호환 통합 검색 입력입니다."""
 
-    query: str
+    query: str = Field(min_length=1)
     date_from: str | None = None
     date_to: str | None = None
     attendee: str | None = None
@@ -409,7 +409,7 @@ def search_nana_memory(
             else:
                 continue
             if attendee in members:
-                new_schedules.append(schedules)
+                new_schedules.append(schedule)
         schedules = new_schedules
     
     ret = {
@@ -457,6 +457,7 @@ def week04_prompt_parts() -> list[str]:
         - 개인 참고자료와 저장 일정을 한번에 확인해야 하는 경우에는 2개의 값을 동시에 전달해주는 search_nana_memeory를 사용한다.
         - tool이 반환한 context, hits, rows, schedules를 답변의 근거로 사용한다.
         - 일정/할 일/알림처럼 날짜와 시간이 중요한 답변은 검색 결과의 date, start_time, end_time을 확인해 구체적으로 답한다.
+        - search_personal_references와 search_nana_memeory의 query에는 빈 문자열이 포함되어서는 안된다.
         """,
     ]
 
