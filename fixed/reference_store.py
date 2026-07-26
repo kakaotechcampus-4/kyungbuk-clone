@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fixed.config import CONFIG, PROXY_TOKEN_PLACEHOLDER
-from fixed.store_base import new_id
+from fixed.store_base import new_id, now_iso
 
 
 class OpenAIEmbeddingFunction:
@@ -129,26 +129,32 @@ class PersonalReferenceStore:
 
         if self.collection.count():
             return
+        seeded_at = now_iso()
         self.collection.add(
             ids=[item["id"] for item in self.DEFAULT_REFERENCES],
             documents=[item["content"] for item in self.DEFAULT_REFERENCES],
-            metadatas=[{"title": item["title"], "tags": ",".join(item["tags"])} for item in self.DEFAULT_REFERENCES],
+            metadatas=[
+                {"title": item["title"], "tags": ",".join(item["tags"]), "created_at": seeded_at}
+                for item in self.DEFAULT_REFERENCES
+            ],
         )
 
     def add_personal_reference(self, title: str, content: str, tags: list[str] | None = None) -> dict[str, Any]:
         """개인 참고자료 하나를 ChromaDB에 저장하고 저장된 메타데이터를 반환합니다."""
 
         reference_id = new_id("ref")
+        created_at = now_iso()
         self.collection.add(
             ids=[reference_id],
             documents=[content],
-            metadatas=[{"title": title, "tags": ",".join(tags or [])}],
+            metadatas=[{"title": title, "tags": ",".join(tags or []), "created_at": created_at}],
         )
         return {
             "reference_id": reference_id,
             "title": title,
             "content": content,
             "tags": tags or [],
+            "created_at": created_at,
             "backend": self.backend_info(),
         }
 
@@ -166,6 +172,7 @@ class PersonalReferenceStore:
                     "title": metadata.get("title", ""),
                     "content": document,
                     "tags": metadata.get("tags", ""),
+                    "created_at": metadata.get("created_at", ""),
                     "distance": distance,
                 }
             )

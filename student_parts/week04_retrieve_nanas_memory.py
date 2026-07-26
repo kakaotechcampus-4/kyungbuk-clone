@@ -5,7 +5,7 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from fixed.config import CONFIG
 from fixed.conversation_rag_store import ConversationRAGStore
@@ -176,19 +176,64 @@ def safe_limit(limit: int, default: int = 5, maximum: int = 50) -> int:
     return max(1, min(value, maximum))
 
 
+REFERENCE_TAG_VOCABULARY = frozenset(
+    {
+        # 시간대
+        "morning",
+        "afternoon",
+        "evening",
+        # 주제
+        "meeting",
+        "lunch",
+        "team",
+        "personal",
+    }
+)
+
+
 class AddPersonalReferenceInput(BaseModel):
     """개인 참고자료 추가 입력입니다."""
 
     title: str
     content: str
-    tags: list[str] | None = None
+    tags: list[str] | None = Field(
+        default=None,
+        description=(
+            "검색/필터에 쓸 키워드 1~3개. 반드시 정해진 목록에서만 골라야 합니다: "
+            f"{sorted(REFERENCE_TAG_VOCABULARY)}. "
+            "'business_meeting', 'appointment'처럼 목록에 없는 동의어를 새로 만들지 말고 "
+            "의미가 제일 가까운 목록 값으로 매핑하세요."
+        ),
+    )
+
+    @field_validator("tags")
+    @classmethod
+    def _keep_only_known_tags(cls, tags: list[str] | None) -> list[str] | None:
+        """목록에 없는 자유 생성 태그(동의어)를 걸러내 같은 의미의 태그가 쪼개지지 않게 합니다."""
+
+        if not tags:
+            return tags
+        seen: list[str] = []
+        for tag in tags:
+            normalized = tag.strip().lower()
+            if normalized in REFERENCE_TAG_VOCABULARY and normalized not in seen:
+                seen.append(normalized)
+        return seen
 
 
 class SearchPersonalReferencesInput(BaseModel):
     """개인 참고자료 검색 입력입니다."""
 
     query: str
-    top_k: int = Field(default=2, ge=1, le=20)
+    top_k: int = Field(
+        default=2,
+        ge=1,
+        le=20,
+        description=(
+            "가져올 참고자료 개수. 특정 주제 하나만 확인할 때는 기본값(2)이면 충분하지만, "
+            "사용자가 '전부/모두/다' 보여달라고 하면 누락을 막기 위해 최댓값(20)으로 요청하세요."
+        ),
+    )
 
 
 class SearchSavedRequestsInput(BaseModel):
@@ -225,8 +270,8 @@ def add_personal_reference_dict(
 ) -> dict[str, Any]:
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
-    # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
-    ...
+    reference = reference_store.add_personal_reference(title=title, content=content, tags=tags or [])
+    return {"reference_backend": reference_store.backend_info(), "reference": reference}
 
 
 def search_personal_reference_hits(
@@ -237,8 +282,20 @@ def search_personal_reference_hits(
 ) -> list[dict[str, Any]]:
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
-    # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
-    ...
+    rows = reference_store.search_personal_references(query, limit=top_k)
+    return [
+        {
+            "id": row.get("id"),
+            "content": row.get("content"),
+            "distance": row.get("distance"),
+            "metadata": {
+                "title": row.get("title", ""),
+                "tags": row.get("tags", ""),
+                "created_at": row.get("created_at", ""),
+            },
+        }
+        for row in rows
+    ]
 
 
 def search_saved_request_rows(
@@ -249,8 +306,7 @@ def search_saved_request_rows(
 ) -> list[dict[str, Any]]:
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
-    # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
-    ...
+    return sqlite_store.search_saved_requests(query, limit=top_k)
 
 
 def search_conversation_messages_dict(
@@ -284,24 +340,26 @@ def search_conversation_message_rows(
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
-    # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
-    ...
+    result = add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags or [])
+    return json_payload({"ok": True, "tool_name": "add_personal_reference", **result})
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
     """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
 
-    # TODO: query/top_k로 개인 참고자료 vector store를 검색하고 top-level hits를 반환하세요.
-    ...
+    top_k = safe_limit(top_k, default=2, maximum=20)
+    hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)
+    return json_payload({"ok": True, "tool_name": "search_personal_references", "hits": hits})
 
 
 @tool(args_schema=SearchSavedRequestsInput)
 def search_saved_requests(query: str, top_k: int = 3) -> str:
     """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
 
-    # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하고 top-level rows를 반환하세요.
-    ...
+    top_k = safe_limit(top_k, default=3, maximum=50)
+    rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=top_k)
+    return json_payload({"ok": True, "tool_name": "search_saved_requests", "rows": rows})
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -352,7 +410,26 @@ def week04_prompt_parts() -> list[str]:
 
     return [
         *week03_prompt_parts(),
-        # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        (
+            "Week 4부터 Nana는 기억의 출처를 구분해서 검색합니다. "
+            "search_personal_references는 날짜/시간이 없는 성향·취향·메모(예: '난 오전 회의를 선호해', "
+            "'점심시간엔 회의 잡지 마')를 찾을 때 사용하고, search_saved_requests는 날짜/시간이 박힌 "
+            "구체적인 일정·할 일·알림 기록(예: '치과 예약', '내일 3시 미팅')을 찾을 때 사용하세요. "
+            "'~라고 했었지', '내 취향/선호가 뭐였지' 같은 질문은 구체적인 날짜가 없다면 "
+            "search_personal_references로 먼저 확인하세요. "
+            "사용자가 새로운 참고자료를 알려주면(예: '이거 기억해줘') add_personal_reference로 저장하세요. "
+            "이때 tags는 새로운 동의어를 만들지 말고 add_personal_reference에 정의된 고정 목록"
+            "(morning/afternoon/evening, meeting/lunch/team/personal) 중에서만 골라 채우세요. "
+            "'preference'처럼 모든 항목에 붙는 값만 넣지 마세요. "
+            "search_personal_references 결과에는 metadata.created_at이 들어있습니다. 같은 주제에 대해 "
+            "서로 다른(충돌하는) 선호도가 여러 건 검색되면 created_at이 가장 최근인 참고자료를 우선해서 "
+            "답변하고, 더 오래된 참고자료는 과거 기록으로만 언급하세요. "
+            "search_personal_references는 의미 유사도 기준 top_k개만 반환하는 검색이라 '전부/모두/다' "
+            "보여달라는 요청에서도 일부가 누락될 수 있습니다. 이런 요청에는 top_k를 최댓값(20)으로 "
+            "호출하고, 그래도 더 있을 수 있으니 '검색된 N개'처럼 개수를 밝히고 전부라고 단정하지 마세요. "
+            "search_conversation_messages는 아직 구현되지 않았으니 호출하지 마세요. "
+            "검색 결과가 없으면 지어내지 말고 없다고 답하세요."
+        ),
     ]
 
 
