@@ -438,6 +438,8 @@ def week04_tools() -> list[Any]:
         add_personal_reference,
         search_personal_references,
         search_saved_requests,
+        search_conversation_messages,
+        search_nana_memory,
     ]
 
 
@@ -456,7 +458,10 @@ def week04_prompt_parts() -> list[str]:
             "개인 메모나 선호처럼 사용자가 직접 기록해 둔 참고자료를 물어보면 "
             "search_personal_references를 사용하세요. "
             "일정, 할 일, 알림처럼 구조화되어 저장된 기록을 물어보면 search_saved_requests를 사용하세요. "
-            "필요하면 두 tool을 모두 호출해 답변 근거를 모을 수 있습니다."
+            "사용자가 예전에 나눴던 일반 대화 내용을 물어보면 search_conversation_messages를 사용하세요. "
+            "이 tool은 방금 진행 중인 대화는 자동으로 제외하니 다른 이전 대화를 찾을 때 쓰고, "
+            "검색된 assistant 발화만으로 사실을 단정하지 마세요. "
+            "필요하면 여러 tool을 함께 호출해 답변 근거를 모을 수 있습니다."
         ),
     ]
 
