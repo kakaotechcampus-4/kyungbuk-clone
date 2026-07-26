@@ -175,6 +175,10 @@ def safe_limit(limit: int, default: int = 5, maximum: int = 50) -> int:
         value = default
     return max(1, min(value, maximum))
 
+# openai/text-embedding-3-small + Chroma 기본 L2 distance 기준 실측값 (2026-07-26)
+# 관련 질문 distance: 0.58~1.08 / 무관한데 tool이 호출된 질문 distance: 1.34~1.52
+# 임베딩 모델이나 Chroma distance metric(hnsw:space)이 바뀌면 재측정 필요
+PERSONAL_REFERENCE_DISTANCE_THRESHOLD = 1.2
 
 class AddPersonalReferenceInput(BaseModel):
     """개인 참고자료 추가 입력입니다."""
@@ -238,6 +242,8 @@ def search_personal_reference_hits(
     raw_hits = reference_store.search_personal_references(query, limit=safe_top_k)
     hits = []
     for hit in raw_hits:
+        if hit["distance"] > PERSONAL_REFERENCE_DISTANCE_THRESHOLD:
+            continue
         hits.append({
             "id": hit["id"],
             "content": hit["content"],
