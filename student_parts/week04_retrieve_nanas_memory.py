@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
@@ -176,6 +176,15 @@ def safe_limit(limit: int, default: int = 5, maximum: int = 50) -> int:
     return max(1, min(value, maximum))
 
 
+def tool_response(tool_name: str, fn: Callable[[], dict[str, Any]]) -> str:
+    """tool 공통 try/except 래핑과 json_payload 직렬화를 처리합니다."""
+
+    try:
+        return json_payload({"ok": True, "tool_name": tool_name, **fn()})
+    except Exception as e:
+        return json_payload({"ok": False, "tool_name": tool_name, "error": str(e)})
+
+
 class AddPersonalReferenceInput(BaseModel):
     """개인 참고자료 추가 입력입니다."""
 
@@ -297,35 +306,30 @@ def search_conversation_message_rows(
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
-    try:
-        result = add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags or [])
-        return json_payload({"ok": True, "tool_name": "add_personal_reference", **result})
-    except Exception as e:
-        return json_payload({"ok": False, "tool_name": "add_personal_reference", "error": str(e)})
+    return tool_response(
+        "add_personal_reference",
+        lambda: add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags or []),
+    )
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
     """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
 
-    try:
-        k = safe_limit(top_k, default=2, maximum=20)
-        hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=k)
-        return json_payload({"ok": True, "tool_name": "search_personal_references", "hits": hits})
-    except Exception as e:
-        return json_payload({"ok": False, "tool_name": "search_personal_references", "error": str(e)})
+    return tool_response(
+        "search_personal_references",
+        lambda: {"hits": search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=safe_limit(top_k, default=2, maximum=20))},
+    )
 
 
 @tool(args_schema=SearchSavedRequestsInput)
 def search_saved_requests(query: str, top_k: int = 3) -> str:
     """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
 
-    try:
-        k = safe_limit(top_k, default=3, maximum=50)
-        rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=k)
-        return json_payload({"ok": True, "tool_name": "search_saved_requests", "rows": rows})
-    except Exception as e:
-        return json_payload({"ok": False, "tool_name": "search_saved_requests", "error": str(e)})
+    return tool_response(
+        "search_saved_requests",
+        lambda: {"rows": search_saved_request_rows(SQLITE_STORE, query=query, top_k=safe_limit(top_k, default=3, maximum=50))},
+    )
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -336,7 +340,7 @@ def search_conversation_messages(
 ) -> str:
     """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
-    return json_payload({"ok": True, "tool_name": "search_conversation_messages", "hits": [], "rows": []})
+    return json_payload({"ok": False, "tool_name": "search_conversation_messages", "error": "미구현 기능입니다."})
 
 
 @tool(args_schema=SearchNanaMemoryInput)
@@ -349,7 +353,7 @@ def search_nana_memory(
 ) -> str:
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
-    return json_payload({"ok": True, "tool_name": "search_nana_memory", "hits": [], "rows": [], "context": ""})
+    return json_payload({"ok": False, "tool_name": "search_nana_memory", "error": "미구현 기능입니다."})
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
