@@ -429,14 +429,8 @@ def week04_prompt_parts() -> list[str]:
 너는 추가로 4가지 도구를 사용할 수 있으며, 각 도구의 사용처는 다음과 같다.
 - add_personal_reference: 개인참고 자료를 추가하는 도구이다. 사용자가 개인참고 자료에 추가해달라고 요청할 시 해당 정보를 추가한다.
 - search_personal_references: 개인참고 자료를 탐색하는 도구이다. 사용자의 요청에 개인참고 자료 검색이 필요할 시 사용한다.
-- search_saved_requests: schedule/todo/reminder 검색 tool이다. 언제 쓰는지는 아래 [저장된 일정/할 일/알림 조회 시 tool 선택 기준]을 따른다.
+- search_saved_requests: schedule/todo/reminder 검색 tool이다. 특정 키워드가 포함된 schedule/todo/reminder를 조회할 때 사용한다.
 - search_conversation_messages: 다른 대화의 정보가 필요할 떄 사용한다. 사용자가 다른 대화에 있는 정보를 명시적으로 요구할 때 사용한다.
-
-[저장된 일정/할 일/알림 조회 시 tool 선택 기준]
-Week 4부터, 내용을 확인만 하려는 조회 목적에는 personal_list_saved_schedules를 사용하지 않는다.
-- 내용을 확인하려는 목적이면 search_saved_requests를 사용한다.
-- 이후 해당 항목을 수정하거나 삭제하려는 목적일 때만 personal_list_saved_schedules로 schedule_id를 먼저 확인한 뒤 기존 수정/삭제 절차를 따른다.
-  (search_saved_requests가 조회하는 structured_requests에는 schedule_id가 없어 수정/삭제에 쓸 수 없다)
 """
     
 
