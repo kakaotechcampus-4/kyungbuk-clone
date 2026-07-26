@@ -13,7 +13,7 @@ from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
 from fixed.reference_store import PersonalReferenceStore
-from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
+from fixed.session_scope import current_session_scope
 from student_parts.week01_wake_up_nana import join_system_prompt
 from student_parts.week03_build_nanas_logbook import week03_prompt_parts, week03_tools
 
@@ -166,6 +166,12 @@ def json_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def tool_result(tool_name: str, payload: dict[str, Any]) -> str:
+    """tool 응답을 ok/tool_name 포함한 일관된 JSON 문자열로 감쌉니다."""
+
+    return json_payload({"ok": True, "tool_name": tool_name, **payload})
+
+
 def safe_limit(limit: int, default: int = 5, maximum: int = 50) -> int:
     """사용자/LLM이 넘긴 limit 값을 안전한 양의 정수 범위로 보정합니다."""
 
@@ -225,15 +231,14 @@ def add_personal_reference_dict(
 ) -> dict[str, Any]:
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
 
-    # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
-    normalized_tags = list(tags or [])
     reference = reference_store.add_personal_reference(
         title=title,
         content=content,
-        tags=normalized_tags,
+        tags=list(tags or []),
     )
+
     return {
-        "reference_backend": "chromadb",
+        "reference_backend": reference["backend"],
         "reference": reference,
     }
 
@@ -246,30 +251,21 @@ def search_personal_reference_hits(
 ) -> list[dict[str, Any]]:
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
-    # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
     limit = safe_limit(top_k, default=2, maximum=20)
-    raw_results = reference_store.search_personal_references(
+    results = reference_store.search_personal_references(
         query=query,
         limit=limit,
     )
 
-    hits: list[dict[str, Any]] = []
-    for item in raw_results or []:
-        metadata = dict(item.get("metadata") or {})
-        if "title" not in metadata and item.get("title") is not None:
-            metadata["title"] = item.get("title")
-        if "tags" not in metadata:
-            metadata["tags"] = item.get("tags") or []
-
-        hits.append(
-            {
-                "id": item.get("id") or item.get("reference_id"),
-                "content": item.get("content") or item.get("document") or "",
-                "distance": item.get("distance"),
-                "metadata": metadata,
-            }
-        )
-    return hits
+    return [
+        {
+            "id": item["id"],
+            "content": item["content"],
+            "distance": item["distance"],
+            "metadata": {"title": item["title"], "tags": item["tags"]},
+        }
+        for item in results
+    ]
 
 
 def search_saved_request_rows(
@@ -298,12 +294,7 @@ def search_conversation_messages_dict(
     # TODO: SQLite 대화 기록을 ConversationRAGStore에 lazy sync한 뒤 현재 대화를 제외하고 검색하세요.
     limit = safe_limit(top_k, default=5, maximum=50)
 
-    scope = current_session_scope() or DEFAULT_SESSION_SCOPE
-    current_conversation_id = getattr(scope, "conversation_id", None)
-    if current_conversation_id is None and isinstance(scope, dict):
-        current_conversation_id = scope.get("conversation_id")
-    if current_conversation_id is None and isinstance(scope, str):
-        current_conversation_id = scope
+    current_conversation_id = current_session_scope()
 
     exclude_conversation_id = None if conversation_id else current_conversation_id
 
@@ -316,11 +307,7 @@ def search_conversation_messages_dict(
     )
 
     normalized_hits = [dict(hit) for hit in (hits or [])]
-    context = "\n\n".join(
-        f"[{hit.get('role', 'unknown')}] {hit.get('content', '')}"
-        for hit in normalized_hits
-        if hit.get("content")
-    )
+    context = conversation_rag_store.context_from_hits(hits or [])
 
     return {
         "hits": normalized_hits,
@@ -362,7 +349,7 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
         content=content,
         tags=tags or [],
     )
-    return json_payload(result)
+    return tool_result("add_personal_reference", result)
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
@@ -376,7 +363,7 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
         query=query,
         top_k=limit,
     )
-    return json_payload({"hits": hits})
+    return tool_result("search_personal_references", {"hits": hits})
 
 
 @tool(args_schema=SearchSavedRequestsInput)
@@ -390,7 +377,7 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
         query=query,
         top_k=limit,
     )
-    return json_payload({"rows": rows})
+    return tool_result("search_saved_requests", {"rows": rows})
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -410,7 +397,7 @@ def search_conversation_messages(
         top_k=limit,
         conversation_id=conversation_id,
     )
-    return json_payload(result)
+    return tool_result("search_conversation_messages", result)
 
 
 @tool(args_schema=SearchNanaMemoryInput)
@@ -458,13 +445,14 @@ def search_nana_memory(
         for row in schedules
     ]
 
-    return json_payload(
+    return tool_result(
+        "search_nana_memory",
         {
-            "reference_backend": "chromadb",
+            "reference_backend": REFERENCE_STORE.backend_info(),
             "reference_hits": reference_hits,
             "schedule_rows": schedules,
             "context": "\n".join([*reference_chunks, *schedule_chunks]),
-        }
+        },
     )
 
 def week04_tools() -> list[Any]:
