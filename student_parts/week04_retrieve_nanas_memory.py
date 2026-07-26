@@ -349,7 +349,7 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
         query=query,
         top_k=top_k
     )
-    return json_payload(tool_result("search_personal_references", ok=bool(hits), hits=hits))  # 검색 결과가 없으면 ok=False
+    return json_payload(tool_result("search_personal_references", hits=hits))  # 조회 tool이라 결과가 없어도 ok=True
 
 
 @tool(args_schema=SearchSavedRequestsInput)
@@ -363,7 +363,7 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
         top_k=top_k
     )
     
-    return json_payload(tool_result("search_saved_requests", ok=bool(result), rows=result))  # 검색 결과가 없으면 ok=False
+    return json_payload(tool_result("search_saved_requests", rows=result))  # 조회 tool이라 결과가 없어도 ok=True
     
 
 
@@ -384,7 +384,7 @@ def search_conversation_messages(
         conversation_id=conversation_id
     )
     
-    return json_payload(tool_result("search_conversation_messages", ok=bool(results["hits"]), **results))  # 검색 결과가 없으면 ok=False
+    return json_payload(tool_result("search_conversation_messages", **results))  # 조회 tool이라 결과가 없어도 ok=True
 
 
 @tool(args_schema=SearchNanaMemoryInput)
