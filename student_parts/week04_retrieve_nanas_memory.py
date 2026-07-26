@@ -12,7 +12,7 @@ from fixed.conversation_rag_store import ConversationRAGStore
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
 from fixed.app_store import AppSQLiteStore
-from fixed.reference_store import PersonalReferenceStore
+from fixed.reference_store import OpenAIEmbeddingFunction, PersonalReferenceStore
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 from student_parts.week01_wake_up_nana import join_system_prompt
 from student_parts.week03_build_nanas_logbook import week03_prompt_parts, week03_tools
@@ -51,7 +51,7 @@ WEEK04_RAG_ANSWER_PROMPT = (
 )
 
 # 검색 tool 세 개가 각자 어떤 출처를 보고 어떤 질문에 맞는지 정리한 표다.
-# 0건 결과에 "남은 출처" 안내(empty_result_note)를 실을 때 쓴다.
+# 0건/전부 무관 결과에 "남은 출처" 데이터(source_coverage)를 실을 때 쓴다.
 WEEK04_SEARCH_SOURCES = {
     "search_personal_references": {
         "what": "개인 참고자료(취향·선호·원칙 메모)",
@@ -68,56 +68,133 @@ WEEK04_SEARCH_SOURCES = {
 }
 
 
-def empty_result_note(tool_name: str) -> str:
-    """검색 0건일 때 tool 결과 JSON에 실어 보내는 다음 행동 안내문을 만듭니다.
+# 처음에는 긴 산문 note 하나였는데, "어느 출처를 봤고 어느 출처가 남았는지"는 지시가 아니라
+# 데이터라서 멘토 리뷰 제안대로 searched/unsearched 구조 필드로 승격하고 지시는 next_step
+# 한 문장만 남겼다. searched에는 이번 tool 자신만 들어간다 — tool은 agent가 이전 턴에
+# 무엇을 검색했는지 알 수 없으므로(무상태), 대화 전체의 검색 이력은 담지 못한다.
+def source_coverage(
+    tool_name: str,
+    *,
+    status: str,
+    min_distance: float | None = None,
+    far_threshold: float | None = None,
+) -> dict[str, Any]:
+    """검색 결과 JSON에 실어 보내는 출처 커버리지 데이터를 만듭니다.
 
     tool마다 한 출처만 보므로 0건은 "기억이 없다"가 아니라 "이 출처에는 없다"입니다.
     앱 검증에서 agent가 한 출처 0건만 보고 기억이 없다고 단정하는 실패가 반복 재현돼서,
-    시스템 프롬프트(모든 턴에 멀리 있음)보다 잘 지켜지는 tool 결과 안(방금 받은 지시)에 안내를 심습니다.
+    시스템 프롬프트(모든 턴에 멀리 있음)보다 잘 지켜지는 tool 결과 안에 안내를 심습니다.
     """
 
-    searched = WEEK04_SEARCH_SOURCES[tool_name]["what"]
-    return (
-        f"{searched}에는 결과가 없습니다. 이것만으로 기억이 없다고 단정하지 마세요. "
-        f"남은 출처: {_remaining_sources(tool_name)}. "
-        f"사용자 질문이 남은 출처에 해당하면 그 tool로 한 번 더 검색한 뒤에 답하세요."
-    )
+    searched: dict[str, Any] = {
+        "tool": tool_name,
+        "covers": WEEK04_SEARCH_SOURCES[tool_name]["what"],
+        "status": status,
+    }
+    # 참고자료 벡터 검색의 "전부 무관" 판정 근거를 데이터로 같이 남긴다.
+    if min_distance is not None:
+        searched["min_distance"] = round(min_distance, 3)
+    if far_threshold is not None:
+        searched["far_threshold"] = round(far_threshold, 3)
+    return {
+        "searched": [searched],
+        "unsearched": [
+            {"tool": name, "covers": guide["what"], "use_when": guide["when"]}
+            for name, guide in WEEK04_SEARCH_SOURCES.items()
+            if name != tool_name
+        ],
+        "next_step": (
+            "이 출처만 보고 기억이 없다고 단정하지 않는다. 사용자 질문이 unsearched의 "
+            "use_when에 해당하면 그 tool로 검색한 뒤 답하고, 모두 해당하지 않을 때만 "
+            "관련 기록이 없다고 답한다."
+        ),
+    }
 
 
-def _remaining_sources(tool_name: str) -> str:
-    """tool_name을 제외한 나머지 검색 출처를 "언제 쓰는지 → tool 이름"으로 나열합니다."""
+def empty_result_fields(tool_name: str) -> dict[str, Any]:
+    """검색 0건일 때 tool 결과 dict에 병합할 source_coverage 필드를 만듭니다."""
 
-    return " / ".join(
-        f"{guide['when']} → {name}"
-        for name, guide in WEEK04_SEARCH_SOURCES.items()
-        if name != tool_name
-    )
+    return {"source_coverage": source_coverage(tool_name, status="no_results")}
 
 
-# 앱 trace 실측에서 질문과 관련 있는 참고자료 hit는 distance 1.0~1.3, 무관한 hit는 1.6 이상이었다.
-# 그 사이 1.45를 "이 hit들이 질문과 무관할 수 있다"는 안내를 붙이는 기준으로 쓴다.
-# 검색 결과를 잘라내는 필터가 아니라 안내만 붙이므로, 기준이 조금 어긋나도 답이 사라지지는 않는다.
-REFERENCE_FAR_DISTANCE = 1.45
+# far 기준의 안전망 값. 앱 trace 실측(관련 hit distance 1.0~1.3 vs 무관 1.6 이상)의 중간이다.
+# 멘토 리뷰 지적대로 이 상수는 임베딩 모델·거리척도에 종속된 값이라, 아래 프로브 보정이
+# 실패했을 때(키 없음/네트워크 오류)만 fallback으로 쓴다.
+REFERENCE_FAR_DISTANCE_FALLBACK = 1.45
+
+# 프로브 보정용 고정 문장 쌍. store 내용과 무관한 예시로, "관련 있는 질문-메모"와
+# "무관한 질문-메모"가 현재 임베딩 모델에서 어느 거리 스케일에 놓이는지 실행 시점에 잰다.
+# 임베딩 모델이 바뀌면 임계값도 같이 다시 계산되므로 고정 상수의 모델 종속 문제가 사라진다.
+# (검증: text-embedding-3-small에서 보정값 1.444 — 실측으로 정한 1.45와 사실상 일치)
+FAR_PROBE_PAIRS_RELEVANT = [
+    ("점심시간에 약속 잡아도 될까?", "점심시간에는 약속을 잡지 않고 쉬는 것을 선호한다."),
+    ("아침 운동은 언제 하는 게 좋아?", "아침 7시에 가볍게 운동하는 습관이 있다."),
+    ("보고서는 언제까지 내야 하지?", "보고서 마감은 매달 마지막 금요일이다."),
+]
+FAR_PROBE_PAIRS_IRRELEVANT = [
+    ("점심시간에 약속 잡아도 될까?", "고양이는 하루 대부분을 잠으로 보낸다."),
+    ("아침 운동은 언제 하는 게 좋아?", "전세 계약은 2년 단위로 갱신된다."),
+    ("보고서는 언제까지 내야 하지?", "제주도는 겨울에도 비교적 따뜻하다."),
+]
+_FAR_DISTANCE_CACHE: float | None = None
 
 
-def reference_hits_note(hits: list[dict[str, Any]]) -> str | None:
-    """참고자료 검색 결과가 없거나 전부 질문과 멀 때 다음 행동 안내문을 만듭니다.
+def reference_far_distance() -> float:
+    """참고자료 hit를 "전부 무관"으로 볼 far 기준을 프로브 보정으로 계산합니다.
+
+    관련 프로브 쌍의 최대 거리와 무관 프로브 쌍의 최소 거리의 중간값을 기준으로 잡고,
+    프로세스당 한 번만 계산해 캐시합니다. 임베딩 API를 쓸 수 없으면 실측 fallback을 씁니다.
+    Chroma 기본 l2(제곱 유클리드) + 단위 벡터 임베딩이라 distance = 2 - 2*cos유사도이며,
+    프로브 거리도 같은 방식으로 계산해 스케일을 맞춥니다.
+    """
+
+    global _FAR_DISTANCE_CACHE
+    if _FAR_DISTANCE_CACHE is not None:
+        return _FAR_DISTANCE_CACHE
+    try:
+        embed = OpenAIEmbeddingFunction(
+            api_key=CONFIG.proxy_token,
+            base_url=CONFIG.embedding_proxy_url,
+            model=CONFIG.openai_embedding_model,
+        )
+        pairs = FAR_PROBE_PAIRS_RELEVANT + FAR_PROBE_PAIRS_IRRELEVANT
+        # 한 번의 API 호출로 모든 프로브 문장을 임베딩한다(질문/메모 순서 유지).
+        vectors = embed([text for pair in pairs for text in pair])
+        distances = [
+            sum((a - b) ** 2 for a, b in zip(vectors[i * 2], vectors[i * 2 + 1]))
+            for i in range(len(pairs))
+        ]
+        relevant = distances[: len(FAR_PROBE_PAIRS_RELEVANT)]
+        irrelevant = distances[len(FAR_PROBE_PAIRS_RELEVANT):]
+        _FAR_DISTANCE_CACHE = (max(relevant) + min(irrelevant)) / 2
+    except Exception:
+        # 보정 실패는 검색 자체를 막을 일이 아니다. 실측 fallback으로 동작을 유지한다.
+        _FAR_DISTANCE_CACHE = REFERENCE_FAR_DISTANCE_FALLBACK
+    return _FAR_DISTANCE_CACHE
+
+
+def reference_hits_fields(hits: list[dict[str, Any]]) -> dict[str, Any]:
+    """참고자료 검색 결과가 없거나 전부 질문과 멀 때 병합할 coverage 필드를 만듭니다.
 
     벡터 검색은 관련이 없어도 항상 top_k개를 돌려주므로, "0건"만 보면
     무관한 hit를 받고도 안내가 빠진다. 그래서 hit가 전부 먼 경우까지 같이 본다.
+    검색 결과를 잘라내는 필터가 아니라 안내만 붙이므로, 기준이 조금 어긋나도 답이 사라지지는 않는다.
     """
 
     if not hits:
-        return empty_result_note("search_personal_references")
+        return empty_result_fields("search_personal_references")
     distances = [hit["distance"] for hit in hits if isinstance(hit.get("distance"), (int, float))]
-    if distances and min(distances) > REFERENCE_FAR_DISTANCE:
-        return (
-            f"검색된 참고자료가 모두 질문과 의미상 멉니다(최소 distance {min(distances):.2f}). "
-            "질문과 무관하면 근거로 쓰지 말고, 기억이 없다고 단정하지도 마세요. "
-            f"남은 출처: {_remaining_sources('search_personal_references')}. "
-            "사용자 질문이 남은 출처에 해당하면 그 tool로 한 번 더 검색한 뒤에 답하세요."
-        )
-    return None
+    far_threshold = reference_far_distance()
+    if distances and min(distances) > far_threshold:
+        return {
+            "source_coverage": source_coverage(
+                "search_personal_references",
+                status="all_hits_far",
+                min_distance=min(distances),
+                far_threshold=far_threshold,
+            )
+        }
+    return {}
 
 
 # [4주차 수강생 구현 가이드]
@@ -445,10 +522,8 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)
     # course 계약대로 top-level hits 키를 유지한다. 결과가 없어도 hits=[]로 답한다.
     result = {"ok": True, "tool_name": "search_personal_references", "query": query, "top_k": top_k, "hits": hits}
-    # 0건이거나 hit가 전부 질문과 먼 경우, 남은 출처를 안내해 한 출처만 보고 단정하는 것을 막는다.
-    note = reference_hits_note(hits)
-    if note:
-        result["note"] = note
+    # 0건이거나 hit가 전부 질문과 먼 경우, 남은 출처 데이터를 실어 한 출처만 보고 단정하는 것을 막는다.
+    result.update(reference_hits_fields(hits))
     return json_payload(result)
 
 
@@ -466,7 +541,7 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     # course 계약대로 top-level rows 키를 유지한다. 결과가 없어도 rows=[]로 답한다.
     result = {"ok": True, "tool_name": "search_saved_requests", "query": query, "top_k": top_k, "rows": rows}
     if not rows:
-        result["note"] = empty_result_note("search_saved_requests")
+        result.update(empty_result_fields("search_saved_requests"))
     return json_payload(result)
 
 
@@ -493,7 +568,7 @@ def search_conversation_messages(
     )
     payload = {"ok": True, "tool_name": "search_conversation_messages", "query": query, "top_k": top_k, **result}
     if not result["hits"]:
-        payload["note"] = empty_result_note("search_conversation_messages")
+        payload.update(empty_result_fields("search_conversation_messages"))
     return json_payload(payload)
 
 
