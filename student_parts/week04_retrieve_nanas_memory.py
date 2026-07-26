@@ -69,9 +69,12 @@ WEEK04_SEARCH_SOURCES = {
 
 
 # 처음에는 긴 산문 note 하나였는데, "어느 출처를 봤고 어느 출처가 남았는지"는 지시가 아니라
-# 데이터라서 멘토 리뷰 제안대로 searched/unsearched 구조 필드로 승격하고 지시는 next_step
-# 한 문장만 남겼다. searched에는 이번 tool 자신만 들어간다 — tool은 agent가 이전 턴에
-# 무엇을 검색했는지 알 수 없으므로(무상태), 대화 전체의 검색 이력은 담지 못한다.
+# 데이터라서 멘토 리뷰 제안대로 구조 필드로 승격하고 지시는 next_step 한 문장만 남겼다.
+# 필드 이름은 제안받은 searched/unsearched 대신 searched/other_sources를 쓴다 —
+# tool은 무상태라 agent가 이전 턴에 무엇을 검색했는지 모르는데, 이미 검색한 tool이
+# "unsearched"로 표기되면 대화 관점에서 거짓이 되어 재검색을 부추길 수 있다.
+# other_sources("이 tool이 안 보는 다른 출처")는 항상 참이고, 재검색 판단은
+# 호출 이력을 아는 agent 몫으로 next_step에 명시한다.
 def source_coverage(
     tool_name: str,
     *,
@@ -97,15 +100,16 @@ def source_coverage(
     if far_threshold is not None:
         searched["far_threshold"] = round(far_threshold, 3)
     return {
-        "searched": [searched],
-        "unsearched": [
+        "searched": searched,
+        "other_sources": [
             {"tool": name, "covers": guide["what"], "use_when": guide["when"]}
             for name, guide in WEEK04_SEARCH_SOURCES.items()
             if name != tool_name
         ],
         "next_step": (
-            "이 출처만 보고 기억이 없다고 단정하지 않는다. 사용자 질문이 unsearched의 "
-            "use_when에 해당하면 그 tool로 검색한 뒤 답하고, 모두 해당하지 않을 때만 "
+            "이 출처만 보고 기억이 없다고 단정하지 않는다. 사용자 질문이 other_sources의 "
+            "use_when에 해당하고 이 대화에서 아직 검색하지 않은 tool이면 검색한 뒤 답한다. "
+            "이미 검색한 tool은 다시 검색하지 않고, 확인한 출처에 모두 없을 때만 "
             "관련 기록이 없다고 답한다."
         ),
     }
