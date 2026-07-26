@@ -386,8 +386,49 @@ def search_nana_memory(
 ) -> str:
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
-    # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
-    ...
+    limit = safe_limit(limit, default=5, maximum=20)
+
+    reference_hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=limit)
+
+    candidate_rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=max(limit * 4, limit))
+
+    saved_rows: list[dict[str, Any]] = []
+    for row in candidate_rows:
+        row_date = row.get("date") or ""
+        if date_from and row_date and row_date < date_from:
+            continue
+        if date_to and row_date and row_date > date_to:
+            continue
+        if attendee and attendee not in (row.get("members") or []):
+            continue
+        saved_rows.append(row)
+        if len(saved_rows) >= limit:
+            break
+
+    context_lines = ["[호환용 통합 검색 결과]"]
+    if reference_hits:
+        context_lines.append("- 개인 참고자료:")
+        for hit in reference_hits:
+            title = (hit.get("metadata") or {}).get("title", "")
+            context_lines.append(f"  [{hit.get('id')}] {title}: {hit.get('content')}")
+    else:
+        context_lines.append("- 개인 참고자료: 검색 결과 없음")
+
+    if saved_rows:
+        context_lines.append("- 저장된 일정/할 일:")
+        for row in saved_rows:
+            context_lines.append(f"  {row}")
+    else:
+        context_lines.append("- 저장된 일정/할 일: 검색 결과 없음")
+
+    return json_payload(
+        {
+            "hits": reference_hits,
+            "rows": saved_rows,
+            "context": "\n".join(context_lines),
+        }
+    )
+
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
