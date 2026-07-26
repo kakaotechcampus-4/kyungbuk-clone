@@ -275,6 +275,8 @@ def search_saved_request_rows(
     for raw_row in raw_rows:
         row = dict(raw_row)
         row["members"] = _decode_attendees(row.get("members_json"))
+        row.pop("members_json", None)
+        row.pop("raw_json", None)
         rows.append(row)
     return rows
 
