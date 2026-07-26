@@ -380,7 +380,7 @@ def search_conversation_messages(
         sqlite_store=SQLITE_STORE,
         conversation_rag_store=CONVERSATION_RAG_STORE,
         query=query,
-        top_k=safe_limit(top_k),
+        top_k=top_k,
         conversation_id=conversation_id
     )
     
