@@ -238,7 +238,27 @@ def search_personal_reference_hits(
     query: str,
     top_k: int = 2,
 ) -> list[dict[str, Any]]:
-    """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
+    """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다.
+    query가 비어 있으면 벡터 유사도 비교 자체가 불가능하므로(빈 문자열은 embedding API가 거부함),
+    embedding 호출 없이 참고자료 전체를 그대로 반환합니다."""
+
+    if not query or not query.strip():
+        result = reference_store.collection.get()
+        ids = result.get("ids") or []
+        documents = result.get("documents") or []
+        metadatas = result.get("metadatas") or []
+        return [
+            {
+                "id": ids[index],
+                "content": documents[index],
+                "distance": None,
+                "metadata": {
+                    "title": (metadatas[index] or {}).get("title", ""),
+                    "tags": (metadatas[index] or {}).get("tags", ""),
+                },
+            }
+            for index in range(len(documents))
+        ]
 
     raw_hits = reference_store.search_personal_references(query, limit=top_k)
     return [
@@ -329,6 +349,7 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
     """사용자가 적어둔 자유 형식 메모, 선호, 참고자료를 ChromaDB에서 검색합니다.
+    조건 없이 참고자료 전체를 보여달라는 요청에는 query를 빈 문자열로 두고 호출하세요(전체를 그대로 반환합니다).
     구조화된 저장 일정/할 일/알림을 찾을 때는 search_saved_requests를 사용하세요."""
 
     limit = safe_limit(top_k, default=2, maximum=20)
@@ -375,9 +396,11 @@ def search_nana_memory(
     attendee: str | None = None,
     limit: int = 5,
 ) -> str:
-    """이전 버전 호환용 통합 검색 tool입니다. 지금은 search_personal_references / search_saved_requests /
-    search_conversation_messages로 출처를 나눠 찾는 것이 표준이며, 이 tool은 예전 trace와의 호환을 위해
-    유지됩니다."""
+    """참고자료와 저장기록을 하나의 구체적인 주제/키워드로 동시에 찾아 하나의 context로 합쳐 반환합니다.
+    대화 기록은 포함하지 않으므로 그 경우는 search_conversation_messages를 사용하세요.
+    조건 없이 저장기록 전체를 보고 싶다면 list_saved_requests를, 참고자료만 필요하면
+    search_personal_references를, 저장기록만 필요하면 search_saved_requests를 사용하세요.
+    query는 비워두지 말고 실제 검색어를 넣으세요."""
 
     top_k = safe_limit(limit, default=5, maximum=20)
     reference_hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)
@@ -429,6 +452,7 @@ def week04_tools() -> list[Any]:
         search_personal_references,
         search_saved_requests,
         search_conversation_messages,
+        search_nana_memory,
     ]
 
 
@@ -445,7 +469,9 @@ def week04_prompt_parts() -> list[str]:
         *week03_prompt_parts(),
         "질문 성격에 따라 알맞은 검색 tool을 먼저 호출한 뒤 그 결과를 근거로 답한다. "
         "사용자가 적어둔 자유 형식 메모, 선호, 참고자료(예: '내가 회의 선호 시간 뭐라고 적어놨었지?')는 "
-        "search_personal_references로 찾는다. 구조화되어 저장된 일정/할 일/알림을 특정 키워드나 주제로 좁혀 "
+        "search_personal_references로 찾는다. 조건 없이 참고자료 전체를 보여달라는 요청(예: '내 참고자료 "
+        "전부 검색해', '내가 적어둔 거 다 보여줘')은 search_personal_references를 query를 비운 채로 호출한다. "
+        "구조화되어 저장된 일정/할 일/알림을 특정 키워드나 주제로 좁혀 "
         "찾을 때(예: '보고서 제출 관련해서 저장한 거 있어?', '팀 회의 일정 검색해줘')는 search_saved_requests를 "
         "쓴다. 조건 없이 저장된 기록 전체를 보여달라는 요청(예: '내가 저장한 거 다 보여줘', '저번에 저장한 거 "
         "뭐 있어?')은 이 지시보다 앞서 나온 지시대로 list_saved_requests를 그대로 쓴다. "
@@ -453,7 +479,10 @@ def week04_prompt_parts() -> list[str]:
         "검색 결과 hits/rows가 비어 있으면 근거가 없다고 답하고, 없는 내용을 지어내지 않는다. "
         "예전에 채팅으로 나눈 일반 대화 내용을 물으면(예: '전에 채팅으로 여행 얘기할 때 뭐라고 했었지?') "
         "search_conversation_messages를 쓴다. 이 tool은 conversation_id를 따로 지정하지 않으면 지금 하고 "
-        "있는 대화는 자동으로 검색에서 제외하므로, 방금 한 말이 과거 기록처럼 섞여 나오지 않는다.",
+        "있는 대화는 자동으로 검색에서 제외하므로, 방금 한 말이 과거 기록처럼 섞여 나오지 않는다. "
+        "참고자료와 저장기록을 둘 다 근거로 삼아야 하는 구체적인 주제의 질문(예: '팀 회의 관련해서 내가 "
+        "적어둔 메모랑 저장된 일정 둘 다 알려줘')에는 search_nana_memory로 한 번에 찾는다. 조건 없이 "
+        "저장기록 전체를 보여달라는 요청에는 이 tool 대신 이미 나온 규칙대로 list_saved_requests를 쓴다.",
     ]
 
 

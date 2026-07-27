@@ -178,6 +178,29 @@ def test_search_personal_reference_hits_finds_added_reference(use_temp_stores):
     assert "distance" in hit
 
 
+def test_search_personal_reference_hits_returns_all_references_for_blank_query(use_temp_stores):
+    # 멘토 리뷰(PR #158): "내 참고자료 전부 검색해" 같은 요청에서 LLM이 query="" 로 호출하면
+    # ChromaDB가 OpenAI embedding API에 빈 문자열을 넘겨 400 BadRequestError가 났다. 빈/공백 query는
+    # 벡터 유사도 비교가 원천적으로 불가능하므로, embedding 호출 없이 참고자료 전체를 그대로 반환한다.
+    before = search_personal_reference_hits(use_temp_stores.reference_store, query="", top_k=2)
+
+    add_personal_reference_dict(
+        use_temp_stores.reference_store, title="선호 A", content="아침에 운동하는 것을 선호한다", tags=["preference"]
+    )
+    add_personal_reference_dict(
+        use_temp_stores.reference_store, title="선호 B", content="저녁에 산책하는 것을 선호한다", tags=["preference"]
+    )
+
+    after_blank = search_personal_reference_hits(use_temp_stores.reference_store, query="", top_k=2)
+    after_whitespace = search_personal_reference_hits(use_temp_stores.reference_store, query="   ", top_k=2)
+
+    assert len(after_blank) == len(before) + 2
+    assert len(after_whitespace) == len(before) + 2
+    titles = {hit["metadata"]["title"] for hit in after_blank}
+    assert {"선호 A", "선호 B"} <= titles
+    assert all(hit["distance"] is None for hit in after_blank)
+
+
 # --- search_personal_references tool (메인과제) ---
 
 
@@ -200,6 +223,18 @@ def test_search_personal_references_tool_uses_default_top_k(use_temp_stores):
 
     assert isinstance(result["hits"], list)
     assert len(result["hits"]) <= 2
+
+
+def test_search_personal_references_tool_returns_all_hits_for_blank_query_without_error(use_temp_stores):
+    add_personal_reference.invoke({"title": "메모1", "content": "테스트 메모 1"})
+    add_personal_reference.invoke({"title": "메모2", "content": "테스트 메모 2"})
+
+    raw = search_personal_references.invoke({"query": ""})
+    result = json.loads(raw)
+
+    assert list(result.keys()) == ["hits"]
+    titles = {hit["metadata"]["title"] for hit in result["hits"]}
+    assert {"메모1", "메모2"} <= titles
 
 
 # --- search_saved_request_rows (메인과제) ---
@@ -448,6 +483,12 @@ def test_search_personal_references_description_cross_references_search_saved_re
     assert "search_saved_requests" in search_personal_references.description
 
 
+def test_search_personal_references_description_instructs_blank_query_for_full_list():
+    description = search_personal_references.description
+    assert "빈 문자열" in description
+    assert "전체" in description
+
+
 def test_search_saved_requests_description_cross_references_search_personal_references():
     assert "search_personal_references" in search_saved_requests.description
 
@@ -469,6 +510,12 @@ def test_week04_prompt_parts_mentions_search_conversation_messages():
     assert "search_conversation_messages" in joined
 
 
+def test_week04_prompt_parts_mentions_search_nana_memory():
+    joined = " ".join(w4.week04_prompt_parts())
+
+    assert "search_nana_memory" in joined
+
+
 def test_week04_prompt_parts_includes_week03_parts():
     from student_parts.week03_build_nanas_logbook import week03_prompt_parts
 
@@ -477,7 +524,7 @@ def test_week04_prompt_parts_includes_week03_parts():
         assert part in prompt_parts
 
 
-# --- search_nana_memory (추가과제 Step 3, 참고 코드 — week04_tools()에는 노출 안 함) ---
+# --- search_nana_memory (추가과제 Step 3 → 이후 week04_tools()에 노출) ---
 
 
 def test_search_nana_memory_combines_reference_and_saved_request_chunks(use_temp_stores):
@@ -548,9 +595,17 @@ def test_search_nana_memory_filters_saved_rows_by_attendee(use_temp_stores):
     assert titles == ["팀 회의"]
 
 
-def test_search_nana_memory_not_exposed_in_week04_tools():
+def test_search_nana_memory_exposed_in_week04_tools():
     tool_names = {getattr(tool, "name", "") for tool in w4.week04_tools()}
-    assert "search_nana_memory" not in tool_names
+    assert "search_nana_memory" in tool_names
+
+
+def test_search_nana_memory_description_cross_references_other_tools():
+    description = search_nana_memory.description
+    assert "search_conversation_messages" in description
+    assert "list_saved_requests" in description
+    assert "search_personal_references" in description
+    assert "search_saved_requests" in description
 
 
 # ============================================================
@@ -604,15 +659,24 @@ def test_search_nana_memory_not_exposed_in_week04_tools():
 #     결과: 정상 동작 확인. hits == [대화 B]였고 대화 A는 정확히 빠짐. 답변도 대화 B의
 #     발화를 근거로 인용했고, 방금 turn3에서 한 말이 검색 결과에 섞이지 않음.
 #
-# [x] 시나리오 5 — search_nana_memory 호환 tool 필터링 (agent 미노출, 직접 .invoke() 확인)
+# [x] 시나리오 5 — search_nana_memory 필터링 (직접 .invoke() 확인, 함수 자체 동작)
 #     (2026-07-25 확인 완료, 위와 동일한 격리 환경에서 직접 .invoke() 호출)
 #     사전 준비: add_personal_reference로 참고자료 1건, save_structured_request로
 #     group_schedule 2건(날짜/참석자 다르게) 저장
 #     확인 1: 필터 없이 호출 → 참고자료+저장기록 chunk가 context에 함께 나옴
 #     확인 2: date_from/date_to 지정 → 범위 밖 저장기록이 rows/context에서 빠짐
 #     확인 3: attendee 지정 → 참석자 목록에 없는 저장기록이 빠짐
-#     확인 4: week04_tools() 목록에 search_nana_memory가 없음 (agent에 노출 안 됨)
-#     결과: 4개 확인 모두 통과.
+#     결과: 3개 확인 모두 통과.
+#
+# [x] 시나리오 6 — search_nana_memory가 week04_tools()에 노출된 뒤 agent가 실제로 호출하는지
+#     (2026-07-27 확인 — 격리된 임시 환경에서 실제 앱 데이터는 안 건드리고 테스트해봄)
+#     입력 (참고자료 1건 + 저장기록 1건을 미리 만들어둔 상태): "팀 회의 관련해서 내가 적어둔
+#     메모랑 저장된 일정 둘 다 알려줘"를 5회 반복 실행
+#     결과: 호출 여부가 왔다갔다 함 — 5회 중 2회만 search_nana_memory 호출(그마저도
+#     search_saved_requests와 중복으로 같이 호출됨), 나머지 3회는 이전과 동일하게
+#     search_personal_references + search_saved_requests를 따로 호출해서 답변을 종합함.
+#     노출/description/프롬프트는 반영됐지만 agent의 실제 tool 선택은 안정적이지 않음.
+#     비교 입력("내가 저장한 거 다 보여줘" → list_saved_requests 호출 확인)은 이번엔 안 해봄 — [ ]로 남겨둠.
 #
 # 참고: 이 확인 과정에서 tests/test_week04.py의 use_temp_stores fixture가 외부 MCP
 # 동기화 함수(sync_group_schedule_to_shared 등)를 stub하지 않고 있어서, group_schedule을
