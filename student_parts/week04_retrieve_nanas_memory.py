@@ -191,6 +191,13 @@ class SearchPersonalReferencesInput(BaseModel):
     top_k: int = Field(default=2, ge=1, le=20)
 
 
+class ListPersonalReferencesInput(BaseModel):
+    """개인 참고자료 전체 목록 조회 입력입니다. 검색어 없이 태그로 좁히거나 최근 N개를 봅니다."""
+
+    tag: str | None = None
+    limit: int = Field(default=10, ge=1, le=20)
+
+
 class SearchSavedRequestsInput(BaseModel):
     """SQLite 저장 요청 검색 입력입니다."""
 
@@ -224,9 +231,16 @@ def add_personal_reference_dict(
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
     """개인 참고자료를 vector store에 추가하고 backend 정보를 반환합니다."""
-
-    # TODO: PersonalReferenceStore.add_personal_reference(...)로 개인 참고자료를 저장하세요.
-    ...
+    result = reference_store.add_personal_reference(title=title, content=content, tags=tags)
+    return {
+        "reference_backend": result.get("backend", {}),
+        "reference": {
+            "reference_id": result.get("reference_id", ""),
+            "title": result.get("title", ""),
+            "content": result.get("content", ""),
+            "tags": result.get("tags", []),
+        },
+    }
 
 
 def search_personal_reference_hits(
@@ -238,7 +252,65 @@ def search_personal_reference_hits(
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
     # TODO: 개인 참고자료 검색 결과를 id/content/distance/metadata 구조로 정리하세요.
-    ...
+    hits: list[dict[str, Any]] = []
+    for hit in reference_store.search_personal_references(query=query, limit=top_k):
+        hits.append(
+            {
+                "id": hit.get("id", ""),
+                "content": hit.get("content", ""),
+                "distance": hit.get("distance", 0.0),
+                "metadata": {
+                    "title": hit.get("title", ""),
+                    "tags": hit.get("tags", ""),
+                },
+            }
+        )
+    return hits
+
+
+def _list_personal_reference_rows(
+    reference_store: PersonalReferenceStore,
+    *,
+    tag: str | None = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """참고자료 전체 목록을 hit 구조로 정리합니다.
+
+    PersonalReferenceStore는 "검색"(search_personal_references)만 public으로 노출하고
+    "목록 조회"는 제공하지 않습니다. 그래서 이 함수만 예외적으로 store.collection(ChromaDB 내부 객체)에
+    접근합니다 - store가 list API를 갖게 되면 이 함수 내부만 바꾸면 됩니다.
+
+    tags는 store에 ",".join(tags)로 콤마 문자열 하나로 저장돼 있어 ChromaDB where 필터로는
+    부분 일치를 걸 수 없습니다. 그래서 tag 필터링은 여기서 Python으로 직접 처리합니다.
+    """
+
+    # tag로 거르면 뒤에서 자를 문서가 줄어드니, 필터가 있을 때는 넉넉히 가져옵니다.
+    fetch_limit = limit * 5 if tag else limit
+    result = reference_store.collection.get(limit=fetch_limit)
+
+    rows: list[dict[str, Any]] = []
+    documents = result.get("documents", [])
+    ids = result.get("ids", [])
+    metadatas = result.get("metadatas", [])
+    for index, document in enumerate(documents):
+        metadata = metadatas[index] or {}
+        row_tags = [item.strip() for item in str(metadata.get("tags", "")).split(",") if item.strip()]
+        if tag and tag not in row_tags:
+            continue
+        rows.append(
+            {
+                "id": ids[index],
+                "content": document,
+                "distance": None,
+                "metadata": {
+                    "title": metadata.get("title", ""),
+                    "tags": metadata.get("tags", ""),
+                },
+            }
+        )
+        if len(rows) >= limit:
+            break
+    return rows
 
 
 def search_saved_request_rows(
@@ -249,8 +321,7 @@ def search_saved_request_rows(
 ) -> list[dict[str, Any]]:
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
-    # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
-    ...
+    return sqlite_store.search_saved_requests(query=query, limit=top_k)
 
 
 def search_conversation_messages_dict(
@@ -284,24 +355,43 @@ def search_conversation_message_rows(
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
     """개인 참고자료를 ChromaDB에 추가합니다."""
 
-    # TODO: 개인 참고자료를 저장하고 JSON 문자열로 반환하세요.
-    ...
+    result = add_personal_reference_dict(REFERENCE_STORE, title=title, content=content, tags=tags or [])
+
+    return json_payload({
+        "ok": True,
+        "tool_name": "add_personal_reference",
+        **result,
+    })
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
-    """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
+    """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다. 구체적인 검색어가 있을 때 사용하세요."""
 
-    # TODO: query/top_k로 개인 참고자료 vector store를 검색하고 top-level hits를 반환하세요.
-    ...
+    if query.strip() == "":
+        return json_payload({"hits": []})
+
+    hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)
+    return json_payload({"hits": hits})
+
+
+@tool(args_schema=ListPersonalReferencesInput)
+def list_personal_references(tag: str | None = None, limit: int = 10) -> str:
+    """검색어 없이 등록된 개인 참고자료 전체 목록을 보여줍니다. "전부 보여줘"처럼 나열 요청이거나 태그로 좁힐 때 사용하세요."""
+
+    hits = _list_personal_reference_rows(REFERENCE_STORE, tag=tag, limit=limit)
+    return json_payload({"hits": hits})
 
 
 @tool(args_schema=SearchSavedRequestsInput)
 def search_saved_requests(query: str, top_k: int = 3) -> str:
     """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
 
-    # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하고 top-level rows를 반환하세요.
-    ...
+    rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=top_k)
+    payload_json = json_payload({
+        "rows": rows
+    })
+    return payload_json
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -336,8 +426,9 @@ def week04_tools() -> list[Any]:
         *week03_tools(),
         add_personal_reference,
         search_personal_references,
+        list_personal_references,
         search_saved_requests,
-        search_conversation_messages,
+        # search_conversation_messages
     ]
 
 
@@ -352,7 +443,11 @@ def week04_prompt_parts() -> list[str]:
 
     return [
         *week03_prompt_parts(),
-        # TODO: Week 4 Nana memory agent system prompt를 자유롭게 추가하세요.
+        "search_personal_references는 사용자가 직접 등록한 개인 참고자료(선호/규칙/메모)를 구체적인 검색어로 찾는 도구입니다.",
+        "list_personal_references는 검색어 없이 등록된 참고자료 전체 목록을 보거나, 태그로 좁혀서 볼 때 사용하는 도구입니다. "
+        "\"내가 등록한 참고자료 전부 보여줘\"처럼 나열 요청에는 search_personal_references가 아니라 list_personal_references를 호출하시오.",
+        "search_saved_requests는 SQLite에 저장된 구조화된 일정/할 일/알림 기록을 검색하는 도구입니다.",
+        "질문 성격에 따라 이 tool들 중 하나 또는 여럿을 선택해 검색해야 합니다. 검색 결과는 근거로 활용할 수 있도록 hits/rows 구조로 반환해야 합니다."
     ]
 
 
