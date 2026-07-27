@@ -152,18 +152,24 @@ _WEEK04_AGENT: Any | None = None
 #     Week 1~4 tool을 가진 agent를 만들고 재사용합니다.
 
 
-def _decode_attendees(raw_attendees: str | None) -> list[str]:
-    try:
-        decoded = json.loads(raw_attendees or "[]")
-    except Exception:
-        return []
-    return decoded if isinstance(decoded, list) else []
+# def _decode_attendees(raw_attendees: str | None) -> list[str]:
+#     try:
+#         decoded = json.loads(raw_attendees or "[]")
+#     except Exception:
+#         return []
+#     return decoded if isinstance(decoded, list) else []
 
 
 def json_payload(payload: dict[str, Any]) -> str:
     """도구 반환용 dict를 한글이 깨지지 않는 JSON 문자열로 변환합니다."""
 
     return json.dumps(payload, ensure_ascii=False)
+
+
+def tool_result(tool_name: str, *, ok: bool = True, **payload: Any) -> dict[str, Any]:
+    """Week 4 tool들이 공통으로 쓰는 JSON payload 껍데기를 만듭니다."""
+
+    return {"ok": ok, "tool_name": tool_name, **payload}
 
 
 def safe_limit(limit: int, default: int = 5, maximum: int = 50) -> int:
@@ -244,12 +250,7 @@ def add_personal_reference_dict(
 
     return {
         "reference_backend": saved["backend"],
-        "reference": {
-            "reference_id": saved["reference_id"],
-            "title": saved["title"],
-            "content": saved["content"],
-            "tags": saved["tags"],
-        }
+        "reference": saved
     }
 
 
@@ -273,7 +274,11 @@ def search_personal_reference_hits(
 
     raw_hits = reference_store.search_personal_references(
         query=query,
-        limit=top_k
+        limit=safe_limit(
+            limit=top_k,
+            default=2,
+            maximum=20
+        )
     )
 
     hits = []
@@ -303,10 +308,13 @@ def search_saved_request_rows(
 
     rows = sqlite_store.search_saved_requests(
         query=query,
-        limit=top_k
+        limit=safe_limit(
+            limit=top_k,
+            default=3,
+            maximum=50
+        )
     )
-    for row in rows:
-        row["members"] = _decode_attendees(row.pop("members_json", None))
+
     return rows
 
 # 추가 과제
@@ -352,7 +360,11 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
         tags=tags
     )
 
-    return json_payload(saved_reference)
+    return json_payload(tool_result(
+        tool_name="add_personal_reference",
+        ok=True,
+        **saved_reference
+    ))
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
@@ -361,18 +373,17 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
 
     # query/top_k로 개인 참고자료 vector store를 검색하고 top-level hits를 반환
     # helper: search_personal_reference_hits()
-    # SearchPersonalReferencesInput 스키마에 따른 safe_limit 인자 결정
 
     hits = search_personal_reference_hits(
         reference_store=REFERENCE_STORE,
         query=query,
-        top_k=safe_limit(
-            limit=top_k,
-            default=2,
-            maximum=20
-        )
+        top_k=top_k
     )
-    return json_payload({"hits": hits})
+    return json_payload(tool_result(
+        tool_name="search_personal_references",
+        ok=True,
+        hits=hits
+    ))
 
 
 @tool(args_schema=SearchSavedRequestsInput)
@@ -381,18 +392,17 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
 
     # AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하고 top-level rows를 반환
     # helper: search_saved_request_rows()
-    # SearchSavedRequestsInput 스키마에 따른 safe_limit 인자 결정
 
     rows = search_saved_request_rows(
         sqlite_store=SQLITE_STORE,
         query=query,
-        top_k=safe_limit(
-            limit=top_k,
-            default=3,
-            maximum=50
-        )
+        top_k=top_k
     )
-    return json_payload({"rows": rows})
+    return json_payload(tool_result(
+        tool_name="search_saved_requests",
+        ok=True,
+        rows=rows
+    ))
 
 # 추가 과제
 @tool(args_schema=SearchConversationMessagesInput)
