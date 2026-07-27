@@ -15,7 +15,7 @@ from fixed.app_store import AppSQLiteStore
 from fixed.reference_store import PersonalReferenceStore
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 from student_parts.week01_wake_up_nana import join_system_prompt
-from student_parts.week03_build_nanas_logbook import week03_prompt_parts, week03_tools
+from student_parts.week03_build_nanas_logbook import tool_result, week03_prompt_parts, week03_tools
 
 
 REFERENCE_STORE = PersonalReferenceStore(CONFIG.chroma_dir)
@@ -112,7 +112,8 @@ def search_personal_reference_hits(
 ) -> list[dict[str, Any]]:
     """ChromaDB 검색 결과를 tool이 바로 반환하기 쉬운 hit 구조로 정리합니다."""
 
-    references = reference_store.search_personal_references(query, limit=top_k)
+    resolved_top_k = safe_limit(top_k, default=2, maximum=20)
+    references = reference_store.search_personal_references(query, limit=resolved_top_k)
     return [
         {
             "id": reference.get("id"),
@@ -135,7 +136,8 @@ def search_saved_request_rows(
 ) -> list[dict[str, Any]]:
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
-    return sqlite_store.search_saved_requests(query, limit=top_k)
+    resolved_top_k = safe_limit(top_k, default=3, maximum=50) 
+    return sqlite_store.search_saved_requests(query, limit=resolved_top_k) 
 
 
 def search_conversation_messages_dict(
@@ -199,33 +201,31 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
         content=content,
         tags=tags,
     )
-    return json_payload(payload)
+    return json_payload(tool_result("add_personal_reference", ok=True, **payload))
 
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
     """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
 
-    resolved_top_k = safe_limit(top_k, default=2, maximum=20)
     hits = search_personal_reference_hits(
         REFERENCE_STORE,
         query=query,
-        top_k=resolved_top_k,
+        top_k=top_k,
     )
-    return json_payload({"hits": hits})
+    return json_payload(tool_result("search_personal_references", ok=True, hits=hits))
 
 
 @tool(args_schema=SearchSavedRequestsInput)
 def search_saved_requests(query: str, top_k: int = 3) -> str:
     """SQLite에 저장된 구조화 일정/할 일/알림 row를 검색합니다. query에는 LLM이 고른 일정/할 일/알림 핵심어를 넣습니다."""
 
-    resolved_top_k = safe_limit(top_k, default=3, maximum=50)
     rows = search_saved_request_rows(
         SQLITE_STORE,
         query=query,
-        top_k=resolved_top_k,
+        top_k=top_k, 
     )
-    return json_payload({"rows": rows})
+    return json_payload(tool_result("search_saved_requests", ok=True, rows=rows))
 
 
 @tool(args_schema=SearchConversationMessagesInput)
@@ -243,7 +243,7 @@ def search_conversation_messages(
         top_k=top_k,
         conversation_id=conversation_id,
     )
-    return json_payload(payload)
+    return json_payload(tool_result("search_conversation_messages", ok=True, **payload))
 
 
 @tool(args_schema=SearchNanaMemoryInput)
@@ -256,14 +256,13 @@ def search_nana_memory(
 ) -> str:
     """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
 
-    resolved_limit = safe_limit(limit, default=5, maximum=20)
-
     reference_hits = search_personal_reference_hits(
         REFERENCE_STORE,
         query=query,
-        top_k=resolved_limit,
+        top_k=limit,
     )
 
+    resolved_limit = safe_limit(limit, default=5, maximum=20)
     schedule_rows = SQLITE_STORE.list_schedules(
         limit=resolved_limit,
         date_from=date_from,
@@ -294,12 +293,14 @@ def search_nana_memory(
         lines.append("- 검색된 저장 일정이 없습니다.")
 
     return json_payload(
-        {
-            "context": "\n".join(lines),
-            "reference_backend": REFERENCE_STORE.backend_info(),
-            "hits": reference_hits,
-            "rows": schedule_rows,
-        }
+        tool_result(
+            "search_nana_memory",
+            ok=True,
+            context="\n".join(lines),
+            reference_backend=REFERENCE_STORE.backend_info(),
+            hits=reference_hits,
+            rows=schedule_rows,
+        )
     )
 
 def week04_tools() -> list[Any]:
