@@ -320,10 +320,21 @@ def search_conversation_messages_dict(
         exclude_conversation_id=exclude_id,
         conversation_id=conversation_id,
     )
+    
+    # [발화 신뢰도 보장] RAG 검색 결과(hits)에서 assistant 발화를 완전히 제거해,
+    # LLM이 assistant의 과거 발화(환각 등)를 사용자의 취향이나 사실로 오인하지 않도록 원천 차단합니다.
+    filtered_hits = []
+    for hit in hits:
+        lines = str(hit.get("content") or "").split("\n")
+        filtered_lines = [line for line in lines if " | assistant | " not in line]
+        hit_copy = dict(hit)
+        hit_copy["content"] = "\n".join(filtered_lines)
+        filtered_hits.append(hit_copy)
+
     return {
-        "hits": hits,
-        "rows": hits,
-        "context": conversation_rag_store.context_from_hits(hits),
+        "hits": filtered_hits,
+        "rows": filtered_hits,
+        "context": conversation_rag_store.context_from_hits(filtered_hits),
         "rag_backend": conversation_rag_store.backend_info(),
         "sync": sync_result,
     }
