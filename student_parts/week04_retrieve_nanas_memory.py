@@ -325,7 +325,7 @@ def search_conversation_message_rows(
 
 @tool(args_schema=AddPersonalReferenceInput)
 def add_personal_reference(title: str, content: str, tags: list[str] | None = None) -> str:
-    """개인 참고자료를 ChromaDB에 추가합니다."""
+    """사용자의 개인 참고자료(메모/지식)를 ChromaDB에 저장합니다."""
 
 
     result_dict = add_personal_reference_dict(
@@ -341,7 +341,7 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
 
 @tool(args_schema=SearchPersonalReferencesInput)
 def search_personal_references(query: str, top_k: int = 2) -> str:
-    """개인 참고자료를 ChromaDB와 OpenAI embedding 기반으로 검색합니다."""
+    """저장된 개인 참고자료(메모/지식)를 ChromaDB와 OpenAI embedding 기반으로 의미 검색합니다."""
 
 
     hits = search_personal_reference_hits(
@@ -373,7 +373,7 @@ def search_conversation_messages(
     top_k: int = 5,
     conversation_id: str | None = None,
 ) -> str:
-    """앱 SQLite 대화 목록을 대화 단위 ChromaDB RAG로 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
+    """앱 SQLite에 저장된 과거 대화 발화를 대화 단위로 검색합니다. 현재 진행 중인 대화는 검색 대상에서 제외됩니다. query에는 짧은 핵심 명사나 구를 넣습니다."""
 
     
     results = search_conversation_messages_dict(
@@ -395,12 +395,44 @@ def search_nana_memory(
     attendee: str | None = None,
     limit: int = 5,
 ) -> str:
-    """개인 참고자료와 SQLite 저장 일정을 한 번에 검색하고 일정 chunk를 반환합니다."""
+    """개인 참고자료와 SQLite 저장 일정을 한 번에 검색해 하나의 context로 묶는 이전 버전 호환용 통합 검색 tool입니다."""
 
-    # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
-    
-    # TODO: 미구현 상태. 상세 명세 질의문답 후 구현 예정
-    ...
+    reference_hits = search_personal_reference_hits(
+        reference_store=REFERENCE_STORE,
+        query=query,
+        top_k=limit,
+    )
+
+    candidate_schedules = SQLITE_STORE.list_schedules(
+        limit=limit * 4,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    query_text = (query or "").strip().lower()
+    attendee_text = (attendee or "").strip().lower()
+    schedules = [
+        schedule
+        for schedule in candidate_schedules
+        if (not query_text or query_text in (schedule.get("title") or "").lower())
+        and (not attendee_text or any(attendee_text in name.lower() for name in schedule.get("attendees") or []))
+    ][:limit]
+
+    reference_chunks = [f"{hit['metadata']['title']}: {hit['content']}" for hit in reference_hits]
+    schedule_chunks = [
+        f"{schedule.get('date')} {schedule.get('start_time')} {schedule.get('title')}"
+        f" (참석자: {', '.join(schedule.get('attendees') or []) or '없음'})"
+        for schedule in schedules
+    ]
+    context = "\n".join([*reference_chunks, *schedule_chunks])
+
+    return json_payload(
+        tool_result(
+            "search_nana_memory",
+            hits=reference_hits,
+            schedules=schedules,
+            context=context,
+        )
+    )
 
 def week04_tools() -> list[Any]:
     """3주차까지의 도구에 4주차 RAG 도구를 누적한 목록입니다."""
@@ -426,11 +458,7 @@ def week04_prompt_parts() -> list[str]:
     WEEK04_PROMPT = """
 -----------------------------------------WEEK 4------------------------------------------
 너는 지난 주차에 이어, 요청별 자료 검색(RAG)을 세분화시킨 WEEK4 AGENT이다.
-너는 추가로 4가지 도구를 사용할 수 있으며, 각 도구의 사용처는 다음과 같다.
-- add_personal_reference: 개인참고 자료를 추가하는 도구이다. 사용자가 개인참고 자료에 추가해달라고 요청할 시 해당 정보를 추가한다.
-- search_personal_references: 개인참고 자료를 탐색하는 도구이다. 사용자의 요청에 개인참고 자료 검색이 필요할 시 사용한다.
-- search_saved_requests: schedule/todo/reminder 검색 tool이다. 특정 키워드가 포함된 schedule/todo/reminder를 조회할 때 사용한다.
-- search_conversation_messages: 다른 대화의 정보가 필요할 떄 사용한다. 사용자가 다른 대화에 있는 정보를 명시적으로 요구할 때 사용한다.
+질문이 여러 출처(참고자료/저장된 일정·할 일·알림/과거 대화)에 걸쳐 있다면, 필요한 tool을 각각 호출해 근거를 모은다.
 """
     
 

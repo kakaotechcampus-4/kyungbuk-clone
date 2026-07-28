@@ -30,7 +30,7 @@ _WEEK01_AGENT: Any | None = None
 CHAT_MEMORY_PROMPT = f"""
 -----------------------------------------공통 프롬프트-----------------------------------------
 너는 스케쥴 관리 Agent `나나`이다.
-너는 사용자의 개인 일정을 관리하는 역할을 한다.
+너는 사용자의 일정/할 일/알림을 관리하는 역할을 한다.
 base_date는 {current_app_date_iso()}을 기준으로 한다.
 너의 기능은 Week가 진행됨에 따라 확장되며, 각 Week마다 새로운 기능이 추가될 수 있다.
 Week에 같은 주제에 대한 지시가 여러번 나오면 더 높은 주차 또는 더 뒤에 있는 지시를 우선한다.
@@ -170,15 +170,7 @@ def _current_session_schedules() -> list[dict[str, Any]]:
     session_id = current_session_scope()
     return [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) == session_id]
 
-#   1. personal_create_schedule
-#      - title/date/start_time/end_time/attendees 인자로 schedule dict를 만듭니다.
-#      - id는 "personal_" 접두어가 붙은 임시 ID, created_at은 현재 시각으로 채웁니다.
-#      - attendees가 None이면 빈 list로 바꾸고, session_id=current_session_scope()를 함께 넣어
-#        PERSONAL_SCHEDULES에 append합니다.
-#      - 반환 JSON에는 ok, tool_name, created_schedule을 넣습니다.
-#      - Week 1 반환에는 structured_request나 sqlite_save를 넣지 않습니다.
-
-@tool
+@tool("personal_create_schedule", parse_docstring=True)
 def personal_create_schedule(
     title: str,
     date: str,
@@ -186,10 +178,17 @@ def personal_create_schedule(
     end_time: str = "미정",
     attendees: list[str] | None = None,
 ) -> str:
-    """Nana의 개인 일정을 현재 대화의 임시 메모리에 생성합니다."""
+    """personal_schedule을 현재 대화의 임시 메모리에 생성합니다.
+    group_schedule, todo, reminder 생성 요청에는 사용하지 않는다.
 
-    # TODO: PERSONAL_SCHEDULES에 현재 대화 범위의 개인 일정을 생성하세요.
-    ...
+    Args:
+        title: 일정 제목.
+        date: 일정 날짜 (YYYY-MM-DD 형식).
+        start_time: 일정 시작 시간 (HH:MM 형식).
+        end_time: 일정 종료 시간 (HH:MM 형식). 사용자가 명시하지 않으면 "미정"으로 채운다.
+        attendees: 일정에 참석하는 것으로 언급된 사람 이름 목록. 언급이 없으면 채우지 않는다(None).
+    """
+
     
     ok = True
     tool_name = "personal_create_schedule"
@@ -207,17 +206,16 @@ def personal_create_schedule(
     return _json({"ok": ok, "tool_name": tool_name, "created_schedule": created_schedule})
 
 
-#   2. personal_list_schedules
-#      - PERSONAL_SCHEDULES를 직접 수정하지 않고 현재 대화 범위의 일정만 조회합니다.
-#      - date_from이 있으면 그 날짜 이상, date_to가 있으면 그 날짜 이하만 남깁니다.
-#      - 날짜 비교는 YYYY-MM-DD 문자열 기준으로 충분합니다.
-#      - 반환 JSON에는 ok, tool_name, schedules를 넣습니다.
-@tool
+@tool("personal_list_schedules", parse_docstring=True)
 def personal_list_schedules(date_from: str | None = None, date_to: str | None = None) -> str:
-    """선택한 시작일과 종료일 범위에 포함되는 Nana의 개인 일정을 조회합니다."""
+    """현재 대화 범위에 저장된 개인 일정을 조회합니다. 사용자의 일정 확인 요청이거나,
+    삭제/수정 대상 일정의 schedule_id를 먼저 확인해야 할 때 사용합니다.
 
-    # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
-    ...
+    Args:
+        date_from: 조회할 시작 날짜(YYYY-MM-DD, 포함). 없으면 하한 없이 조회.
+        date_to: 조회할 끝 날짜(YYYY-MM-DD, 포함). 없으면 상한 없이 조회.
+    """
+
     ok = True
     tool_name = "personal_list_schedules"
     schedules: list[dict[str, Any]] = []
@@ -231,17 +229,15 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
 
 
 
-#   3. personal_delete_schedule
-#      - schedule_id가 일치하면서 현재 대화 범위에 속한 일정만 삭제합니다.
-#      - 리스트 객체 자체는 유지해야 하므로 PERSONAL_SCHEDULES[:]에 새 목록을 대입합니다.
-#      - 삭제 전후 길이 비교로 deleted 값을 만들고 JSON으로 반환합니다.
-#      - 다른 대화 범위의 같은 ID는 삭제하면 안 됩니다.
-@tool
+@tool("personal_delete_schedule", parse_docstring=True)
 def personal_delete_schedule(schedule_id: str) -> str:
-    """일정 ID에 해당하는 개인 일정을 삭제합니다."""
+    """현재 대화 범위에서 schedule_id가 일치하는 개인 일정 하나를 삭제합니다.
+    삭제할 일정의 schedule_id를 모르면 먼저 personal_list_schedules로 조회해 확인한다.
 
-    # TODO: 현재 대화 범위에서 schedule_id가 일치하는 개인 일정을 삭제하세요.
-    ...
+    Args:
+        schedule_id: 삭제할 일정의 id.
+    """
+
     ok = True
     tool_name = "personal_delete_schedule"
     
@@ -276,17 +272,13 @@ def week01_prompt_parts() -> list[str]:
     
     WEEK01_PROMPT = """
 -----------------------------------------WEEK 1------------------------------------------
-personal_schedule 관련 요청이 들어오면 아래의 tool을 호출한다.
-- personal_create_schedule: 개인 일정 생성
-- personal_list_schedules: 개인 일정 조회
-- personal_delete_schedule: 개인 일정 삭제
-일정 생성 시, 참석자로 생각되는 사람이 있다면 attendees에 추가한다. 종료시간을 명시하지 않으면 "미정"으로 설정한다.
-일정 삭제 시, 사용자가 '첫번째', '두번째'와 같이 순서를 말하면, 현재 대화 범위에서 조회된 일정 목록을 기준으로 해당 순서의 일정을 삭제한다.
-만약 일정 수정에 대한 요청이 들어오면, 일정 조회 후 적절한 일정을 삭제하고 새 일정을 생성하는 방식으로 처리한다.
+일정 삭제 시 사용자가 '첫번째', '두번째'와 같이 순서를 말하면, personal_list_schedules로
+조회한 목록에서 해당 순서의 일정을 찾아 그 schedule_id로 personal_delete_schedule을 호출한다.
+일정 수정 요청은 personal_list_schedules로 대상을 확인한 뒤 personal_delete_schedule로
+삭제하고 personal_create_schedule로 새 일정을 생성하는 방식으로 처리한다.
 """
 
     return [
-        # TODO: Week 1 Nana 일정 agent system prompt를 자유롭게 추가하세요.
         CHAT_MEMORY_PROMPT,
         WEEK01_PROMPT
     ]

@@ -121,10 +121,15 @@ class StructuredRequest(BaseModel):
     kind: RequestKind = Field(default="unknown", description=
                               """
                               요청의 종류를 나타내며, 다음 중 하나의 값만 허용됩니다:
-                                - personal_schedule: 개인 일정 생성/조회/삭제/수정 요청
-                                - group_schedule: 그룹 일정 생성/조회/삭제/수정 요청
-                                - todo: 할 일 요청
-                                - reminder: 일정 알림 요청
+                                - group_schedule: 그룹/팀 일정 생성/조회/삭제/수정 요청. '팀', '그룹'과
+                                  관련된 단어가 포함되면 personal_schedule보다 우선 적용합니다.
+                                  예) "내일 오후 5시에 팀 회의 일정 잡아줘", "다음 주 금요일에 그룹 회식 일정 잡아줘"
+                                - personal_schedule: 개인 일정 생성/조회/삭제/수정 요청.
+                                  예) "내일 오후 3시에 회의 잡아줘", "오늘 8시에 철수랑 등산 일정 잡아줘"
+                                - todo: 할 일 요청. '할 일', 'Todo', '해야 할 일'과 같은 단어가 포함되어야 합니다.
+                                  예) "오늘 2시에 할 일로 '보고서 작성' 추가해줘", "내일 todo 목록 보여줘"
+                                - reminder: 일정 알림 요청. '알람', '리마인드', 'Remind'와 같은 단어가 포함되어야 합니다.
+                                  예) "오늘 2시 반에 알람 설정해줘", "내일 10시에 발표 리마인드 해줘"
                                 - unknown: 위의 어느 것에도 해당하지 않는 경우
                               """)
     title: str | None = Field(default=None, description="""
@@ -134,7 +139,7 @@ class StructuredRequest(BaseModel):
                                 - reminder: 알림 제목
                                 - unknown: 알 수 없는 경우 None
                                """)
-    date: str | None = Field(default=None, description="요청의 날짜를 YYYY-MM-DD 형식으로 나타냅니다. 확실하지 않으면 None으로 둡니다.")
+    date: str | None = Field(default=None, description="요청의 날짜를 YYYY-MM-DD 형식으로 나타냅니다. '내일', '다음 주 금요일' 같은 상대 날짜는 base_date를 기준으로 계산합니다. 확실하지 않으면 None으로 둡니다.")
     start_time: str | None = Field(default=None, description="요청의 시작 시간을 HH:MM 형식으로 나타냅니다. 확실하지 않으면 None으로 둡니다.")
     end_time: str | None = Field(default=None, description="요청의 종료 시간을 HH:MM 형식으로 나타냅니다. 확실하지 않으면 None으로 둡니다.")
     members: list[str] = Field(default_factory=list, description="요청과 관련된 참석자/멤버 목록을 나타냅니다. 모르면 빈 list로 둡니다.")
@@ -148,7 +153,13 @@ class StructuredRequestBatch(BaseModel):
 
     ...
     
-    requests: list[StructuredRequest] = Field(default_factory=list, description="자연어 요청을 구조화한 StructuredRequest 목록입니다. 요청이 하나뿐이어도 list 형태를 유지합니다.")
+    requests: list[StructuredRequest] = Field(default_factory=list, description="""
+                                              자연어 요청을 구조화한 StructuredRequest 목록입니다.
+                                              한 문장에 서로 다른 의도가 여러 개 섞여 있으면 각각을 별도 StructuredRequest로 나눠 담습니다.
+                                              예) "내일 3시에 회의 잡고 할 일로 보고서 작성도 추가해줘"
+                                                  → personal_schedule 1건 + todo 1건, 총 2개의 StructuredRequest.
+                                              요청이 하나뿐이어도 list 형태를 유지합니다.
+                                              """)
     base_date: str = Field(default_factory=current_app_date_iso, description="상대 날짜 해석 기준일을 YYYY-MM-DD 형식으로 나타냅니다. current_app_date_iso()를 사용하여 현재 날짜를 기준으로 합니다.")
 
 
@@ -179,9 +190,14 @@ def extract_structured_request(text: str) -> StructuredRequest:
     )
     return _coerce_structured_request(result)
 
-@tool
+@tool("extract_schedule_request", parse_docstring=True)
 def extract_schedule_request(query: str) -> str:
-    """이후 회차에서 저장 흐름과 연결할 예약 tool입니다."""
+    """사용자의 자연어 일정/할 일/알림 요청을 StructuredRequest 하나로 구조화합니다.
+    자연어 문장에서 종류/제목/날짜/시간/멤버 등을 뽑아내야 할 때 사용합니다.
+
+    Args:
+        query: 구조화할 사용자의 원문 자연어 요청.
+    """
 
     structured = extract_structured_request(query)
     return json.dumps(
@@ -208,7 +224,7 @@ def week02_system_prompt() -> str:
     -----------------------------------WEEK 2 최종 답변 규칙-----------------------------------
     최종 답변은 반드시 StructuredRequestBatch 단일 JSON 객체 하나만 출력한다.
     tool 결과를 받은 뒤 사용자에게 설명 텍스트나 추가 JSON을 출력하지 않는다.
-    personal_create_schedule tool 결과의 created_schedule 필드를 읽어 StructuredRequest 필드를 채우고, StructuredRequestBatch로 즉시 반환한다.
+    personal_create_schedule가 호출된 경우, tool 결과의 created_schedule 필드를 읽어 StructuredRequest 필드를 채우고, StructuredRequestBatch로 즉시 반환한다.
     """
     return join_system_prompt([*week02_prompt_parts(), final_answer_rule])
 
@@ -219,25 +235,7 @@ def week02_prompt_parts() -> list[str]:
     WEEK02_PROMPT = """
 -----------------------------------------WEEK 2------------------------------------------
 너는 사용자의 자연어 요청을 StructuredRequestBatch로 구조화하는 역할을 수행하는 Week2 agent다.
-일정 관련 작업을 수행할 때, 오늘/내일과 같은 상대 날짜를 해석할 때는 base_date를 기준으로 한다.
-StructuredRequestBatch에는 요청이 여러 개일 수 있으며, 각 요청은 StructuredRequest로 표현된다.
-StructuredRequest의 kind는 다음의 기준으로 나눈다.
-    1. group_schedule: 그룹 일정 생성/조회/삭제/수정 요청이며, '팀' 혹은 '그룹'과 관련된 단어가 포함된 경우에 해당한다.
-        '팀', '그룹' 과 같은 단어가 포함되면 personal_schedule보다 group_schedule을 우선 적용한다.
-        ex) "내일 오후 5시에 팀 회의 일정 잡아줘", "다음 주 금요일에 그룹 회식 일정 잡아줘."
-    2. personal_schedule: 개인 일정 생성/조회/삭제/수정 요청이다.
-        kind=group_schedule로 분류된 요청에는 personal 계열 tool을 사용하지 않는다.
-        personal_schedule에 대한 요청은 week01의 tool을 사용한다.
-        ex) "내일 오후 3시에 회의 잡아줘", "오늘 8시에 철수랑 등산 일정 잡아줘."
-    3. todo: 할 일 요청으로, '할 일', 'Todo', '해야 할 일'과 같은 단어가 포함되어야 한다.
-        ex) "오늘 2시에 할 일로 '보고서 작성' 추가해줘", "내일 todo 목록 보여줘"
-    4. reminder: 일정 알림 요청으로, '알람', '리마인드', 'Remind'와 같은 단어가 포함되어야 한다.
-        ex) "오늘 2시 반에 알람 설정해줘.", "내일 10시에 발표 리마인드 해줘."
-    5. unknown: 위의 어느 것에도 해당하지 않는 경우이다.
 kind를 제외한 StructuredRequest의 필드는, 명확하지 않은 경우 억지로 생성하지 말고 반드시 None 또는 빈 list로 두어야 한다.
-
-StructuredRequestBatch에는 요청이 하나뿐이어도 requests 목록에 StructuredRequest 하나를 담도록 한다.
-Week2에서는 SQLite 저장, RAG, 외부 멤버 일정 조율을 하지 않는다.
 """
 
     return [
