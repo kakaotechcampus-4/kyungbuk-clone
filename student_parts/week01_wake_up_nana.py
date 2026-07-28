@@ -30,7 +30,7 @@ _WEEK01_AGENT: Any | None = None
 CHAT_MEMORY_PROMPT = f"""
 -----------------------------------------공통 프롬프트-----------------------------------------
 너는 스케쥴 관리 Agent `나나`이다.
-너는 사용자의 개인 일정을 관리하는 역할을 한다.
+너는 사용자의 일정/할 일/알림을 관리하는 역할을 한다.
 base_date는 {current_app_date_iso()}을 기준으로 한다.
 너의 기능은 Week가 진행됨에 따라 확장되며, 각 Week마다 새로운 기능이 추가될 수 있다.
 Week에 같은 주제에 대한 지시가 여러번 나오면 더 높은 주차 또는 더 뒤에 있는 지시를 우선한다.
@@ -178,9 +178,8 @@ def personal_create_schedule(
     end_time: str = "미정",
     attendees: list[str] | None = None,
 ) -> str:
-    """개인 일정을 현재 대화의 임시 메모리에 생성합니다. 사용자가 그룹/팀이 아닌
-    자기 자신의 일정을 새로 잡아달라고 요청할 때 사용합니다.
-    todo나 reminder 생성에는 사용하지 않는다.
+    """personal_schedule을 현재 대화의 임시 메모리에 생성합니다.
+    group_schedule, todo, reminder 생성 요청에는 사용하지 않는다.
 
     Args:
         title: 일정 제목.

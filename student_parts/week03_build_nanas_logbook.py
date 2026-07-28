@@ -36,26 +36,22 @@ Week 3부터는 일정과 요청이 SQLite DB에 저장되어 대화가 끊겨�
 
 WEEK03_TOOL_CALL_PROMPT = """
 -----------------------------------WEEK 3 (tool 호출 순서)-----------------------------------
-자세한 것은 도구 설명을 참조하나, 호출 순서는 아래를 따른다.
+extract_schedule_request로 자연어를 구조화했다면, 그 결과를 사용자에게 보고만 하고 끝내지 말고
+kind에 맞는 저장 tool(personal_create_schedule 또는 save_structured_request)까지 호출해 저장을 완료한다.
 
-[저장 — kind = personal_schedule]
-1. personal_create_schedule: 제목/날짜/시간 전달 (SQLite에도 함께 저장됨)
-
-[저장 — kind = group_schedule or todo or reminder]
-1. save_structured_request: kind/title/date/start_time/end_time/members 등 필드 전달
+Week 1의 personal_list_schedules/personal_delete_schedule은 임시 메모리만 다루므로,
+저장된 일정을 조회/수정/삭제할 때는 아래 SQLite 기반 tool을 사용한다.
 
 [조회]
-Week 1의 personal_list_schedules 대신 아래를 따른다.
-1. personal_list_saved_schedules: kind/date_from/date_to/limit 전달
+personal_list_saved_schedules를 사용한다.
 
 [수정]
-Week 1의 삭제+생성 방식 대신 아래를 따른다.
-1. personal_list_saved_schedules: schedule_id 확인
-2. personal_update_saved_schedule: schedule_id + 변경할 필드 전달
+1. personal_list_saved_schedules로 대상 schedule_id를 확인한다.
+2. personal_update_saved_schedule에 schedule_id와 변경할 필드를 전달한다.
 
 [삭제]
-1. personal_list_saved_schedules: schedule_id 확인
-2. personal_delete_saved_schedules: schedule_id 또는 요청의 필터(date/title/start_time/delete_all) 전달
+1. personal_list_saved_schedules로 대상 schedule_id를 확인한다.
+2. personal_delete_saved_schedules에 schedule_id 또는 필터(date/title/start_time/delete_all)를 전달한다.
 """
 
 
@@ -238,15 +234,6 @@ def tool_result(tool_name: str, *, ok: bool = True, **payload: Any) -> dict[str,
 class SaveStructuredRequestInput(StructuredRequest):
     """SQLite 저장 직전에 검증하는 Week 3 입력 스키마입니다."""
 
-    kind: RequestKind = Field(default="unknown", description=
-                              """
-                              요청의 종류를 나타내며, 다음 중 하나의 값만 허용됩니다:
-                                  - personal_schedule: 개인 일정 생성/조회/삭제/수정 요청
-                                  - group_schedule: 그룹 일정 생성/조회/삭제/수정 요청
-                                  - todo: 할 일 요청
-                                  - reminder: 일정 알림 요청
-                                  - unknown: 위의 어느 것에도 해당하지 않는 경우
-                              """)
     source_schedule_id: str | None = Field(default=None, description="Week 1 임시 일정에서 넘어온 원본 일정 ID")
 
     @model_validator(mode="before")
@@ -396,7 +383,7 @@ def personal_create_schedule(
     end_time: str = "미정",
     attendees: list[str] | None = None,
 ) -> str:
-    """Nana의 개인 일정을 생성하고 Week 3+ 앱 SQLite DB에도 저장합니다.
+    """personal_schedule을 생성하고 SQLite DB에 저장할 때 사용한다.
 
     Args:
         title: 일정 제목
@@ -439,7 +426,7 @@ def save_structured_request(
     original_text: str = "",
     source_schedule_id: str | None = None,
 ) -> str:
-    """Week 2 structured_request 필드를 검증한 뒤 SQLite에 저장합니다."""
+    """kind가 group_schedule/todo/reminder인 structured_requests를 SQLite에 저장합니다."""
 
     store = _store()
     payload = {
@@ -467,7 +454,7 @@ def list_saved_requests(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """SQLite에 저장된 구조화 요청 목록을 조회합니다."""
+    """SQLite에 저장된 구조화 요청(structured_requests 원본 기록) 목록을 kind/날짜로 조회합니다."""
 
     store = _store()
     rows = store.list_saved_requests(
@@ -495,7 +482,7 @@ def personal_list_saved_schedules(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """앱 DB에 저장된 일정 목록을 날짜/종류 필터로 반환합니다. 저장된 일정을 수정하거나 삭제하기 전에 schedule_id 후보를 확인할 때 사용합니다. 단순히 내용을 확인하려는 조회 요청에는 search_saved_requests를 사용합니다."""
+    """앱 DB에 저장된 일정(schedule row) 목록을 날짜/종류 필터로 반환합니다. 저장된 일정을 확인, 수정, 삭제하기 위해 schedule_id 후보가 필요할 때도 사용합니다."""
 
     store = _store()
 
