@@ -264,11 +264,12 @@ def search_saved_request_rows(
     *,
     query: str,
     top_k: int = 3,
+    kind: str | None = None,
 ) -> list[dict[str, Any]]:
     """SQLite 저장 요청을 검색하고 실제 검색 결과만 반환합니다."""
 
     # TODO: AppSQLiteStore.search_saved_requests(...)로 저장 요청을 검색하세요.
-    return sqlite_store.search_saved_requests(query=query, limit=top_k)
+    return sqlite_store.search_saved_requests(query=query, kind=kind, limit=top_k)
 
 
 def search_conversation_messages_dict(
@@ -390,23 +391,55 @@ def search_nana_memory(
     # TODO: compatibility 통합 검색이 필요하면 개인 참고자료와 SQLite 일정 chunk를 함께 구성하세요.
     default_limit = safe_limit(limit, default=5, maximum=20)
     reference_hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=default_limit)
-    rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=default_limit*4)
 
     schedule_chunks: list[str] = []
-    for row in rows:
-        if row.get("kind") not in {"personal_schedule", "group_schedule"}: continue
-        if date_from and (row.get("date") or "") < date_from: continue
-        if date_to and (row.get("date") or "") > date_to: continue
 
-        members = _decode_attendees(row.get("members_json"))
-        if attendee and attendee not in members: continue
-
-        schedule_chunks.append(
-            f"[일정] {row.get('title')} | {row.get('date') or '미정'} "
-            f"{row.get('start_time') or ''}-{row.get('end_time') or ''} | 참석자: {', '.join(members) or '미정'}"
+    if date_from or date_to:
+        candidates = SQLITE_STORE.list_schedules(
+            limit=max(default_limit*4, 40),
+            date_from=date_from,
+            date_to=date_to,
         )
 
-        if len(schedule_chunks) >= default_limit: break
+        for row in candidates:
+            members = row.get("attendees") or []
+            if attendee and attendee not in members: continue
+
+            schedule_chunks.append(
+                f"[일정] {row.get('title')} | {row.get('date') or '미정'} "
+                f"{row.get('start_time') or ''}-{row.get('end_time') or ''} | 참석자: {', '.join(members) or '미정'}"
+            )
+
+            if len(schedule_chunks) >= default_limit: break
+
+    else:
+        fetch_size = max(default_limit * 4, 20)
+        refetch_cap = 200
+        while True:
+            rows: list[dict[str, Any]] = []
+            exhausted = True
+            for kind in ("personal_schedule", "group_schedule"):
+                kind_rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=fetch_size, kind=kind)
+                rows.extend(kind_rows)
+                if len(kind_rows) >= fetch_size:
+                    exhausted = False
+
+            rows.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+
+            schedule_chunks = []
+            for row in rows:
+                members = _decode_attendees(row.get("members_json"))
+                if attendee and attendee not in members: continue
+
+                schedule_chunks.append(
+                    f"[일정] {row.get('title')} | {row.get('date') or '미정'} "
+                    f"{row.get('start_time') or ''}-{row.get('end_time') or ''} | 참석자: {', '.join(members) or '미정'}"
+                )
+                if len(schedule_chunks) >= default_limit: break
+
+            if len(schedule_chunks) >= default_limit or exhausted or fetch_size >= refetch_cap:
+                break
+            fetch_size = min(fetch_size * 2, refetch_cap)
 
     context = "\n".join(
         ["[개인 참고자료]"]
