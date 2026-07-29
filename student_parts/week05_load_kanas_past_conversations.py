@@ -452,8 +452,8 @@ def week05_tools() -> list[Any]:
         search_previous_conversations,
         load_conversation_messages,
         extract_schedules_from_history,
-        create_shared_schedule,
-        delete_shared_schedule,
+        #create_shared_schedule,
+        #delete_shared_schedule,
         list_shared_schedules,
         collect_member_schedules,
     ]
