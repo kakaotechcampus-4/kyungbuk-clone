@@ -330,17 +330,14 @@ def _collect_member_schedules(
         external_members, date_from, date_to
     )
 
-    # 내 일정은 member_names에 내 멤버 이름이 있을 때만 합친다. 앱 검증에서 "철수랑 하린
-    # 일정 뽑아줘"에 요청하지 않은 내 일정까지 rows로 섞여 나오는 문제가 재현돼서,
-    # 누구 일정을 모을지는 인자가 정하고 tool이 임의로 늘리지 않게 했다.
-    # "나"를 뜻하는 이름은 공유 저장소가 내 일정 복사본에 쓰는 상수
-    # (fixed의 PERSONAL_SHARED_MEMBER_NAME)를 그대로 따라 한 곳에서만 정의되게 한다.
-    include_me = any(str(name).strip() == PERSONAL_SHARED_MEMBER_NAME for name in member_names)
-
-    # 내 일정을 외부 멤버 row와 같은 member_name/title/date/... 구조로 맞춘다.
-    # Week 2 StructuredRequest를 기준 모양으로 쓰므로 SQLite row와 임시 row가 같은 형태가 된다.
+    # 내 일정은 항상 포함한다. 한때 member_names에 "나"가 있을 때만 포함하도록 바꿨다가
+    # 되돌렸다 — 이 tool의 계약이 "내 일정과 외부 멤버를 한 rows로 합치기"이고, Week 6
+    # 공통 시간 결정이 이 rows를 busy 근거로 쓰므로 LLM이 '나'를 빠뜨려도 내 일정이
+    # 누락되지 않아야 한다(3주차 '기본 조회 범위는 tool이 보장한다' 원칙과 동일).
+    # 다른 멤버들만 필요한 질문은 extract_schedules_from_history로 라우팅되게
+    # 두 tool의 description에서 가른다.
     rows: list[dict[str, Any]] = []
-    for schedule in personal_schedules if include_me else []:
+    for schedule in personal_schedules:
         request = _structured_request_from_schedule_row(schedule)
         # 날짜가 조율 범위 밖이거나 아예 없는 일정은 busy-time 근거가 못 되므로 제외한다.
         if not request.date:
@@ -379,7 +376,7 @@ def _collect_member_schedules(
             external_error = external_payload.get("error")
 
     result: dict[str, Any] = {
-        "member_names": [*([PERSONAL_SHARED_MEMBER_NAME] if include_me else []), *external_members],
+        "member_names": [PERSONAL_SHARED_MEMBER_NAME, *external_members],
         "date_from": normalized_from,
         "date_to": normalized_to,
         "rows": rows,
@@ -525,10 +522,10 @@ def list_shared_schedules(
 
 @tool(args_schema=CollectMemberSchedulesInput)
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
-    """member_names에 적힌 사람들의 일정을 한 번에 모읍니다.
+    """내 일정과 member_names에 적힌 멤버들의 일정을 한 rows로 모읍니다.
 
-    내 일정은 member_names에 '나'가 있을 때만 포함됩니다. 다른 멤버들만의
-    일정이 목적이면 extract_schedules_from_history를 사용합니다.
+    내 일정은 항상 포함됩니다. 다른 멤버들만의 일정이 목적이면
+    extract_schedules_from_history를 사용합니다.
     """
 
     # 합치는 규칙은 helper 한 곳에 두고, tool은 검증된 인자와 내 일정 목록을 넘기는 입구 역할만 한다.
@@ -589,7 +586,7 @@ WEEK05_EXTERNAL_SOURCE_PROMPT = (
     "search_previous_conversations의 query에는 핵심 단어 하나만 넣고, "
     "특정 멤버의 대화 목록이 목적이면 query를 빈 문자열로 두고 member_names만 넣는다. "
     "다른 멤버들만의 일정은 extract_schedules_from_history로 추출하고, "
-    "내 일정까지 함께 모아야 할 때만 collect_member_schedules에 '나'를 포함한 member_names로 요청한다. "
+    "내 일정까지 함께 모아야 하면 collect_member_schedules를 사용한다(내 일정은 항상 포함된다). "
     "공유 일정 저장소에 등록된 row 자체를 확인할 때는 list_shared_schedules를 사용한다. "
     "외부 tool 결과의 rows와 schedule_summary를 근거로만 답하고, "
     "외부 기록에 없는 멤버 일정을 지어내지 않는다. "
