@@ -412,9 +412,20 @@ def create_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
-    # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    # tool 에 넘어온 매개변수들을 dict 형태로 묶어 args 에 저장
+    args = {
+        "member_name": member_name,
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "notes": notes,
+        "source_conversation_id": source_conversation_id,
+        "schedule_id": schedule_id,
+    }
 
+    # 공유 저장소에 일정을 생성 후 생성 된 일정을 그대로(JSON 형태) 반환
+    return call_mcp_tool_sync("create_shared_schedule", args)
 
 @tool(args_schema=DeleteSharedScheduleInput)
 def delete_shared_schedule(
@@ -423,9 +434,14 @@ def delete_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
-    # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    # 삭제 대상의 id 2개를 dict 로 묶음 (둘 중 하나만 있어도 서버가 처리)
+    args = {
+        "schedule_id": schedule_id,
+        "source_conversation_id": source_conversation_id,
+    }
 
+    # 공유 일정 저장소에서 삭제한 결과를 그대로(JSON 형태) 반환
+    return call_mcp_tool_sync("delete_shared_schedule", args)
 
 @tool(args_schema=ListSharedSchedulesInput)
 def list_shared_schedules(
