@@ -329,10 +329,15 @@ def _collect_member_schedules(
         external_members, date_from, date_to
     )
 
+    # 내 일정은 member_names에 "나"가 있을 때만 합친다. 앱 검증에서 "철수랑 하린 일정
+    # 뽑아줘"에 요청하지 않은 내 일정까지 rows로 섞여 나오는 문제가 재현돼서,
+    # 누구 일정을 모을지는 인자가 정하고 tool이 임의로 늘리지 않게 했다.
+    include_me = any(str(name).strip() == "나" for name in member_names)
+
     # 내 일정을 외부 멤버 row와 같은 member_name/title/date/... 구조로 맞춘다.
     # Week 2 StructuredRequest를 기준 모양으로 쓰므로 SQLite row와 임시 row가 같은 형태가 된다.
     rows: list[dict[str, Any]] = []
-    for schedule in personal_schedules:
+    for schedule in personal_schedules if include_me else []:
         request = _structured_request_from_schedule_row(schedule)
         # 날짜가 조율 범위 밖이거나 아예 없는 일정은 busy-time 근거가 못 되므로 제외한다.
         if not request.date:
@@ -371,7 +376,7 @@ def _collect_member_schedules(
             external_error = external_payload.get("error")
 
     result: dict[str, Any] = {
-        "member_names": ["나", *external_members],
+        "member_names": [*( ["나"] if include_me else [] ), *external_members],
         "date_from": normalized_from,
         "date_to": normalized_to,
         "rows": rows,
@@ -393,14 +398,27 @@ def search_previous_conversations(
 
     다른 멤버(철수/하린 등)가 과거에 말한 내용을 찾을 때 사용합니다.
     나와 Nana가 나눈 대화는 search_conversation_messages가 담당합니다.
-    query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다.
+    LIKE 검색이므로 query에는 핵심 명사 하나만 넣습니다(여러 단어를 이으면 0건이 되기 쉽습니다).
+    특정 멤버의 대화 목록이 목적이면 query를 빈 문자열로 두고 member_names만 넣습니다.
+    대화 원문이 필요하면 이 검색 rows의 conversation_id로 load_conversation_messages를 호출합니다.
     """
 
     # 멤버 이름 정규화는 외부 store/MCP 경계에서 한 번만 처리한다. wrapper는 인자를 그대로 전달한다.
-    return _call_mcp_or_soft_fail(
+    result_text = _call_mcp_or_soft_fail(
         "search_previous_conversations",
         {"query": query, "member_names": member_names, "limit": limit},
     )
+    # 앱 검증에서 재현된 실패: 다단어 query가 LIKE에서 0건 → 그대로 "없다"로 종료.
+    # Week 4의 coverage와 같은 방식으로, 0건 결과 안에 교정 방법을 데이터로 실어 보낸다.
+    payload = json.loads(result_text)
+    if payload.get("ok") and not payload.get("rows"):
+        payload["retry_hint"] = (
+            "LIKE 검색이라 여러 단어 query는 0건이 되기 쉽습니다. 핵심 단어 하나로 줄이거나, "
+            "query를 빈 문자열로 두고 member_names만으로 다시 검색하세요. "
+            "대화 원문이 목적이면 재검색 rows의 conversation_id로 load_conversation_messages를 호출하세요."
+        )
+        return json_payload(payload)
+    return result_text
 
 
 @tool(args_schema=LoadConversationMessagesInput)
@@ -425,7 +443,11 @@ def load_conversation_messages(conversation_id: str) -> str:
 
 @tool(args_schema=ExtractSchedulesFromHistoryInput)
 def extract_schedules_from_history(member_names: list[str], date_from: str, date_to: str) -> str:
-    """외부 SQLite 이전 대화에서 멤버별 일정을 추출합니다."""
+    """외부 SQLite 이전 대화에서 다른 멤버들의 일정만 추출합니다.
+
+    내 일정은 포함되지 않습니다. 나를 포함해 여러 사람의 일정을 한 번에 모아야
+    하면 collect_member_schedules를 사용합니다.
+    """
 
     # 날짜 형식 정리는 외부 store/MCP 경계에서 한 번만 처리한다.
     return _call_mcp_or_soft_fail(
@@ -500,7 +522,11 @@ def list_shared_schedules(
 
 @tool(args_schema=CollectMemberSchedulesInput)
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
-    """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
+    """member_names에 적힌 사람들의 일정을 한 번에 모읍니다.
+
+    내 일정은 member_names에 '나'가 있을 때만 포함됩니다. 다른 멤버들만의
+    일정이 목적이면 extract_schedules_from_history를 사용합니다.
+    """
 
     # 합치는 규칙은 helper 한 곳에 두고, tool은 검증된 인자와 내 일정 목록을 넘기는 입구 역할만 한다.
     result = _collect_member_schedules(
@@ -555,9 +581,12 @@ WEEK05_EXTERNAL_SOURCE_PROMPT = (
     "내 취향/기록/지난 대화는 Week 4까지의 검색 tool로 찾고, "
     "다른 멤버의 과거 대화나 일정은 외부 MCP tool로 찾는다. "
     "다른 멤버가 과거에 무엇을 말했는지는 search_previous_conversations로 대화를 찾고, "
-    "원문 확인이 필요할 때만 그 결과의 conversation_id로 load_conversation_messages를 호출한다. "
-    "특정 멤버들의 바쁜 시간이나 일정은 extract_schedules_from_history로 추출하고, "
-    "나와 다른 멤버들의 일정을 한 번에 모아야 하면 collect_member_schedules를 사용한다. "
+    "사용자가 대화 원문을 요청하면 검색 요약으로 대신하지 말고 반드시 검색 rows의 "
+    "conversation_id로 load_conversation_messages를 호출해 원문으로 답한다. "
+    "search_previous_conversations의 query에는 핵심 단어 하나만 넣고, "
+    "특정 멤버의 대화 목록이 목적이면 query를 빈 문자열로 두고 member_names만 넣는다. "
+    "다른 멤버들만의 일정은 extract_schedules_from_history로 추출하고, "
+    "내 일정까지 함께 모아야 할 때만 collect_member_schedules에 '나'를 포함한 member_names로 요청한다. "
     "공유 일정 저장소에 등록된 row 자체를 확인할 때는 list_shared_schedules를 사용한다. "
     "외부 tool 결과의 rows와 schedule_summary를 근거로만 답하고, "
     "외부 기록에 없는 멤버 일정을 지어내지 않는다. "
