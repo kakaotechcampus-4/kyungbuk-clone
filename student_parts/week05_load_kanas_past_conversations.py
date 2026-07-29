@@ -315,9 +315,12 @@ def search_previous_conversations(
     member_names: list[str] | None = None,
     limit: int = 5,
 ) -> str:
-    """외부 SQLite 데이터베이스에 저장된 특정 멤버의 이전 대화를 검색합니다.
+    """
+    외부 SQLite 데이터베이스에 저장된 특정 멤버(들)의 이전 대화에 특정 query가 포함됐는지 검색합니다.
+    - ex) "철수가 공부 관련해서 얘기한 적있어?", "멤버 중에 누군가 시험 얘기한 적 있어?", "수지가 공연가자고 한 적 있나?"
     멤버가 생략되어 있으면 전체 멤버를 검색합니다.
-    query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
+    query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다.
+    """
 
     return call_mcp_tool_sync(
             "search_previous_conversations",
@@ -327,10 +330,12 @@ def search_previous_conversations(
 
 @tool(args_schema=LoadConversationMessagesInput)
 def load_conversation_messages(conversation_id: str) -> str:
-    """외부 SQLite 데이터베이스에서 특정 대화의 모든 메시지를 불러옵니다."""
+    """
+    외부 SQLite 데이터베이스에서 특정 대화의 모든 메시지를 불러옵니다.
+    특정 대화의 전체 내용을 요청할 때 사용합니다.
+    - ex) (search_previous_conversations 호출 내용을 확인한 후)"두번째 대화 전체 내용 좀 보여줘"
+    """
 
-    
-    # 왜 얘만 call_external_tool_payload 사용? 학습 용도?
     result = call_external_tool_payload(
         "load_conversation_messages",
         {"conversation_id": conversation_id}
@@ -339,7 +344,13 @@ def load_conversation_messages(conversation_id: str) -> str:
 
 @tool(args_schema=ExtractSchedulesFromHistoryInput)
 def extract_schedules_from_history(member_names: list[str], date_from: str, date_to: str) -> str:
-    """외부 SQLite에 저장된 대화에서 멤버별 일정을 추출합니다."""
+    """
+    외부 공유 일정 저장소에서 특정 멤버(들)의 기간 내 busy-time을 조회합니다. member_names, date_from, date_to는 모두 필수입니다.
+    - ex) "철수 일정 알려줘" (사용자가 기간을 말하지 않았다면 임의로 채우지 말고 어느 기간을 조회할지 먼저 되물어봅니다.)
+    """
+    
+    # TODO: 정확한 용도를 잘 모르겠다. list_shared_schedules을 써도 되지 않은가?
+    # 구현 가이드에는 이전 대화에서 추출한다고 되어 있는데, 코드 상에선 sqlite에 저장된 공유 일정을 읽는 것으로 확인됨... 어떤 방향으로 구현해야?
 
     return call_mcp_tool_sync(
         "extract_schedules_from_history",
@@ -412,7 +423,7 @@ def list_shared_schedules(
 
 @tool(args_schema=CollectMemberSchedulesInput)
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
-    """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
+    """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다. 나를 포함해 특정 멤버들과의 일정을 종합해서 보고 싶을 때 사용합니다."""
 
     result = _collect_member_schedules(
         member_names=member_names,
@@ -446,10 +457,22 @@ def week05_system_prompt() -> str:
 
 def week05_prompt_parts() -> list[str]:
     """1~5주차 system prompt 조각을 누적합니다."""
+    WEEK5_PROMPT = """
+-----------------------------------------WEEK 5------------------------------------------
+너는 지난 주차에 이어, 외부 MCP 서버 호출 기능을 탑재한 Week 5 Agent다.
+다른 누군가의 대화 내역이나 일정을 요구할 때는 이 주차에 추가된 도구들을 사용한다.
 
+- 대화 내용(텍스트) 자체가 궁금할 때: search_previous_conversations로 먼저 찾고, 특정 대화 전체가 필요하면 load_conversation_messages로 이어서 부른다.
+    -> 이 때, search_previous_conversations로 찾은 대화의 title을 그대로 사용하여 검색하여 id를 찾고, load_conversation_messages를 사용한다
+- 외부 멤버들의 일정/바쁜 시간만 필요할 때(나는 제외): extract_schedules_from_history를 쓴다.
+- 나를 포함해 여러 사람의 일정을 한 번에 모아 비교해야 할 때(예: 다같이 시간 되는지 조율): collect_member_schedules를 쓴다. extract_schedules_from_history와 달리 내 일정도 함께 담는다.
+- 공유 일정 저장소에 지금 등록된 내용을 그대로 확인하거나 특정 source_conversation_id로 찾을 때: list_shared_schedules를 쓴다. 이건 등록 현황 조회용이고, 여러 사람 일정을 조율 목적으로 모으려면 collect_member_schedules를 우선한다.
+- 공유 일정 저장소에 직접 등록/삭제해야 할 때만 create_shared_schedule/delete_shared_schedule을 쓴다.
+    """
+    
     return [
         *week04_prompt_parts(),
-        # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        WEEK5_PROMPT
     ]
 
 
