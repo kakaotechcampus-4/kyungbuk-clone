@@ -11,6 +11,7 @@ from fixed.app_store import AppSQLiteStore
 from fixed.config import CONFIG
 from fixed.external_mcp import call_external_tool_payload
 from fixed.external_people_store import (
+    PERSONAL_SHARED_MEMBER_NAME,
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
@@ -323,16 +324,18 @@ def _collect_member_schedules(
     # 외부 저장소 규칙으로 멤버 이름(별칭 통일)과 날짜 범위(ISO datetime → 날짜)를 정규화한다.
     # "나"는 외부 멤버가 아니므로 외부 조회 명단에서는 뺀다.
     external_members = normalize_external_member_names(
-        [name for name in member_names if str(name).strip() not in ("나", "")]
+        [name for name in member_names if str(name).strip() not in (PERSONAL_SHARED_MEMBER_NAME, "")]
     )
     normalized_from, normalized_to = normalize_external_schedule_date_bounds(
         external_members, date_from, date_to
     )
 
-    # 내 일정은 member_names에 "나"가 있을 때만 합친다. 앱 검증에서 "철수랑 하린 일정
-    # 뽑아줘"에 요청하지 않은 내 일정까지 rows로 섞여 나오는 문제가 재현돼서,
+    # 내 일정은 member_names에 내 멤버 이름이 있을 때만 합친다. 앱 검증에서 "철수랑 하린
+    # 일정 뽑아줘"에 요청하지 않은 내 일정까지 rows로 섞여 나오는 문제가 재현돼서,
     # 누구 일정을 모을지는 인자가 정하고 tool이 임의로 늘리지 않게 했다.
-    include_me = any(str(name).strip() == "나" for name in member_names)
+    # "나"를 뜻하는 이름은 공유 저장소가 내 일정 복사본에 쓰는 상수
+    # (fixed의 PERSONAL_SHARED_MEMBER_NAME)를 그대로 따라 한 곳에서만 정의되게 한다.
+    include_me = any(str(name).strip() == PERSONAL_SHARED_MEMBER_NAME for name in member_names)
 
     # 내 일정을 외부 멤버 row와 같은 member_name/title/date/... 구조로 맞춘다.
     # Week 2 StructuredRequest를 기준 모양으로 쓰므로 SQLite row와 임시 row가 같은 형태가 된다.
@@ -348,7 +351,7 @@ def _collect_member_schedules(
             continue
         rows.append(
             {
-                "member_name": "나",
+                "member_name": PERSONAL_SHARED_MEMBER_NAME,
                 "title": request.title or "제목 없음",
                 "date": request.date,
                 "start_time": request.start_time,
@@ -376,7 +379,7 @@ def _collect_member_schedules(
             external_error = external_payload.get("error")
 
     result: dict[str, Any] = {
-        "member_names": [*( ["나"] if include_me else [] ), *external_members],
+        "member_names": [*([PERSONAL_SHARED_MEMBER_NAME] if include_me else []), *external_members],
         "date_from": normalized_from,
         "date_to": normalized_to,
         "rows": rows,
