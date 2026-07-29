@@ -295,7 +295,45 @@ def _collect_member_schedules(
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
     # TODO: 내 SQLite/임시 일정과 외부 MCP 일정 rows를 같은 구조로 합치세요.
-    ...
+    names = normalize_external_member_names(member_names)
+    start_date, end_date = normalize_external_schedule_date_bounds(names, date_from, date_to)
+
+    external_args = {
+        "member_names": names,
+        "date_from": start_date,
+        "date_to": end_date,
+    }
+    external_json_str = call_mcp_tool_sync("extract_schedules_from_history", external_args)
+    
+    try:
+        external_rows = json.loads(external_json_str)
+        if isinstance(external_rows, dict) and "rows" in external_rows:
+            external_rows = external_rows["rows"]
+    except Exception:
+        external_rows = []
+
+    combined_rows = []
+
+    for p in personal_schedules:
+        req = _structured_request_from_schedule_row(p)
+        if req.date and (start_date <= req.date <= end_date):
+            combined_rows.append({
+                "member_name": "나",
+                "title": req.title or "내 일정",
+                "date": req.date,
+                "start_time": req.start_time or "미정",
+                "end_time": req.end_time or "미정",
+                "notes": None,
+            })
+
+    combined_rows.extend(external_rows)
+
+    summary = external_schedule_summary(combined_rows)
+
+    return {
+        "rows": combined_rows,
+        "schedule_summary": summary
+    }
 
 
 @tool(args_schema=SearchPreviousConversationsInput)
