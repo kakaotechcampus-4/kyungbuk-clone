@@ -282,6 +282,11 @@ def save_structured_request_payload(
     save_input = _save_input_from(request)
     # 모르는 값(None)은 raw_json에 null로 남기지 않고 아예 뺀다.
     payload = save_input.model_dump(exclude_none=True)
+    # original_text의 빈 문자열도 시간 필드의 "미정"처럼 "모르는 값" sentinel이므로 같이 뺀다.
+    # (LLM이 extract를 건너뛰고 save를 직접 불러도 ""가 원문 자리에 저장되지 않게 한다.
+    #  Week 4부터 raw_json이 검색 대상이라 빈 원문이 저장 품질 문제가 된다.)
+    if not str(payload.get("original_text", "")).strip():
+        payload.pop("original_text", None)
     saved = (store or _store()).save_structured_request(payload)
     return tool_result("save_structured_request", **saved)
 
@@ -402,13 +407,12 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
         start_time=_time_or_none(schedule.get("start_time")),
         end_time=_time_or_none(schedule.get("end_time")),
         members=attendees,
-        # 사용자 원문이 없는 호출(테스트/직접 invoke)을 위한 fallback이다. 원문이 있으면
-        # 호출한 쪽(personal_create_schedule)이 이 값을 원문으로 덮어쓴다.
-        # id/created_at/session_id 같은 실행 메타데이터는 원문이 아니고 검색에도 노이즈라 뺀다.
-        original_text=json.dumps(
-            {key: schedule.get(key) for key in ("title", "date", "start_time", "end_time", "attendees")},
-            ensure_ascii=False,
-        ),
+        # 원문이 안 넘어온 호출(테스트/직접 invoke)에서 original_text는 비워 둔다.
+        # 예전에는 title/date를 담은 JSON을 fallback으로 넣었지만, 그 값들은 이미
+        # raw_json(payload 전체 dump)과 title 컬럼에 저장돼 LIKE 검색되므로 새 검색 정보가 없고,
+        # 원문 필드에 자연어/JSON 두 성격이 섞이는 비용만 남는다.
+        # "모르는 값은 비운다"(시간 필드의 미정 → None과 같은 규칙)로 통일한다.
+        # 빈 original_text는 save_structured_request_payload가 저장에서 제외한다.
         source_schedule_id=schedule.get("id"),
     )
 
@@ -441,7 +445,7 @@ def personal_create_schedule(
     schedule = created.get("created_schedule") or {}
     # 같은 내용을 Week 3 저장 입력으로 바꿔 SQLite에도 저장한다(이중 기록).
     save_input = structured_request_from_week01_schedule(schedule)
-    # 사용자 원문이 넘어왔으면 변환 fallback 대신 원문으로 확정해 채운다.
+    # 사용자 원문이 넘어온 경우에만 채운다. 안 넘어오면 빈 값 그대로 두어 저장에서 제외된다.
     # (extract_schedule_request가 query 인자로 원문을 받는 것과 같은 Week 2 방식으로 두 저장 경로를 통일)
     if original_text:
         save_input.original_text = original_text
