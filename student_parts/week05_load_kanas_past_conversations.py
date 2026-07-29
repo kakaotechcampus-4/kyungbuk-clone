@@ -189,8 +189,31 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
 def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
-    # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
-    ...
+    # SQLite 에 저장된 내 일정을 조회(읽기)
+    store = AppSQLiteStore(CONFIG.app_db_path)
+    saved = store.list_schedules(limit=50)
+
+    # 각 row 를 돌면서 schedule_id 나 id 값이 존재하는 경우
+    # 해당 값을 saved_ids 에 저장
+    saved_ids = {
+        str(row.get("schedule_id") or row.get("id"))
+        for row in saved
+        if row.get("schedule_id") or row.get("id")
+    }
+
+    # 현재 대화 범위(scope) 를 scope 에 저장
+    scope = current_session_scope()
+    # 현재 대화 범위이면서 DB 에 저장되지 않고 PERSONAL_SCHEDULES 에만 있는(메모리)
+    # 일정들을 pending 에 저장
+    pending = [
+        schedule
+        for schedule in PERSONAL_SCHEDULES
+        if _schedule_scope(schedule) == scope
+        and str(schedule.get("schedule_id") or schedule.get("id")) not in saved_ids
+    ]
+
+    # saved, pending 리스트를 하나로 합쳐서 반환
+    return [*saved, *pending]
 
 
 def json_payload(payload: dict[str, Any]) -> str:
@@ -282,9 +305,49 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
-    # TODO: 내 SQLite/임시 일정과 외부 MCP 일정 rows를 같은 구조로 합치세요.
-    ...
+    normalized_members = normalize_external_member_names(member_names)
+    normalized_from, normalized_to = normalize_external_schedule_date_bounds(
+        member_names, date_from, date_to
+    )
 
+    my_rows = []
+    for row in personal_schedules:
+        # Structured_Request 로 변환(구조와 값(날짜,시간)을 표준화 하기 위해) 후
+        # my_rows 에 내 일정들을 저장
+        request = _structured_request_from_schedule_row(row)
+        my_rows.append(
+            {
+                "member_name": "나",
+                "title": request.title or "제목 없음",
+                "date": request.date,
+                "start_time": request.start_time,
+                "end_time": request.end_time,
+                "notes": row.get("notes"),
+            }
+        )
+
+    # 외부 멤버 rows: MCP tool 조회 결과(JSON 문자열)를 dict 로 파싱한 후 rows 만 꺼내
+    # external_payload 에 저장
+    external_payload = json.loads(
+        call_mcp_tool_sync(
+            "extract_schedules_from_history",
+            {
+                "member_names": normalized_members,
+                "date_from": normalized_from,
+                "date_to": normalized_to,
+            },
+        )
+    )
+    # rows(외부 MCP 일정) 만 꺼내 external_rows 에 저장
+    external_rows = external_payload.get("rows") or []
+
+    # 임시 일정/외부 일정을 합친 후 
+    # rows, schedule_summary(rows 를 str 로 요약) dict 형태로 반환
+    rows = [*my_rows, *external_rows]
+    return {
+        "rows": rows,
+        "schedule_summary": external_schedule_summary(rows),
+    }
 
 @tool(args_schema=SearchPreviousConversationsInput)
 def search_previous_conversations(
@@ -393,9 +456,16 @@ def list_shared_schedules(
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
     """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
 
-    # TODO: 내 일정과 외부 멤버 busy-time rows를 모아 JSON 문자열로 반환하세요.
-    ...
+    # 나의 일정과 외부 멤버의 일정을 helper 함수를 호출해 dict 형태로 묶어 payload 에 저장
+    payload = _collect_member_schedules(
+        member_names=member_names,
+        date_from=date_from,
+        date_to=date_to,
+        personal_schedules=_personal_schedules_for_current_scope(),
+    )
 
+    # 결과를 JSON 형태로 반환
+    return json_payload(payload)
 
 def week05_tools() -> list[Any]:
     """4주차까지의 도구에 외부 SQLite/MCP 일정 도구를 누적한 목록입니다."""
