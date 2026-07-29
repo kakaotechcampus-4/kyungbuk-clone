@@ -524,8 +524,9 @@ def personal_list_saved_schedules(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """앱 DB에 저장된 일정 목록을 반환합니다. kind를 지정하지 않으면 개인+그룹 일정을 모두 조회하고,
-    특정 종류만 볼 때 kind로 좁힙니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다."""
+    """앱 DB에 저장된 내 일정 목록을 반환합니다. kind를 지정하지 않으면 개인+그룹 일정을 모두 조회하고,
+    특정 종류만 볼 때 kind로 좁힙니다. Nana가 조회/수정/삭제 후보를 볼 때 사용합니다.
+    '공유 일정 저장소'의 일정 조회는 이 tool이 아니라 list_shared_schedules가 담당합니다."""
 
     # kind 미지정이면 개인+그룹 일정을 모두 조회한다. schedules 테이블에는 일정 kind만 들어 있어
     # 할 일/알림이 섞이지 않는다. "그룹은 kind를 바꿔 한 번 더 조회"같은 프롬프트 지시는
