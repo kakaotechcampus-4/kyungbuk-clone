@@ -35,8 +35,9 @@ SQLITE_MEMORY_PROMPT = (
 
 # TODO: 자연어 구조화 → SQLite 저장과 조회/수정/삭제 tool 호출 순서를 안내하는 규칙을 작성하세요.
 WEEK03_TOOL_CALL_PROMPT = (
-    "새 일정/할 일/알림 저장 요청은 먼저 extract_schedule_request(query=사용자 원문)를 호출해 StructuredRequest로 구조화한 뒤, 그 결과의 kind, title, date, start_time, end_time, members, priority, reason, original_text를 save_structured_request에 그대로 전달한다."
-    "이전에 있었던 저장 요청에 대한 프롬프트는 무시하고, extract_schedule_request만 사용해서 저장하는것으로 한다."
+    "새 일정/할 일/알림 저장 요청은 personal_create_schedule을 호출하지 않고 다음 2개의 과정을 통해 진행한다."
+    "1. 먼저 extract_schedule_request(query=사용자 원문)를 호출해 StructuredRequest로 구조화 한다."
+    "2. 결과의 kind, title, date, start_time, end_time, members, priority, reason, original_text를 save_structured_request에 그대로 전달한다."
     "관련 컨텍스트가 없다면 일정 조회는 컨텍스트 내의 일정을 불러오는 personal_list_schedules가 아닌 DB에 있는 일정을 조회할 수 있는 personal_list_saved_schedules, list_saved_requests, get_saved_request를 사용한다."
     "수정/삭제는 먼저 personal_list_saved_schedules로 후보를 확인하고, 확인된 schedule_id 또는 명확한 날짜/제목/시간 필터를 personal_update_saved_schedule 또는 personal_delete_saved_schedules에 전달한다. 조건 없는 삭제는 수행하지 않는다."
 )
@@ -216,6 +217,84 @@ def tool_result(tool_name: str, *, ok: bool = True, **payload: Any) -> dict[str,
 
     return {"ok": ok, "tool_name": tool_name, **payload}
 
+def _unwrap_legacy_save_payload(value: Any) -> Any:
+    """예전 trace의 payload wrapper를 SaveStructuredRequestInput 필드 형태로 풉니다."""
+
+    if isinstance(value, BaseModel):
+        value = value.model_dump()
+    if not isinstance(value, dict):
+        return value
+
+    data = dict(value)
+
+    for wrapper_key in ("payload", "structured_request", "created_schedule"):
+        wrapped = data.get(wrapper_key)
+        if wrapped is None:
+            continue
+        if isinstance(wrapped, BaseModel):
+            wrapped = wrapped.model_dump()
+        if isinstance(wrapped, str):
+            try:
+                wrapped = json.loads(wrapped)
+            except json.JSONDecodeError:
+                continue
+        if isinstance(wrapped, dict):
+            merged = dict(wrapped)
+            if data.get("source_schedule_id") and not merged.get("source_schedule_id"):
+                merged["source_schedule_id"] = data["source_schedule_id"]
+            return _unwrap_legacy_save_payload(merged)
+
+    requests = data.get("requests")
+    if isinstance(requests, list) and requests:
+        return _unwrap_legacy_save_payload(requests[0])
+
+    def _json_list(value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return [value]
+            if isinstance(parsed, list):
+                return [str(item) for item in parsed]
+            return [str(parsed)]
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        return [str(value)]
+
+    members = data.get("members")
+    if members is None:
+        members = data.get("attendees")
+    if members is None:
+        members = data.get("members_json")
+    if members is None:
+        members = data.get("attendees_json")
+
+    normalized_members = _json_list(members)
+    kind = data.get("kind") or data.get("request_kind")
+    if kind is None and any(key in data for key in ("attendees", "attendees_json", "schedule_id", "id")):
+        kind = "group_schedule" if normalized_members else "personal_schedule"
+
+    return {
+        "kind": kind or "unknown",
+        "title": data.get("title"),
+        "date": data.get("date") or data.get("due_date"),
+        "start_time": data.get("start_time"),
+        "end_time": data.get("end_time"),
+        "members": normalized_members,
+        "priority": data.get("priority"),
+        "reason": data.get("reason"),
+        "original_text": data.get("original_text") or data.get("query") or data.get("text") or "",
+        "source_schedule_id": (
+            data.get("source_schedule_id")
+            or data.get("sourceScheduleId")
+            or data.get("schedule_id")
+            or data.get("id")
+        ),
+    }
+
+
 #   - [메인] SaveStructuredRequestInput
 #     Week 2 StructuredRequest를 상속한 저장 입력 스키마입니다. LangChain의 @tool(args_schema=...)가 이 class를 보고
 #     save_structured_request 인자를 검증합니다.
@@ -236,79 +315,7 @@ class SaveStructuredRequestInput(StructuredRequest):
 
         if isinstance(value, cls):
             return value
-        if isinstance(value, BaseModel):
-            value = value.model_dump()
-        if not isinstance(value, dict):
-            return value
-
-        data = dict(value)
-
-        for wrapper_key in ("payload", "structured_request", "created_schedule"):
-            wrapped = data.get(wrapper_key)
-            if wrapped is None:
-                continue
-            if isinstance(wrapped, BaseModel):
-                wrapped = wrapped.model_dump()
-            if isinstance(wrapped, str):
-                try:
-                    wrapped = json.loads(wrapped)
-                except json.JSONDecodeError:
-                    continue
-            if isinstance(wrapped, dict):
-                merged = dict(wrapped)
-                if data.get("source_schedule_id") and not merged.get("source_schedule_id"):
-                    merged["source_schedule_id"] = data["source_schedule_id"]
-                return cls.unwrap_legacy_payload(merged)
-
-        requests = data.get("requests")
-        if isinstance(requests, list) and requests:
-            return cls.unwrap_legacy_payload(requests[0])
-
-        def _json_list(value: Any) -> list[str]:
-            if value is None:
-                return []
-            if isinstance(value, str):
-                try:
-                    parsed = json.loads(value)
-                except json.JSONDecodeError:
-                    return [value]
-                if isinstance(parsed, list):
-                    return [str(item) for item in parsed]
-                return [str(parsed)]
-            if isinstance(value, list):
-                return [str(item) for item in value]
-            return [str(value)]
-
-        members = data.get("members")
-        if members is None:
-            members = data.get("attendees")
-        if members is None:
-            members = data.get("members_json")
-        if members is None:
-            members = data.get("attendees_json")
-
-        normalized_members = _json_list(members)
-        kind = data.get("kind") or data.get("request_kind")
-        if kind is None and any(key in data for key in ("attendees", "attendees_json", "schedule_id", "id")):
-            kind = "group_schedule" if normalized_members else "personal_schedule"
-
-        return {
-            "kind": kind or "unknown",
-            "title": data.get("title"),
-            "date": data.get("date") or data.get("due_date"),
-            "start_time": data.get("start_time"),
-            "end_time": data.get("end_time"),
-            "members": normalized_members,
-            "priority": data.get("priority"),
-            "reason": data.get("reason"),
-            "original_text": data.get("original_text") or data.get("query") or data.get("text") or "",
-            "source_schedule_id": (
-                data.get("source_schedule_id")
-                or data.get("sourceScheduleId")
-                or data.get("schedule_id")
-                or data.get("id")
-            ),
-        }
+        return _unwrap_legacy_save_payload(value)
 
 #   - [추가] _save_input_from(value)
 #     테스트나 직접 호출 helper에서 dict, JSON 문자열, StructuredRequest를 SaveStructuredRequestInput 하나로 맞춥니다.
@@ -501,7 +508,7 @@ def save_structured_request(
         date=date,
         start_time=start_time,
         end_time=end_time,
-        members=members,
+        members=members if members is not None else [],
         priority=priority,
         reason=reason,
         original_text=original_text,
