@@ -190,7 +190,7 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
 def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
-    saved = AppSQLiteStore(CONFIG.app_db_path).list_schedules(kind="personal_schedule")
+    saved = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200)
     saved_ids = {row.get("schedule_id") for row in saved}
 
     scope = current_session_scope()
