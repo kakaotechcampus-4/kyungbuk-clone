@@ -408,7 +408,12 @@ def week05_prompt_parts() -> list[str]:
 
     return [
         *week04_prompt_parts(),
-        # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        """
+        외부 멤버의 과거 대화나 공유 일정이 필요하면 search_previous_conversations / load_conversation_messages /
+        extract_schedules_from_history를 사용하세요.
+        여러 사람의 시간을 맞춰야 할 때는 collect_member_schedules로 내 일정과 외부 멤버 일정을 함께 확인하세요.
+        공유 일정 저장소 자체를 조회/등록/삭제할 때는 list_shared_schedules / create_shared_schedule / delete_shared_schedule을 사용하세요.
+        """,
     ]
 
 
