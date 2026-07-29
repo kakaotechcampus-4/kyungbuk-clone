@@ -22,7 +22,6 @@ from fixed.mcp_client import (
     load_local_mcp_tools,
     load_local_mcp_tools_sync,
 )
-from fixed.runtime_clock import current_app_date_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 from student_parts.week01_wake_up_nana import PERSONAL_SCHEDULES, join_system_prompt
 from student_parts.week02_structure_natural_language_requests import StructuredRequest
@@ -453,8 +452,6 @@ def week05_tools() -> list[Any]:
         search_previous_conversations,
         load_conversation_messages,
         extract_schedules_from_history,
-        create_shared_schedule,
-        delete_shared_schedule,
         list_shared_schedules,
         collect_member_schedules,
     ]
@@ -471,7 +468,16 @@ def week05_prompt_parts() -> list[str]:
 
     return [
         *week04_prompt_parts(),
-        # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        (
+            "[Week 5 MCP 이전 대화·일정 조회]\n"
+            "외부 멤버의 이전 대화와 일정은 직접 DB를 읽지 말고 MCP wrapper tool로만 조회한다. "
+            "대화 근거가 필요하면 search_previous_conversations로 찾은 뒤 conversation_id로 "
+            "load_conversation_messages를 호출한다. 외부 멤버 일정 조회에는 구체적인 멤버 이름을 넣고, "
+            "이름이 없으면 빈 목록으로 조회하지 말고 사용자에게 확인한다. "
+            "공유 저장소의 등록 현황은 list_shared_schedules로 확인하며 필요하면 나를 포함한다. "
+            "내 일정과 외부 멤버 busy-time을 함께 볼 때는 collect_member_schedules를 사용하고, "
+            "이 도구에서 나의 일정은 앱 SQLite 결과만 근거로 한다."
+        ),
     ]
 
 
