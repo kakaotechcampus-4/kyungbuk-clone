@@ -294,8 +294,15 @@ def search_previous_conversations(
 ) -> str:
     """외부 SQLite 데이터베이스에 저장된 이전 대화를 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
-    # TODO: call_mcp_tool_sync("search_previous_conversations", args)를 호출하고 결과 문자열을 반환하세요.
-    ...
+    # tool 에서 받은 매개변수를 dict 형태로 변환해 args 에 저장
+    args = {
+        "query": query,
+        "member_names": member_names,
+        "limit": limit,
+    }
+    # 로컬 MCP 서버의 tool 호출
+    # MCP 서버에서 반환받는 형태도 JSON 형태여서 따로 변환할 필요 X
+    return call_mcp_tool_sync("search_previous_conversations",args)
 
 
 @tool(args_schema=LoadConversationMessagesInput)
