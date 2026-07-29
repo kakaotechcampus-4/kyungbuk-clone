@@ -490,12 +490,27 @@ def delete_shared_schedule(
     schedule_id: str | None = None,
     source_conversation_id: str | None = None,
 ) -> str:
-    """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
+    """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다.
 
-    return _call_mcp_or_soft_fail(
+    schedule_id를 모르면 먼저 list_shared_schedules로 대상 row를 조회해
+    schedule_id를 확인한 뒤 그 값으로 삭제합니다.
+    """
+
+    result_text = _call_mcp_or_soft_fail(
         "delete_shared_schedule",
         {"schedule_id": schedule_id, "source_conversation_id": source_conversation_id},
     )
+    # 서버는 일치 row가 없어도 ok=true, deleted_count=0으로 답한다(조용한 no-op).
+    # 앱 검증에서 '방금 거 삭제해줘'가 이전 턴의 schedule_id를 모른 채 빗나간 인자로
+    # 호출돼 0건 삭제로 끝나는 실패가 재현돼, 교정 방법을 결과에 실어 보낸다.
+    payload = json.loads(result_text)
+    if payload.get("ok") and payload.get("deleted_count") == 0:
+        payload["retry_hint"] = (
+            "일치하는 공유 일정이 없어 아무것도 삭제되지 않았습니다. "
+            "list_shared_schedules로 대상 row를 찾아 그 schedule_id로 다시 삭제하세요."
+        )
+        return json_payload(payload)
+    return result_text
 
 
 @tool(args_schema=ListSharedSchedulesInput)
