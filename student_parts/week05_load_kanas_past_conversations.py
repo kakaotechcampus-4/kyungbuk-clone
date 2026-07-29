@@ -374,8 +374,19 @@ def list_shared_schedules(
 ) -> str:
     """외부 MCP 공유 일정 저장소에 등록된 일정을 조회합니다. 필터가 없으면 기본 공유 일정을 반환합니다."""
 
-    # TODO: call_mcp_tool_sync("list_shared_schedules", args)로 공유 일정 저장소 rows를 조회하세요.
-    ...
+    # tool 에서 받은 인자들을 dict 형태로 변환 후 args 에 저장
+    args = {
+        "member_names": member_names,
+        "date_from": date_from,
+        "date_to": date_to,
+        "source_conversation_id": source_conversation_id,
+        "limit": limit,
+    }
+
+    # 공유 일정 저장소 rows 조회 결과를 JSON 형태로 그대로 반환
+    # 필터가 없을 시 기본 공유 일정은  
+    # fixed/external_people_store.py의 list_shared_schedules 가 로직 수행
+    return call_mcp_tool_sync("list_shared_schedules", args)
 
 
 @tool(args_schema=CollectMemberSchedulesInput)
