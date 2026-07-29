@@ -23,14 +23,54 @@ SQLITE_STORE = AppSQLiteStore(CONFIG.app_db_path)
 CONVERSATION_RAG_STORE = ConversationRAGStore(CONFIG.chroma_dir)
 _WEEK04_AGENT: Any | None = None
 
+# 검색 tool 세 개가 각자 어떤 출처를 보고 어떤 질문에 맞는지 정리한 표다.
+# 2차 리뷰 반영: 같은 라우팅 정보가 프롬프트/coverage/tool description 세 곳에 흩어져
+# 한 곳만 고치면 나머지가 조용히 어긋나는 문제가 있어, 이 표를 단일 출처로 두고
+# 라우팅 프롬프트와 tool의 LLM용 description을 여기서 만든다. 검색 방식별 query 작성법
+# 같은 tool 고유 지침과 행동 규칙(조언 질문 등)은 표에 안 어울려서 손으로 유지한다.
+WEEK04_SEARCH_SOURCES = {
+    "search_personal_references": {
+        "what": "개인 참고자료(취향·선호·원칙 메모)",
+        "when": "적어 둔 취향/선호/원칙을 묻거나 일정·시간 조언에 선호 근거가 필요할 때",
+    },
+    "search_saved_requests": {
+        "what": "SQLite에 저장된 일정/할 일/알림 기록",
+        "when": "저장된 일정/할 일/알림 기록을 키워드로 되짚어 찾을 때",
+    },
+    "search_conversation_messages": {
+        "what": "예전 채팅 대화 내용",
+        "when": "'전에 말했잖아', '내가 ~라고 했지'처럼 지난 채팅에서 오간 말을 찾을 때",
+    },
+}
+
+
+def _routing_rules() -> str:
+    """출처 표를 '언제 → 어느 tool' 라우팅 문장들로 바꿉니다."""
+
+    return " ".join(
+        f"{guide['when']}는 {name}({guide['what']})로 찾는다."
+        for name, guide in WEEK04_SEARCH_SOURCES.items()
+    )
+
+
+def _search_tool_description(tool_name: str, usage_hint: str) -> str:
+    """검색 tool의 LLM용 description을 출처 표에서 만듭니다.
+
+    출처가 무엇이고 언제 쓰는지는 표에서 오고, 검색 방식별 query 작성법 같은
+    tool 고유 지침만 usage_hint로 덧붙입니다.
+    """
+
+    guide = WEEK04_SEARCH_SOURCES[tool_name]
+    return f"검색 대상: {guide['what']}. {guide['when']} 사용합니다. {usage_hint}"
+
+
 # 저장된 기억이 출처별로 나뉘어 있고, 질문 성격에 따라 검색 tool을 골라야 함을 모델에게 알려준다.
+# 출처별 라우팅 문장은 위 표에서 생성하고, 행동 규칙만 손으로 쓴다.
 WEEK04_RAG_SOURCE_PROMPT = (
     "Week 4부터 Nana는 저장된 기억을 출처별로 검색한다. "
-    "취향/선호/메모 같은 자연어 참고자료 질문은 search_personal_references(ChromaDB 참고자료)로 찾는다. "
+    + _routing_rules() + " "
     "'언제 ~하는 게 좋을까', '~해도 괜찮을까'처럼 일정·회의·시간을 어떻게 할지 조언이나 추천을 요청받으면, "
     "일반 상식으로 바로 답하지 말고 먼저 search_personal_references로 저장된 선호를 확인해 그 결과를 우선 근거로 답한다. "
-    "저장된 일정/할 일/알림 기록에서 근거를 찾을 때는 search_saved_requests(SQLite 구조화 기록)로 찾는다. "
-    "일정으로 저장하지 않고 채팅으로만 말했던 내용은 search_conversation_messages(지난 대화 RAG)로 찾는다. "
     "사용자가 기억해 달라는 취향/메모는 add_personal_reference로 참고자료에 저장한다. "
     "단, 일정/할 일/알림 저장은 Week 3의 extract_schedule_request → save_structured_request 경로를 그대로 쓴다."
 )
@@ -49,24 +89,6 @@ WEEK04_RAG_ANSWER_PROMPT = (
     "지난 대화 검색 결과에서는 assistant 발화만으로 사실을 확정하지 말고 user 발화를 우선 근거로 삼는다. "
     "최종 답변에는 어떤 출처의 기록을 근거로 했는지 짧게 언급한다."
 )
-
-# 검색 tool 세 개가 각자 어떤 출처를 보고 어떤 질문에 맞는지 정리한 표다.
-# 0건/전부 무관 결과에 "남은 출처" 데이터(source_coverage)를 실을 때 쓴다.
-WEEK04_SEARCH_SOURCES = {
-    "search_personal_references": {
-        "what": "개인 참고자료(취향·선호·원칙 메모)",
-        "when": "적어 둔 취향/선호/원칙을 묻거나 일정·시간 조언에 선호 근거가 필요할 때",
-    },
-    "search_saved_requests": {
-        "what": "SQLite에 저장된 일정/할 일/알림 기록",
-        "when": "저장된 일정/할 일/알림 기록을 키워드로 되짚어 찾을 때",
-    },
-    "search_conversation_messages": {
-        "what": "예전 채팅 대화 내용",
-        "when": "'전에 말했잖아', '내가 ~라고 했지'처럼 지난 채팅에서 오간 말을 찾을 때",
-    },
-}
-
 
 # 처음에는 긴 산문 note 하나였는데, "어느 출처를 봤고 어느 출처가 남았는지"는 지시가 아니라
 # 데이터라서 멘토 리뷰 제안대로 구조 필드로 승격하고 지시는 next_step 한 문장만 남겼다.
@@ -130,6 +152,10 @@ REFERENCE_FAR_DISTANCE_FALLBACK = 1.45
 # "무관한 질문-메모"가 현재 임베딩 모델에서 어느 거리 스케일에 놓이는지 실행 시점에 잰다.
 # 임베딩 모델이 바뀌면 임계값도 같이 다시 계산되므로 고정 상수의 모델 종속 문제가 사라진다.
 # (검증: text-embedding-3-small에서 보정값 1.444 — 실측으로 정한 1.45와 사실상 일치)
+# store seed 참고자료를 관련 프로브로 쓰지 않는 이유(2차 리뷰 질문): 검색 대상 자체로 잰
+# 임계값이 그 대상의 판정에 다시 쓰이는 순환이 생기고, 참고자료가 추가/삭제될 때마다
+# 임계값이 store 내용에 끌려다닌다. "이 6쌍이 도메인을 대표한다"는 가정은 남지만,
+# 기준이 데이터와 독립적으로 고정된다는 성질이 더 중요하다고 판단했다.
 FAR_PROBE_PAIRS_RELEVANT = [
     ("점심시간에 약속 잡아도 될까?", "점심시간에는 약속을 잡지 않고 쉬는 것을 선호한다."),
     ("아침 운동은 언제 하는 게 좋아?", "아침 7시에 가볍게 운동하는 습관이 있다."),
@@ -515,15 +541,17 @@ def add_personal_reference(title: str, content: str, tags: list[str] | None = No
     return json_payload({"ok": True, "tool_name": "add_personal_reference", **payload})
 
 
-@tool(args_schema=SearchPersonalReferencesInput)
+@tool(
+    args_schema=SearchPersonalReferencesInput,
+    description=_search_tool_description(
+        "search_personal_references",
+        "일정·회의·시간을 어떻게 할지 조언·추천이 필요한 질문에도 일반 상식으로 답하기 전에 먼저 사용합니다. "
+        "벡터 검색이므로 query에는 사용자 질문을 그대로 넣거나 충분히 구체적인 문구를 넣고, "
+        "관련 선호가 여러 개일 수 있으면 top_k를 3 이상으로 요청합니다.",
+    ),
+)
 def search_personal_references(query: str, top_k: int = 2) -> str:
-    """개인 참고자료(취향·선호·원칙 메모)를 ChromaDB 벡터 검색으로 찾습니다.
-
-    적어 둔 선호를 묻는 질문뿐 아니라, 일정·회의·시간을 어떻게 할지 조언·추천이
-    필요한 질문에도 일반 상식으로 답하기 전에 먼저 사용합니다.
-    벡터 검색이므로 query에는 사용자 질문을 그대로 넣거나 충분히 구체적인 문구를 넣고,
-    관련 선호가 여러 개일 수 있으면 top_k를 3 이상으로 요청합니다.
-    """
+    """개인 참고자료를 ChromaDB 벡터 검색으로 찾습니다. (LLM용 description은 출처 표에서 생성)"""
 
     top_k = safe_limit(top_k, default=2, maximum=20)
     hits = search_personal_reference_hits(REFERENCE_STORE, query=query, top_k=top_k)
@@ -534,14 +562,16 @@ def search_personal_references(query: str, top_k: int = 2) -> str:
     return json_payload(result)
 
 
-@tool(args_schema=SearchSavedRequestsInput)
+@tool(
+    args_schema=SearchSavedRequestsInput,
+    description=_search_tool_description(
+        "search_saved_requests",
+        "일정으로 저장하지 않고 채팅으로만 말한 내용은 search_conversation_messages가 담당합니다. "
+        "LIKE 검색이므로 query에는 문장이 아니라 제목/원문에 있을 법한 핵심 키워드를 넣습니다.",
+    ),
+)
 def search_saved_requests(query: str, top_k: int = 3) -> str:
-    """SQLite에 저장된 구조화 일정/할 일/알림 기록을 키워드로 검색합니다.
-
-    "저장한 일정/할 일 중에 ~ 있었나"처럼 저장된 기록을 되짚어 찾을 때 사용합니다.
-    일정으로 저장하지 않고 채팅으로만 말한 내용은 search_conversation_messages가 담당합니다.
-    LIKE 검색이므로 query에는 문장이 아니라 제목/원문에 있을 법한 핵심 키워드를 넣습니다.
-    """
+    """SQLite 구조화 기록을 키워드로 검색합니다. (LLM용 description은 출처 표에서 생성)"""
 
     top_k = safe_limit(top_k, default=3, maximum=50)
     rows = search_saved_request_rows(SQLITE_STORE, query=query, top_k=top_k)
@@ -552,18 +582,20 @@ def search_saved_requests(query: str, top_k: int = 3) -> str:
     return json_payload(result)
 
 
-@tool(args_schema=SearchConversationMessagesInput)
+@tool(
+    args_schema=SearchConversationMessagesInput,
+    description=_search_tool_description(
+        "search_conversation_messages",
+        "일정·참고자료로 저장하지 않은 일상 대화 내용은 이 tool로만 찾을 수 있습니다. "
+        "벡터 검색이므로 query에는 사용자 질문을 그대로 넣거나 충분히 구체적인 문구를 넣습니다.",
+    ),
+)
 def search_conversation_messages(
     query: str,
     top_k: int = 5,
     conversation_id: str | None = None,
 ) -> str:
-    """예전 채팅 대화 내용을 대화 단위 ChromaDB RAG로 검색합니다.
-
-    "전에 말했잖아", "내가 ~라고 했지"처럼 지난 대화에서 오간 말을 찾는 질문에 사용합니다.
-    일정·참고자료로 저장하지 않은 일상 대화 내용은 이 tool로만 찾을 수 있습니다.
-    벡터 검색이므로 query에는 사용자 질문을 그대로 넣거나 충분히 구체적인 문구를 넣습니다.
-    """
+    """예전 채팅 대화를 대화 단위 ChromaDB RAG로 검색합니다. (LLM용 description은 출처 표에서 생성)"""
 
     top_k = safe_limit(top_k, default=5, maximum=50)
     result = search_conversation_messages_dict(
