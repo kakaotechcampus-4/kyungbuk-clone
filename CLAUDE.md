@@ -8,11 +8,14 @@
 
 ## 구현 범위
 
-- **구현 대상 (활성 주차)**: `student_parts/week04_retrieve_nanas_memory.py` 안의 `# TODO` 함수들
+- **구현 대상 (활성 주차)**: `student_parts/week05_load_kanas_past_conversations.py` 안의 `# TODO` 함수들
 - **읽기 전용**: `fixed/` 디렉터리(구조 이해용 참고 코드 — 특히 SQLite 접근은 `fixed/app_store.py`의
   `AppSQLiteStore` 메서드로만 하고, 개인 참고자료 벡터 검색은 `fixed/reference_store.py`의
   `PersonalReferenceStore` 메서드로만 하고, 대화 RAG는 `fixed/conversation_rag_store.py`의
-  `ConversationRAGStore` 메서드로만 합니다 — 직접 SQL이나 ChromaDB 호출을 새로 작성하지 않습니다),
+  `ConversationRAGStore` 메서드로만 하고, 외부 멤버 대화/공유 일정은 `fixed/mcp_client.py`의
+  `call_local_mcp_tool_sync`(이 파일 별칭 `call_mcp_tool_sync`)와 `fixed/external_mcp.py`의
+  `call_external_tool_payload`로만 합니다 — 직접 SQL이나 ChromaDB 호출, MCP 서버
+  (`mcp_server/sqlite_mcp_server.py`) 수정을 새로 하지 않습니다),
   `student_parts_baseline/`(이전 주차 정답 코드 — 참고용이며 그대로 복사해 붙이지 않습니다)
 - **수정 금지**: `app.py`, `run.sh`, `pyproject.toml`, `uv.lock`
 
@@ -23,85 +26,103 @@
   `StructuredRequest` 구조화 — 완료
 - **Week 3** (`student_parts/week03_build_nanas_logbook.py`): `StructuredRequest`를 SQLite에
   저장/조회/수정/삭제 — 완료
+- **Week 4** (`student_parts/week04_retrieve_nanas_memory.py`): 개인 참고자료/SQLite 기록/대화
+  RAG 검색 tool 분리 — 완료
 
-## Week 4 도움 방식 (힌트 우선, 단계별, 메인과제 → 추가과제 순)
+## Week 5 도움 방식 (힌트 우선, 단계별, 메인과제 → 추가과제 순)
 
-`week04_retrieve_nanas_memory.py` 안에 이미 `[4주차 수강생 구현 가이드]` 주석(목표·과제 구성·
-메인/추가 티어·함수별 설명)이 있습니다. 정답을 알려주지 말고, 아래 순서대로 하나씩 힌트를 먼저
-주고 학생이 시도한 뒤 피드백합니다. 메인과제 3개를 먼저 끝낸 뒤에만 추가과제로 넘어갑니다.
+`week05_load_kanas_past_conversations.py` 안에 이미 `[5주차 수강생 구현 가이드]` 주석(목표·과제
+구성·메인/추가 티어·함수별 설명)이 있습니다. 정답을 알려주지 말고, 아래 순서대로 하나씩 힌트를
+먼저 주고 학생이 시도한 뒤 피드백합니다. 메인과제 5개를 먼저 끝낸 뒤에만 추가과제로 넘어갑니다.
 
-### 메인과제
+### 메인과제 (권장 순서)
 
-**add_personal_reference_dict / add_personal_reference — 2단계**
-1. `PersonalReferenceStore.add_personal_reference(title, content, tags)`에 그대로 위임하는
-   흐름을 안내하고, `tags`가 `None`이면 빈 list로 바꿔 넘겨야 하는 이유를 설명합니다.
-2. 저장 결과 dict를 tool에서 `reference_backend`(store의 `backend_info()`)와 `reference` 키가
-   있는 JSON payload로 감싸 반환하도록 안내합니다.
+**1. `_personal_schedules_for_current_scope()`** — 이후 모든 tool이 의존하는 기반 helper
+- `AppSQLiteStore(CONFIG.app_db_path).list_schedules(...)`(세션 필터 없이 전체 저장 일정)와
+  Week 1 `PERSONAL_SCHEDULES`(현재 대화의 임시 일정)를 합쳐야 하는 이유를 설명합니다.
+- `PERSONAL_SCHEDULES`는 `_schedule_scope(schedule)`로 현재 세션 범위만 남기고, SQLite에
+  이미 저장된 것과 `schedule_id`/`id` 기준으로 중복 제거해야 하는 이유를 설명합니다.
 
-**search_personal_reference_hits / search_personal_references — 2단계**
-1. `PersonalReferenceStore.search_personal_references(query, limit=top_k)` 호출 결과를
-   그대로 순회하며 `id`/`content`/`distance`/`metadata`(title/tags) 구조로 정리하는 이유를
-   설명합니다. store가 이미 이 필드들을 반환하므로 다시 계산하지 않습니다.
-2. tool은 이 list를 top-level `{"hits": [...]}` 키로 감싸 반환해야 LLM이 근거 문서를 바로
-   읽을 수 있다는 계약을 설명합니다.
+**2. `search_previous_conversations` — 가장 단순, 첫 시도로 적합**
+- `call_mcp_tool_sync("search_previous_conversations", {"query": ..., "member_names": ...,
+  "limit": ...})`를 호출하고 결과 문자열을 그대로 반환하도록 안내합니다.
+- 멤버 이름 정규화는 외부 SQLite store/MCP 경계에서 한 번만 일어나므로 wrapper에서 다시
+  변환하지 않는 이유를 설명합니다.
 
-**search_saved_request_rows / search_saved_requests — 2단계**
-1. `AppSQLiteStore.search_saved_requests(query, limit=top_k)`를 그대로 호출하는 흐름을
-   안내하고, `top_k`는 `safe_limit(...)`으로 tool 안에서 먼저 보정해야 하는 이유를 설명합니다.
-2. 결과가 없으면 예외 없이 `rows=[]`를 그대로 반환해야 하는 이유와, top-level `{"rows": [...]}`
-   키 계약을 설명합니다.
+**3. `load_conversation_messages`**
+- `call_external_tool_payload("load_conversation_messages", {"conversation_id": ...})` 결과
+  dict를 `json_payload(...)`로 감싸 반환하도록 안내합니다.
+- sender/content/created_at 순서를 가공하지 않고 그대로 보존해야 하는 이유를 설명합니다.
+
+**4. `list_shared_schedules`**
+- `call_mcp_tool_sync("list_shared_schedules", args)` 호출과 결과 rows 전달 흐름을 안내합니다.
+- 필터 없이 호출하면 외부 실습용 기본 공유 일정이 우선 반환된다는 점, 그리고 이 tool이
+  Week 6 Kana 하위 agent에서도 그대로 재사용된다는 점을 설명합니다.
+
+**5. `extract_schedules_from_history` + `_collect_member_schedules` + `collect_member_schedules`
+— 가장 복잡, 마지막**
+1. `extract_schedules_from_history`가 `call_mcp_tool_sync("extract_schedules_from_history",
+   args)`를 호출해 외부 멤버 busy-time rows를 그대로 반환하도록 안내합니다.
+2. `_collect_member_schedules`가 `_personal_schedules_for_current_scope()`의 내 일정을
+   `_structured_request_from_schedule_row(row)`로 규격화한 뒤, 외부 멤버 rows와 같은
+   `member_name`/`title`/`date`/`start_time`/`end_time`/`notes` 구조로 합쳐야 하는 이유를
+   설명합니다. 멤버 이름/날짜 범위는 `normalize_external_member_names()` /
+   `normalize_external_schedule_date_bounds()`로 정규화합니다.
+3. `collect_member_schedules` tool은 이 rows에 `external_schedule_summary(rows)` 요약
+   문자열도 함께 반환해야 LLM이 바쁜 시간을 자연어로 설명할 수 있다는 계약을 설명합니다.
+   이 rows가 Week 6 공통 가능 시간 tool의 `busy_rows` 근거가 된다는 점도 짚어줍니다.
 
 ### 추가과제 (메인과제 완료 후)
 
-- **search_conversation_messages_dict / search_conversation_message_rows /
-  search_conversation_messages**: `ConversationRAGStore.sync_from_sqlite(sqlite_store)`로
-  먼저 lazy sync한 뒤 `search(...)`하는 순서를 설명하고, `conversation_id`를 명시하지 않으면
-  현재 대화를 검색 결과에서 제외해야 "방금 한 말"이 과거 발화처럼 섞이지 않는다는 이유를
-  설명합니다. 반환 JSON은 `hits`/`rows`에 같은 결과를 넣고 `context`/`rag_backend`/`sync`도
-  함께 둬야 하는 이유를 설명합니다.
-- **search_nana_memory (호환 통합 검색)**: 개인 참고자료 hit와 SQLite 일정 chunk를 하나의
-  `context` 문자열로 합쳐야 하는 이유, 그리고 `reference_backend`를 함께 노출해 어떤 backend가
-  응답 근거인지 구분해야 하는 이유를 설명합니다. 가장 마지막에, 필요할 때만 다룹니다.
+- **`create_shared_schedule` / `delete_shared_schedule`**: 각각
+  `call_mcp_tool_sync("create_shared_schedule" / "delete_shared_schedule", args)`를 호출해
+  결과 payload를 그대로 전달하는 흐름을 안내합니다. `schedule_id` 또는
+  `source_conversation_id`를 보존해야 나중에 수정/삭제 동기화가 가능하다는 이유를 설명합니다.
+  구현하지 않기로 하면 `week05_tools()` 목록에서 이 두 tool을 빼면 된다는 점도 알려줍니다.
 
-## Week 4 핵심 제약 (구현 시 반드시 지킬 것)
+## Week 5 핵심 제약 (구현 시 반드시 지킬 것)
 
-- 개인 참고자료 벡터 검색은 반드시 `fixed/reference_store.py`의 `PersonalReferenceStore`
-  메서드를 통해서만 합니다. ChromaDB collection을 직접 호출하지 않습니다.
-- SQLite 접근은 반드시 `fixed/app_store.py`의 `AppSQLiteStore` 메서드를 통해서만 합니다.
-- 대화 RAG는 반드시 `fixed/conversation_rag_store.py`의 `ConversationRAGStore` 메서드
-  (`sync_from_sqlite` / `search`)를 통해서만 합니다.
+- 외부 멤버 대화/공유 일정 접근은 반드시 `call_mcp_tool_sync`(= `fixed/mcp_client.py`의
+  `call_local_mcp_tool_sync`) 또는 `call_external_tool_payload`(`fixed/external_mcp.py`)를
+  통해서만 합니다. `mcp_server/sqlite_mcp_server.py`를 직접 수정하거나 그 안의 SQL을
+  이 파일에 새로 작성하지 않습니다.
+- 내 일정 SQLite 접근은 반드시 `fixed/app_store.py`의 `AppSQLiteStore` 메서드를 통해서만
+  합니다.
+- 멤버 이름/날짜 범위 정규화는 `fixed/external_people_store.py`의
+  `normalize_external_member_names()` / `normalize_external_schedule_date_bounds()`를
+  사용하고, wrapper에서 중복으로 다시 정규화하지 않습니다.
 - 모든 tool은 `json_payload(...)`로 감싼 JSON **문자열**을 반환합니다.
 - `@tool(args_schema=...)`가 이미 입력을 검증하므로 tool 본문에서 Pydantic 모델을 다시 만들지
   않습니다.
-- `top_k`/`limit`은 이 파일의 `safe_limit(...)`으로 tool 안에서 보정합니다.
-- `search_personal_references`는 `{"hits": [...]}`, `search_saved_requests`는
-  `{"rows": [...]}`를 top-level 키로 반환하는 계약을 지킵니다.
-- `search_conversation_messages`는 `conversation_id` 미지정 시 현재 대화를 검색에서 제외합니다.
+- `_personal_schedules_for_current_scope()`는 SQLite 저장 일정과 현재 대화 범위의 임시
+  일정만 합치고, 이미 SQLite에 저장된 일정과 중복하지 않습니다.
+- `collect_member_schedules`/`extract_schedules_from_history` 결과 rows는
+  `member_name`/`title`/`date`/`start_time`/`end_time`/`notes` 필드 구조를 유지합니다.
 
 ## 검증 방법
 
 앱을 실행하고 상세 Trace 탭에서 확인합니다.
 
 ```bash
-./run.sh --week4
+./run.sh --week5
 ```
 
 자동화 테스트 없음 — Trace JSON이 기대한 키와 값을 가지는지 눈으로 확인합니다.
 
 메인과제 확인 순서:
-1. 참고자료를 하나 추가("오전 회의는 피하고 싶다고 기억해줘" 등)한 뒤 관련 질문을 입력 →
-   trace에서 `add_personal_reference` 다음 `search_personal_references` 호출과 top-level
-   `hits` 키를 확인합니다.
-2. 저장된 일정/할 일 관련 질문을 입력 → `search_saved_requests`가 호출되고 top-level `rows`
-   키가 있는지 확인합니다.
+1. 외부 팀원 일정 조회 요청을 입력 → trace에서 `search_previous_conversations` →
+   `load_conversation_messages` → `extract_schedules_from_history` 중 어떤 tool이 어떤
+   순서로 호출됐는지 확인합니다.
+2. `collect_member_schedules` 결과 rows에 "나"와 외부 멤버 일정이 같은 구조로 들어 있는지,
+   `list_shared_schedules` 결과에 `rows`와 `schedule_summary`가 유지되는지 확인합니다.
 
-추가과제 확인 순서: 일반 채팅에서 나눴던 이야기를 묻는 질문을 입력 →
-`search_conversation_messages`가 호출되고, 방금 대화(현재 conversation_id)는 결과에서
-제외되는지 확인합니다.
+추가과제 확인 순서: `create_shared_schedule`로 등록한 row가 `list_shared_schedules` 조회에
+나타나고, `delete_shared_schedule`로 삭제되는지 확인합니다.
 
 ## 주차 경계
 
-Week 4는 데이터 출처별 RAG 검색 tool 분리(개인 참고자료 / SQLite 저장 기록 / 대화 발화)까지만
-다룹니다. Week 5 이후 개념(외부 캘린더 조율 로직 직접 구현, 새 MCP 도구 신설 등)을 Week 4 코드에
-미리 추가하지 않습니다. 외부 공유 저장소 동기화는 이미 `fixed/` 내부에서 처리되므로, 학생이
-별도로 MCP 동기화 코드를 작성할 필요는 없습니다.
+Week 5는 외부 SQLite/MCP 서버의 이전 대화·공유 일정을 wrapper tool로 감싸고, 내 일정과 외부
+멤버 busy-time을 `collect_member_schedules`로 모으는 것까지만 다룹니다. Week 6 이후 개념(여러
+사람의 공통 가능 시간 계산·최종 확정 로직, Kana 하위 agent 오케스트레이션 등)을 Week 5 코드에
+미리 추가하지 않습니다. `mcp_server/sqlite_mcp_server.py`의 `@mcp.tool` 구현은 학생 구현
+대상이 아니므로 직접 수정하지 않습니다.
