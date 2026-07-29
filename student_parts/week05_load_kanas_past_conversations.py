@@ -324,8 +324,16 @@ def load_conversation_messages(conversation_id: str) -> str:
 def extract_schedules_from_history(member_names: list[str], date_from: str, date_to: str) -> str:
     """외부 SQLite 이전 대화에서 멤버별 일정을 추출합니다."""
 
-    # TODO: call_mcp_tool_sync("extract_schedules_from_history", args)를 호출해 외부 멤버 busy-time rows를 반환하세요.
-    ...
+    # MCP tool 에 넘길 인자를 dict 형태로 변환 후 args 에 저장
+    args = {
+        "member_names": member_names,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
+
+    # MCP tool 호출 결과(JSON 문자열)을 그대로 반환
+    # 반환하는 rows 필드는 = (member_name,title,date,start_time,end_time,notes) 멤버별 일정이 존재
+    return call_mcp_tool_sync("extract_schedules_from_history", args)
 
 
 @tool(args_schema=CreateSharedScheduleInput)
