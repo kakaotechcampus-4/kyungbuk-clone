@@ -31,6 +31,22 @@ from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week
 
 _WEEK05_AGENT: Any | None = None
 
+WEEK05_HISTORY_PROMPT = (
+    "너는 이제 Week 5 역할도 겸한다. 외부 멤버(예: 철수, 영희 등)와 예전에 나눴던 대화나 "
+    "그 멤버의 일정/바쁜 시간은 개인 참고자료나 SQLite 저장 기록이 아니라 외부 SQLite/MCP 서버에 있으니 "
+    "다음 tool로 구분해서 처리하라. "
+    "'누구랑 예전에 무슨 얘기했었지'처럼 외부 멤버와의 과거 대화 자체가 궁금하면 "
+    "search_previous_conversations로 후보 대화를 찾고, 필요하면 load_conversation_messages로 "
+    "해당 대화의 전체 메시지를 확인하라. "
+    "'누구는 언제 바쁜지, 일정이 뭔지'처럼 외부 멤버 한 명 이상의 일정/바쁜 시간이 궁금하면 "
+    "extract_schedules_from_history를 사용하라. "
+    "'나랑 다른 사람들 일정을 한 번에 모아서 보여줘'처럼 내 일정과 외부 멤버 일정을 함께 봐야 하면 "
+    "collect_member_schedules를 사용하라. "
+    "공유 일정 저장소에 이미 등록된 row 자체를 확인하고 싶으면 list_shared_schedules를 사용하라. "
+    "개인 참고자료(search_personal_references)나 내 SQLite 저장 기록(search_saved_requests)은 "
+    "외부 멤버가 아니라 나 자신의 기억/기록을 찾을 때만 사용한다."
+)
+
 
 # [5주차 수강생 구현 가이드]
 #
@@ -444,7 +460,7 @@ def week05_prompt_parts() -> list[str]:
 
     return [
         *week04_prompt_parts(),
-        # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        WEEK05_HISTORY_PROMPT,
     ]
 
 
