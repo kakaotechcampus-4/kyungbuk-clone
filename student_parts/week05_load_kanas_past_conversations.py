@@ -11,6 +11,7 @@ from fixed.app_store import AppSQLiteStore
 from fixed.config import CONFIG
 from fixed.external_mcp import call_external_tool_payload
 from fixed.external_people_store import (
+    PERSONAL_SHARED_MEMBER_NAME,
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
@@ -189,8 +190,16 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
 def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
-    # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
-    ...
+    saved = AppSQLiteStore(CONFIG.app_db_path).list_schedules(kind="personal_schedule")
+    saved_ids = {row.get("schedule_id") for row in saved}
+
+    scope = current_session_scope()
+    temp_only = []
+    for schedule in PERSONAL_SCHEDULES:
+        if _schedule_scope(schedule) == scope and schedule.get("id") not in saved_ids:
+            temp_only.append(schedule)
+
+    return saved + temp_only
 
 
 def json_payload(payload: dict[str, Any]) -> str:
@@ -282,8 +291,46 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
-    # TODO: 내 SQLite/임시 일정과 외부 MCP 일정 rows를 같은 구조로 합치세요.
-    ...
+    normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(member_names, date_from, date_to) # 날짜 정규화
+
+    rows: list[dict[str, Any]] = []  
+    for schedule in personal_schedules:  
+        request = _structured_request_from_schedule_row(schedule) 
+        date = request.date  
+        if normalized_date_from and (date is None or date < normalized_date_from):
+            continue  
+        if normalized_date_to and (date is None or date > normalized_date_to):
+            continue  
+        rows.append(
+            {
+                "member_name": PERSONAL_SHARED_MEMBER_NAME,  
+                "title": request.title,
+                "date": date,
+                "start_time": request.start_time,
+                "end_time": request.end_time,
+                "notes": None, 
+            }
+        )
+
+    external_payload = json.loads(
+        call_mcp_tool_sync(
+            "extract_schedules_from_history",  
+            {"member_names": member_names, "date_from": date_from, "date_to": date_to},
+        )
+    )  
+    for row in external_payload.get("rows", []):  # MCP 서버가 이미 정규화해서 돌려줌
+        rows.append(
+            {
+                "member_name": row.get("member_name"),
+                "title": row.get("title"),
+                "date": row.get("date"),
+                "start_time": row.get("start_time"),
+                "end_time": row.get("end_time"),
+                "notes": row.get("notes"),  
+            }
+        )
+
+    return {"rows": rows, "schedule_summary": external_schedule_summary(rows)}
 
 
 @tool(args_schema=SearchPreviousConversationsInput)
