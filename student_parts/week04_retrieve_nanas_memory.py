@@ -143,18 +143,18 @@ FAR_PROBE_PAIRS_IRRELEVANT = [
 _FAR_DISTANCE_CACHE: float | None = None
 
 
-def reference_far_distance() -> float:
+def reference_far_distance() -> tuple[float, bool]:
     """참고자료 hit를 "전부 무관"으로 볼 far 기준을 프로브 보정으로 계산합니다.
 
     관련 프로브 쌍의 최대 거리와 무관 프로브 쌍의 최소 거리의 중간값을 기준으로 잡고,
-    프로세스당 한 번만 계산해 캐시합니다. 임베딩 API를 쓸 수 없으면 실측 fallback을 씁니다.
+    성공한 보정값만 프로세스당 한 번 캐시합니다. 반환은 (기준값, 보정 성공 여부)입니다.
     Chroma 기본 l2(제곱 유클리드) + 단위 벡터 임베딩이라 distance = 2 - 2*cos유사도이며,
     프로브 거리도 같은 방식으로 계산해 스케일을 맞춥니다.
     """
 
     global _FAR_DISTANCE_CACHE
     if _FAR_DISTANCE_CACHE is not None:
-        return _FAR_DISTANCE_CACHE
+        return _FAR_DISTANCE_CACHE, True
     try:
         embed = OpenAIEmbeddingFunction(
             api_key=CONFIG.proxy_token,
@@ -171,10 +171,12 @@ def reference_far_distance() -> float:
         relevant = distances[: len(FAR_PROBE_PAIRS_RELEVANT)]
         irrelevant = distances[len(FAR_PROBE_PAIRS_RELEVANT):]
         _FAR_DISTANCE_CACHE = (max(relevant) + min(irrelevant)) / 2
+        return _FAR_DISTANCE_CACHE, True
     except Exception:
-        # 보정 실패는 검색 자체를 막을 일이 아니다. 실측 fallback으로 동작을 유지한다.
-        _FAR_DISTANCE_CACHE = REFERENCE_FAR_DISTANCE_FALLBACK
-    return _FAR_DISTANCE_CACHE
+        # 보정 실패는 검색 자체를 막을 일이 아니므로 실측 fallback으로 이번 판정만 동작한다.
+        # 실패를 캐시하면 첫 호출의 일시적 네트워크 오류가 프로세스 끝까지 fallback을
+        # 고정시키므로(2차 리뷰 지적) 캐시하지 않고 다음 호출에서 다시 보정을 시도한다.
+        return REFERENCE_FAR_DISTANCE_FALLBACK, False
 
 
 def reference_hits_fields(hits: list[dict[str, Any]]) -> dict[str, Any]:
@@ -188,16 +190,17 @@ def reference_hits_fields(hits: list[dict[str, Any]]) -> dict[str, Any]:
     if not hits:
         return empty_result_fields("search_personal_references")
     distances = [hit["distance"] for hit in hits if isinstance(hit.get("distance"), (int, float))]
-    far_threshold = reference_far_distance()
+    far_threshold, calibrated = reference_far_distance()
     if distances and min(distances) > far_threshold:
-        return {
-            "source_coverage": source_coverage(
-                "search_personal_references",
-                status="all_hits_far",
-                min_distance=min(distances),
-                far_threshold=far_threshold,
-            )
-        }
+        coverage = source_coverage(
+            "search_personal_references",
+            status="all_hits_far",
+            min_distance=min(distances),
+            far_threshold=far_threshold,
+        )
+        # 판정에 쓴 기준이 프로브 보정값인지 fallback 상수인지 사후에 되짚을 수 있게 남긴다.
+        coverage["searched"]["calibrated"] = calibrated
+        return {"source_coverage": coverage}
     return {}
 
 
