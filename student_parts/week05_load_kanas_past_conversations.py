@@ -521,9 +521,13 @@ def list_shared_schedules(
     source_conversation_id: str | None = None,
     limit: int = 50,
 ) -> str:
-    """외부 MCP 공유 일정 저장소에 등록된 일정을 조회합니다. 필터가 없으면 기본 공유 일정을 반환합니다."""
+    """외부 MCP 공유 일정 저장소에 등록된 일정을 조회합니다.
 
-    return _call_mcp_or_soft_fail(
+    필터가 없으면 서버가 실습용 기본 공유 일정을 우선 반환하므로, 앱에서
+    등록·동기화한 일정을 확인할 때는 member_names나 날짜 필터를 지정합니다.
+    """
+
+    result_text = _call_mcp_or_soft_fail(
         "list_shared_schedules",
         {
             "member_names": member_names,
@@ -533,6 +537,19 @@ def list_shared_schedules(
             "limit": limit,
         },
     )
+    # 앱 검증에서 재현된 실패: 필터 없는 조회에는 서버가 기본(seed) 공유 일정을 우선
+    # 반환해, 방금 등록한 일정이 안 보이자 agent가 '등록되어 있지 않다'고 단정했다.
+    # 조회 범위의 한계를 결과에 실어 필터 재조회로 이어지게 한다.
+    if not any((member_names, date_from, date_to, source_conversation_id)):
+        payload = json.loads(result_text)
+        if payload.get("ok"):
+            payload["scope_note"] = (
+                "필터 없는 조회는 실습용 기본 공유 일정 위주로 반환됩니다. 특정 일정(앱에서 "
+                "등록·동기화한 것 포함)이 안 보이면 없다고 단정하지 말고 member_names나 "
+                "날짜 필터를 지정해 다시 조회하세요."
+            )
+            return json_payload(payload)
+    return result_text
 
 
 @tool(args_schema=CollectMemberSchedulesInput)
