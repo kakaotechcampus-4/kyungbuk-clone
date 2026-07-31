@@ -471,6 +471,17 @@ def week05_prompt_parts() -> list[str]:
     return [
         *week04_prompt_parts(),
         # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
+        "이번 주차부터는 나 자신이 아니라 다른 멤버들의 과거 대화와 일정도 조회할 수 있다. "
+        "Week 4의 search_personal_references/search_saved_requests/search_conversation_messages는 "
+        "항상 '나'의 데이터만 다루고, 이번 주차에 추가된 tool들은 외부 MCP 서버에 있는 '다른 사람'의 데이터를 다룬다. "
+        "특정 멤버와 나눈 대화 자체를 찾고 싶으면 search_previous_conversations로 먼저 검색하고, "
+        "그 결과의 conversation_id로 load_conversation_messages를 불러 대화 전체를 확인한다. "
+        "특정 멤버(들)의 일정이나 바쁜 시간만 필요하면 extract_schedules_from_history를 쓰고, "
+        "공유 일정 저장소에 등록된 row 자체를 확인하고 싶으면 list_shared_schedules를 쓴다. "
+        "여러 사람의 일정을 한 번에 비교해 그룹 미팅 시간을 조율해야 하면 "
+        "extract_schedules_from_history 대신 collect_member_schedules를 사용한다 — "
+        "이 tool은 '나'의 일정과 다른 멤버들의 일정을 같은 구조로 함께 모아 주므로, 나를 포함한 공통 시간을 찾을 때만 이 tool을 쓴다. "
+        "필요하면 여러 tool을 순서대로 함께 호출해 근거를 모은 뒤 답한다.",
     ]
 
 
