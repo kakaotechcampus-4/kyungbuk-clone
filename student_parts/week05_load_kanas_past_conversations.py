@@ -32,6 +32,9 @@ from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week
 
 SQLITE_STORE = AppSQLiteStore(CONFIG.app_db_path)
 PERSONAL_SCHEDULE_LOOKUP_LIMIT = 200
+# 앱 내부 일정이 공유 저장소로 자동 동기화될 때 source_conversation_id에 붙는 접두사입니다.
+# (fixed/external_mcp.py의 sync_personal_schedule_to_shared / sync_group_schedule_to_shared)
+APP_SYNCED_SOURCE_PREFIXES = ("app:", "group:")
 _WEEK05_AGENT: Any | None = None
 
 
@@ -323,6 +326,12 @@ def _normalize_row_times(row: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _is_app_synced_row(row: dict[str, Any]) -> bool:
+    """공유 저장소 row가 앱 내부 일정의 자동 동기화 복사본인지 판단합니다."""
+
+    return str(row.get("source_conversation_id") or "").startswith(APP_SYNCED_SOURCE_PREFIXES)
+
+
 def _personal_schedule_row(schedule: dict[str, Any]) -> dict[str, Any]:
     """내 일정 row를 외부 멤버 busy-time row와 같은 구조로 맞춥니다."""
 
@@ -369,22 +378,25 @@ def _collect_member_schedules(
             continue
         rows.append(_personal_schedule_row(schedule))
 
-    # "나" 일정은 앱 DB에서 이미 읽었으므로 외부 조회에서는 빼고 다른 멤버만 MCP로 묻습니다.
-    external_member_names = [
-        name for name in normalized_member_names if name != PERSONAL_SHARED_MEMBER_NAME
-    ]
-    if external_member_names:
+    # 공유 저장소에는 앱 개인/그룹 일정이 자동 동기화된 복사본도 들어 있어서, 그대로 합치면
+    # 위에서 앱 DB로 읽은 내 일정이 두 번 잡힙니다. 멤버 이름("나")으로 거르면 LLM이 자신을
+    # 다른 표현으로 채웠을 때 새므로, 이름이 아니라 동기화 출처(app:/group:)로 걸러냅니다.
+    if normalized_member_names:
         external_payload = json.loads(
             call_mcp_tool_sync(
                 "extract_schedules_from_history",
                 {
-                    "member_names": external_member_names,
+                    "member_names": normalized_member_names,
                     "date_from": normalized_date_from,
                     "date_to": normalized_date_to,
                 },
             )
         )
-        rows.extend(external_payload.get("rows", []))
+        rows.extend(
+            _normalize_row_times(row)
+            for row in external_payload.get("rows", [])
+            if not _is_app_synced_row(row)
+        )
 
     # 어떤 인자로 물었는지는 fixed/langchain_trace.py가 tool_call arguments로 이미 남기므로
     # payload에서 되돌려주지 않습니다.
