@@ -15,6 +15,7 @@ from fixed.external_people_store import (
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
 )
+from fixed.schedule_decision import date_range
 from fixed.llm import chat_model
 from fixed.mcp_client import (
     call_local_mcp_tool,
@@ -199,7 +200,9 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
     ret: list[dict[str, Any]] = []
 
-    sqlite_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules()
+    sqlite_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(
+        kind='personal_schedule'
+    )
     current_session = current_session_scope()
     personal_schedules = [schedule for schedule in PERSONAL_SCHEDULES if _schedule_scope(schedule) == current_session]
 
@@ -303,20 +306,20 @@ class SturcturedSchedule(BaseModel):
     def normalize(cls, row: dict[str, Any]): 
             if 'source_conversation_id' in row: # member_name, title, date, start_time, end_time, notes, source_conversation_id
                 return cls(
-                    member_name=row.get("member_name", ""),
-                    title=row.get("title", ""),
-                    date=row.get("date", ""),
-                    start_time=row.get("start_time", ""),
-                    end_time=row.get("end_time", ""),
-                    notes=row.get("notes", "")
+                    member_name=row.get("member_name") or "",
+                    title=row.get("title") or "",
+                    date=row.get("date") or "",
+                    start_time=row.get("start_time") or "",
+                    end_time=row.get("end_time") or "",
+                    notes=row.get("notes") or ""
                 )
             elif 'id' in row or 'request_id' in row:
                 return cls(
-                    member_name=row.get("attendees", ""),
-                    title=row.get("title", ""),
-                    date=row.get("date", ""),
-                    start_time=row.get("start_time", ""),
-                    end_time=row.get("end_time", ""),
+                    member_name=", ".join(row.get("attendees", [])),
+                    title=row.get("title") or "",
+                    date=row.get("date") or "",
+                    start_time=row.get("start_time") or "",
+                    end_time=row.get("end_time") or "",
                     notes=""
                 )
             return cls(member_name="", title="", date="", start_time="", end_time="", notes="")
@@ -353,11 +356,15 @@ def _collect_member_schedules(
     for schedule in data_rows:
         rows.append(SturcturedSchedule.normalize(schedule).model_dump())
     for schedule in personal_schedules:
+        schedule_date = schedule.get("date")
+        if schedule_date not in date_range(date_from, date_to):
+            continue
         rows.append(SturcturedSchedule.normalize(schedule).model_dump())
 
     ret = {
         "rows": rows,
-        "schedule_summary": data.get('schedule_summary', "")
+        "schedule_summary": data.get('schedule_summary', ""),
+        "member_name": normalized_member_names
     }
 
     return ret
@@ -526,7 +533,14 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
     personal_schedules = _personal_schedules_for_current_scope()
     res = _collect_member_schedules(member_names=member_names, date_from=date_from, date_to=date_to, personal_schedules=personal_schedules)
 
-    return json_payload(res)
+    ret = json_payload(
+        {
+            "ok": True,
+            "tool_name": collect_member_schedules.name,
+            **res
+        }
+    )
+    return ret
 
 
 def week05_tools() -> list[Any]:
