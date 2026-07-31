@@ -218,7 +218,10 @@ class SearchPreviousConversationsInput(BaseModel):
     query: str = Field(description="과거 대화의 제목이나 본문에서 찾을 짧은 핵심 명사 또는 구입니다.")
     member_names: list[str] | None = Field(
         default=None,
-        description="검색 대상을 제한할 외부 멤버 이름 목록입니다. 모든 멤버는 None, 명시된 멤버가 없으면 빈 목록입니다.",
+        description=(
+            "검색 대상을 제한할 외부 멤버 이름 목록입니다. "
+            "멤버 필터가 없으면 None이며, 빈 목록은 결과 0건을 의미하므로 사용하지 않습니다."
+        ),
     )
     limit: int = Field(
         default=5,
@@ -315,7 +318,10 @@ class CollectMemberSchedulesInput(BaseModel):
     """내 일정과 외부 멤버 busy-time 수집 입력입니다."""
 
     member_names: list[str] = Field(
-        description="사용자 자신의 일정과 함께 확인할 외부 멤버 이름 목록입니다. '나'는 넣지 않으며, 외부 멤버만 조회하는 요청에서는 이 tool을 사용하지 않습니다."
+        description=(
+            "사용자 자신의 일정과 함께 확인할 외부 멤버 이름 목록입니다. "
+            "'나'는 넣지 않으며, 외부 멤버만 조회하는 요청에서는 이 tool을 사용하지 않습니다."
+        ),
     )
     date_from: str = Field(description="busy-time 수집 시작 날짜입니다. YYYY-MM-DD 형식입니다.")
     date_to: str = Field(description="busy-time 수집 종료 날짜입니다. YYYY-MM-DD 형식입니다.")
@@ -334,7 +340,7 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
         start_time=row.get("start_time"),
         end_time=row.get("end_time"),
         members=row.get("attendees") or row.get("members") or [],
-        original_text=str(row.get("title") or ""),
+        original_text="",
     )
 
 
@@ -360,6 +366,8 @@ def _collect_member_schedules(
         end_date = date.fromisoformat(normalized_date_to)
     except ValueError as exc:
         raise ValueError("date_from과 date_to는 유효한 YYYY-MM-DD 형식이어야 합니다.") from exc
+    if start_date.isoformat() != normalized_date_from or end_date.isoformat() != normalized_date_to:
+        raise ValueError("date_from과 date_to는 YYYY-MM-DD 형식이어야 합니다.")
     if start_date > end_date:
         raise ValueError("date_from은 date_to보다 늦을 수 없습니다.")
 
@@ -371,6 +379,8 @@ def _collect_member_schedules(
         try:
             schedule_date = date.fromisoformat(structured.date)
         except ValueError:
+            continue
+        if schedule_date.isoformat() != structured.date:
             continue
         if schedule_date < start_date or schedule_date > end_date:
             continue
@@ -404,7 +414,7 @@ def _collect_member_schedules(
     rows = [*personal_rows, *(external_payload.get("rows") or [])]
     return {
         "rows": rows,
-        "personal_schedule_count": len(personal_rows),
+        "my_schedule_count": len(personal_rows),
         "schedule_summary": external_schedule_summary(rows),
     }
 
@@ -576,8 +586,8 @@ def week05_prompt_parts() -> list[str]:
         예를 들어 '외부 멤버 철수의 일정'은 extract_schedules_from_history, '나와 철수의 일정을 함께'는 collect_member_schedules를 사용한다.
         collect_member_schedules는 앱 SQLite와 현재 대화의 임시 일정을 모두 확인한다.
         따라서 호출 뒤에는 personal_list_schedules나 personal_list_saved_schedules를 추가로 호출하지 않는다.
-        personal_schedule_count가 0이면 해당 기간에 저장된 내 일정이 없는 것으로 판단한다.
-        일정 조회에 필요한 시작일과 종료일이 명확하지 않으면 날짜를 임의로 만들지 말고 사용자에게 묻는다.
+        my_schedule_count가 0이면 해당 기간에 저장된 내 일정이 없는 것으로 판단한다.
+        extract_schedules_from_history나 collect_member_schedules의 시작일과 종료일이 명확하지 않으면 날짜를 임의로 만들지 말고 사용자에게 묻는다.
 
         공유 일정의 직접 생성이나 갱신을 명확히 요청한 경우에만 create_shared_schedule을 사용한다.
         공유 일정 삭제 전에는 list_shared_schedules로 schedule_id 또는 source_conversation_id를 확인한다.
