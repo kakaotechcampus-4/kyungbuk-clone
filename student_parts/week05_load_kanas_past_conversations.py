@@ -306,21 +306,40 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
     )
 
 
+def _normalize_row_times(row: dict[str, Any]) -> dict[str, Any]:
+    """rows의 시간 표기를 통일하고 시간 미정 여부를 플래그로 남깁니다.
+
+    `fixed/schedule_decision.py`의 `parse_time_minutes`는 시간이 비어 있거나 `"미정"`이면
+    start를 00:00, end를 24:00으로 대체합니다. 즉 시간 미정 row는 busy 계산에서 그 날 하루를
+    통째로 막습니다. 빈 값과 `"미정"`을 모두 None으로 맞춰 두 출처의 표기를 하나로 만들고,
+    어떤 row가 시간 비교 불가인지 `time_unspecified`로 구분할 수 있게 합니다.
+    """
+
+    normalized = dict(row)
+    for key in ("start_time", "end_time"):
+        value = str(normalized.get(key) or "").strip()
+        normalized[key] = None if not value or value == "미정" else value
+    normalized["time_unspecified"] = not (normalized["start_time"] and normalized["end_time"])
+    return normalized
+
+
 def _personal_schedule_row(schedule: dict[str, Any]) -> dict[str, Any]:
     """내 일정 row를 외부 멤버 busy-time row와 같은 구조로 맞춥니다."""
 
     request = _structured_request_from_schedule_row(schedule)
     members_text = ", ".join(request.members)
-    return {
-        "member_name": PERSONAL_SHARED_MEMBER_NAME,
-        "title": request.title or "제목 없음",
-        "date": str(request.date or "").split("T", 1)[0],
-        "start_time": request.start_time or "미정",
-        "end_time": request.end_time or "미정",
-        "notes": f"내 일정 · 참석자: {members_text}" if members_text else "내 일정",
-        "source_conversation_id": schedule.get("request_id"),
-        "schedule_id": schedule.get("schedule_id") or schedule.get("id"),
-    }
+    return _normalize_row_times(
+        {
+            "member_name": PERSONAL_SHARED_MEMBER_NAME,
+            "title": request.title or "제목 없음",
+            "date": str(request.date or "").split("T", 1)[0],
+            "start_time": request.start_time,
+            "end_time": request.end_time,
+            "notes": f"내 일정 · 참석자: {members_text}" if members_text else "내 일정",
+            "source_conversation_id": schedule.get("request_id"),
+            "schedule_id": schedule.get("schedule_id") or schedule.get("id"),
+        }
+    )
 
 
 def _collect_member_schedules(
