@@ -42,9 +42,14 @@ WEEK05_MCP_PROMPT = (
     "다른 사람의 일정과 과거 대화는 앱 안에 없고 외부 SQLite/MCP 저장소에 있다. "
     "외부 멤버가 예전에 무슨 말을 했는지 찾을 때는 search_previous_conversations를 쓰고, "
     "찾은 conversation_id의 전체 메시지가 필요하면 load_conversation_messages로 이어서 읽는다. "
-    "특정 멤버의 날짜 범위 바쁜 시간만 필요하면 extract_schedules_from_history를 쓴다. "
+    "다른 사람 일정만 궁금한 질문은 extract_schedules_from_history를 쓴다. "
     "'나까지 포함해서 언제 비어 있나' 같은 조율 질문은 collect_member_schedules로 내 일정과 외부 멤버 "
     "일정을 한 번에 모아 rows와 schedule_summary를 근거로 답한다. "
+    "collect_member_schedules는 member_names에 무엇이 들어와도 내 일정을 항상 함께 모은다. "
+    "그래서 다른 사람 일정만 물었으면 rows의 '나' 일정은 답변 근거로 쓰지 않는다. "
+    "외부 대화 검색 query에는 단어를 붙이지 않고 핵심 단어 하나만 넣는다. "
+    "rows의 time_unspecified가 true인 일정은 시작·종료 시각이 정해지지 않은 일정이다. "
+    "그 날이 하루 종일 바쁘다고 단정하지 말고 시간이 미정이라는 점을 밝힌다. "
     "공유 일정 저장소에 실제로 등록된 row를 확인할 때는 list_shared_schedules를 쓴다. "
     "내 개인 기록(참고자료·SQLite 저장 일정·앱 대화 발화)은 이전 주차 tool로 찾고 MCP tool로 찾지 않는다. "
     "여러 사람의 최종 회의 시간을 확정하는 일은 이번 주차 범위가 아니므로, 모은 일정을 근거로 "
@@ -414,7 +419,12 @@ def search_previous_conversations(
     member_names: list[str] | None = None,
     limit: int = 5,
 ) -> str:
-    """외부 SQLite 데이터베이스에 저장된 이전 대화를 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
+    """외부 SQLite 데이터베이스에 저장된 이전 대화를 검색합니다.
+
+    query는 부분 문자열 일치로만 검색되고 서버가 토큰화나 조사 처리를 하지 않습니다.
+    그래서 "철수 일정"처럼 단어를 붙이면 그 문자열이 통째로 들어 있어야만 찾습니다.
+    핵심 단어 하나만 넣고, 멤버를 좁히려면 query가 아니라 member_names를 씁니다.
+    """
 
     args: dict[str, Any] = {"query": query, "limit": limit}
     # member_names를 넘기지 않으면 외부 store가 모든 멤버를 대상으로 검색합니다.
@@ -519,7 +529,12 @@ def list_shared_schedules(
 
 @tool(args_schema=CollectMemberSchedulesInput)
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
-    """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
+    """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다.
+
+    내 일정은 member_names에 무엇이 들어와도 항상 함께 모으므로, 다른 사람 일정만 필요하면
+    extract_schedules_from_history를 씁니다. rows의 time_unspecified가 true인 일정은
+    시작·종료 시각이 정해지지 않아 시간 비교가 불가능한 일정입니다.
+    """
 
     payload = _collect_member_schedules(
         member_names=member_names,
