@@ -240,7 +240,7 @@ class CreateSharedScheduleInput(BaseModel):
     title: str
     date: str
     start_time: str
-    end_time: str = "미정"
+    end_time: str | None = None
     notes: str | None = None
     source_conversation_id: str | None = None
     schedule_id: str | None = None
@@ -321,8 +321,8 @@ def _collect_member_schedules(
                 "member_name": "나",
                 "title": req.title or "내 일정",
                 "date": req.date,
-                "start_time": req.start_time or "미정",
-                "end_time": req.end_time or "미정",
+                "start_time": req.start_time,
+                "end_time": req.end_time,
                 "notes": None,
             })
 
@@ -380,7 +380,7 @@ def create_shared_schedule(
     title: str,
     date: str,
     start_time: str,
-    end_time: str = "미정",
+    end_time: str | None = None,
     notes: str | None = None,
     source_conversation_id: str | None = None,
     schedule_id: str | None = None,
