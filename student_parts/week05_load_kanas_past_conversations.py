@@ -202,18 +202,33 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
 
 
-def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
+# date_from/date_to가 이미 결과를 날짜 범위로 좁혀주므로, 이 값은 pagination이 아니라
+# 방어적 상한선입니다(날짜 필터 없이 호출되는 경우를 대비).
+_PERSONAL_SCHEDULES_SAFETY_CAP = 200
+
+
+def _personal_schedules_for_current_scope(
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
     sqlite_store = AppSQLiteStore(CONFIG.app_db_path)
-    saved_schedules = sqlite_store.list_schedules()
+    saved_schedules = sqlite_store.list_schedules(
+        date_from=date_from,
+        date_to=date_to,
+        limit=_PERSONAL_SCHEDULES_SAFETY_CAP,
+    )
     saved_ids = {row.get("schedule_id") for row in saved_schedules}
 
     current_scope = current_session_scope()
     pending_schedules = [
         schedule
         for schedule in PERSONAL_SCHEDULES
-        if _schedule_scope(schedule) == current_scope and schedule.get("id") not in saved_ids
+        if _schedule_scope(schedule) == current_scope
+        and schedule.get("id") not in saved_ids
+        and (not date_from or (schedule.get("date") and schedule["date"] >= date_from))
+        and (not date_to or (schedule.get("date") and schedule["date"] <= date_to))
     ]
 
     return [*saved_schedules, *pending_schedules]
@@ -426,7 +441,7 @@ def list_shared_schedules(
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
     """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
 
-    personal_schedules = _personal_schedules_for_current_scope()
+    personal_schedules = _personal_schedules_for_current_scope(date_from=date_from, date_to=date_to)
     payload = _collect_member_schedules(
         member_names=member_names,
         date_from=date_from,
