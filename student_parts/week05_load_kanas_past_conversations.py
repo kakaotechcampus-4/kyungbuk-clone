@@ -390,9 +390,7 @@ def search_previous_conversations(
     member_names: list[str] | None = None,
     limit: int = 5,
 ) -> str:
-    """외부 SQLite 데이터베이스에 저장된 다른 사람들의 이전 대화를 검색합니다. query에는 LLM이 고른
-    짧은 핵심 명사나 구를 넣습니다(조사나 문장 전체를 넣지 않습니다). 내가 나눈 채팅 기록을 찾을 때는
-    이 tool 대신 search_conversation_messages를 사용하세요."""
+    """외부 SQLite 데이터베이스에 저장된 이전 대화를 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
 
     return call_mcp_tool_sync(
         "search_previous_conversations",
@@ -402,8 +400,7 @@ def search_previous_conversations(
 
 @tool(args_schema=LoadConversationMessagesInput)
 def load_conversation_messages(conversation_id: str) -> str:
-    """외부 SQLite 데이터베이스에서 특정 이전 대화의 모든 메시지를 불러옵니다. conversation_id는
-    search_previous_conversations 결과에서 얻습니다."""
+    """외부 SQLite 데이터베이스에서 특정 이전 대화의 모든 메시지를 불러옵니다."""
 
     payload = call_external_tool_payload("load_conversation_messages", {"conversation_id": conversation_id})
     return json_payload(payload)
@@ -411,11 +408,7 @@ def load_conversation_messages(conversation_id: str) -> str:
 
 @tool(args_schema=ExtractSchedulesFromHistoryInput)
 def extract_schedules_from_history(member_names: list[str], date_from: str, date_to: str) -> str:
-    """외부 SQLite 이전 대화에서 다른 사람들의 멤버별 일정(busy-time)을 추출합니다. 내 일정과 합치지
-    않고 그 사람들의 일정만 그대로 보여달라는 요청('철수랑 영희 각자 무슨 일정 있었어?', '철수 이번 주
-    일정 뭐야?')에는 이 tool만 쓰세요. 내 일정과 함께 합쳐야 한다면(예: '철수, 영희랑 회의 시간
-    맞추려는데 언제가 좋을까?') collect_member_schedules를, 공유 일정 저장소 row 자체를 보려면
-    list_shared_schedules를 사용하세요."""
+    """외부 SQLite 이전 대화에서 멤버별 일정을 추출합니다."""
 
     return call_mcp_tool_sync(
         "extract_schedules_from_history",
@@ -436,8 +429,19 @@ def create_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
-    # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    return call_mcp_tool_sync(
+        "create_shared_schedule",
+        {
+            "member_name": member_name,
+            "title": title,
+            "date": date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "notes": notes,
+            "source_conversation_id": source_conversation_id,
+            "schedule_id": schedule_id,
+        },
+    )
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -447,8 +451,10 @@ def delete_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
-    # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    return call_mcp_tool_sync(
+        "delete_shared_schedule",
+        {"schedule_id": schedule_id, "source_conversation_id": source_conversation_id},
+    )
 
 
 @tool(args_schema=ListSharedSchedulesInput)
@@ -476,12 +482,7 @@ def list_shared_schedules(
 
 @tool(args_schema=CollectMemberSchedulesInput)
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
-    """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다. 나를 포함해 여러 사람의 일정을
-    맞대어 비교해야 하는 요청('철수, 영희랑 회의 시간 맞추려는데 언제가 좋을까?', '다 같이 언제
-    비어?')에만 이 tool을 쓰세요. member_names에는 상대방 이름만 넣으세요("나"는 넣지 않아도 내 일정이
-    항상 함께 포함됩니다). 내 일정과 합칠 필요 없이 다른 사람 일정만 그대로 보여달라는 요청에는
-    extract_schedules_from_history를, 공유 저장소에 등록된 row 자체를 보려면 list_shared_schedules를
-    대신 사용하세요."""
+    """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
 
     return json_payload(
         _collect_member_schedules(

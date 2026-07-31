@@ -13,6 +13,8 @@ from student_parts.week05_load_kanas_past_conversations import (
     _collect_member_schedules,
     _personal_schedules_for_current_scope,
     collect_member_schedules,
+    create_shared_schedule,
+    delete_shared_schedule,
     extract_schedules_from_history,
     list_shared_schedules,
     load_conversation_messages,
@@ -174,6 +176,50 @@ def test_list_shared_schedules_passes_all_filters_including_none_member_names(fa
         "source_conversation_id": "app:req_1",
         "limit": 10,
     }
+
+
+# --- create_shared_schedule / delete_shared_schedule ---
+
+
+def test_create_shared_schedule_passes_all_args_through(fake_mcp):
+    create_shared_schedule.invoke(
+        {
+            "member_name": "철수",
+            "title": "QA 리뷰",
+            "date": "2026-07-10",
+            "start_time": "10:00",
+            "end_time": "11:00",
+            "notes": "회의실 A",
+            "source_conversation_id": "app:req_1",
+            "schedule_id": "shared_sch_1",
+        }
+    )
+    tool_name, args = fake_mcp.calls[-1]
+    assert tool_name == "create_shared_schedule"
+    assert args == {
+        "member_name": "철수",
+        "title": "QA 리뷰",
+        "date": "2026-07-10",
+        "start_time": "10:00",
+        "end_time": "11:00",
+        "notes": "회의실 A",
+        "source_conversation_id": "app:req_1",
+        "schedule_id": "shared_sch_1",
+    }
+
+
+def test_create_shared_schedule_uses_default_end_time_when_omitted(fake_mcp):
+    create_shared_schedule.invoke({"member_name": "철수", "title": "QA 리뷰", "date": "2026-07-10", "start_time": "10:00"})
+    _, args = fake_mcp.calls[-1]
+    assert args["end_time"] == "미정"
+    assert args["notes"] is None
+
+
+def test_delete_shared_schedule_passes_args_through(fake_mcp):
+    delete_shared_schedule.invoke({"schedule_id": "shared_sch_1", "source_conversation_id": None})
+    tool_name, args = fake_mcp.calls[-1]
+    assert tool_name == "delete_shared_schedule"
+    assert args == {"schedule_id": "shared_sch_1", "source_conversation_id": None}
 
 
 # --- _personal_schedules_for_current_scope ---
