@@ -331,6 +331,9 @@ def _collect_member_schedules(
     summary = external_schedule_summary(combined_rows)
 
     return {
+        "ok": True,
+        "tool_name": "collect_member_schedules",
+        "members": ["나"] + names,
         "rows": combined_rows,
         "schedule_summary": summary
     }
