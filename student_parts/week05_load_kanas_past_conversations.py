@@ -386,12 +386,11 @@ def _collect_member_schedules(
         )
         rows.extend(external_payload.get("rows", []))
 
+    # 어떤 인자로 물었는지는 fixed/langchain_trace.py가 tool_call arguments로 이미 남기므로
+    # payload에서 되돌려주지 않습니다.
     return {
         "ok": True,
         "tool_name": "collect_member_schedules",
-        "member_names": normalized_member_names,
-        "date_from": normalized_date_from,
-        "date_to": normalized_date_to,
         "rows": rows,
         "schedule_summary": external_schedule_summary(rows),
     }
