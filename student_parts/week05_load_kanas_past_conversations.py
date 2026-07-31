@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from typing import Any
 
 from langchain.agents import create_agent
@@ -217,7 +218,7 @@ class SearchPreviousConversationsInput(BaseModel):
     query: str = Field(description="과거 대화의 제목이나 본문에서 찾을 짧은 핵심 명사 또는 구입니다.")
     member_names: list[str] | None = Field(
         default=None,
-        description="검색 대상을 제한할 외부 멤버 이름 목록입니다. 모든 멤버를 검색하려면 None입니다.",
+        description="검색 대상을 제한할 외부 멤버 이름 목록입니다. 모든 멤버는 None, 명시된 멤버가 없으면 빈 목록입니다.",
     )
     limit: int = Field(
         default=5,
@@ -288,7 +289,7 @@ class ListSharedSchedulesInput(BaseModel):
 
     member_names: list[str] | None = Field(
         default=None,
-        description="조회할 공유 일정의 멤버 이름 목록입니다. '나'를 포함할 수 있으며 전체 조회는 None입니다.",
+        description="조회할 공유 일정의 멤버 이름 목록입니다. '나'를 포함할 수 있으며 멤버로 제한하지 않으면 None입니다.",
     )
     date_from: str | None = Field(
         default=None,
@@ -314,7 +315,7 @@ class CollectMemberSchedulesInput(BaseModel):
     """내 일정과 외부 멤버 busy-time 수집 입력입니다."""
 
     member_names: list[str] = Field(
-        description="내 일정과 함께 확인할 외부 멤버 이름 목록입니다. 사용자인 '나'는 넣지 않습니다."
+        description="사용자 자신의 일정과 함께 확인할 외부 멤버 이름 목록입니다. '나'는 넣지 않으며, 외부 멤버만 조회하는 요청에서는 이 tool을 사용하지 않습니다."
     )
     date_from: str = Field(description="busy-time 수집 시작 날짜입니다. YYYY-MM-DD 형식입니다.")
     date_to: str = Field(description="busy-time 수집 종료 날짜입니다. YYYY-MM-DD 형식입니다.")
@@ -323,8 +324,11 @@ class CollectMemberSchedulesInput(BaseModel):
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
     """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
 
+    kind = row.get("request_kind") or row.get("kind")
+    if kind not in {"personal_schedule", "group_schedule"}:
+        kind = "personal_schedule"
     return StructuredRequest(
-        kind="personal_schedule",
+        kind=kind,
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -349,14 +353,33 @@ def _collect_member_schedules(
         date_from,
         date_to,
     )
+    if not normalized_date_from or not normalized_date_to:
+        raise ValueError("date_from과 date_to는 빈 값이 아닌 YYYY-MM-DD 형식이어야 합니다.")
+    try:
+        start_date = date.fromisoformat(normalized_date_from)
+        end_date = date.fromisoformat(normalized_date_to)
+    except ValueError as exc:
+        raise ValueError("date_from과 date_to는 유효한 YYYY-MM-DD 형식이어야 합니다.") from exc
+    if start_date > end_date:
+        raise ValueError("date_from은 date_to보다 늦을 수 없습니다.")
 
     personal_rows: list[dict[str, Any]] = []
     for schedule in personal_schedules:
         structured = _structured_request_from_schedule_row(schedule)
         if not structured.date:
             continue
-        if structured.date < normalized_date_from or structured.date > normalized_date_to:
+        try:
+            schedule_date = date.fromisoformat(structured.date)
+        except ValueError:
             continue
+        if schedule_date < start_date or schedule_date > end_date:
+            continue
+        if schedule.get("id") and not schedule.get("schedule_id"):
+            notes = "현재 대화의 임시 일정"
+        elif structured.kind == "group_schedule":
+            notes = "앱 SQLite에 저장된 그룹 일정"
+        else:
+            notes = "앱 SQLite에 저장된 개인 일정"
         personal_rows.append(
             {
                 "member_name": "나",
@@ -364,7 +387,7 @@ def _collect_member_schedules(
                 "date": structured.date,
                 "start_time": structured.start_time,
                 "end_time": structured.end_time,
-                "notes": "앱에 저장된 내 일정",
+                "notes": notes,
             }
         )
 
@@ -497,7 +520,7 @@ def list_shared_schedules(
 
 @tool(args_schema=CollectMemberSchedulesInput)
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
-    """사용자 자신의 일정과 외부 멤버 일정을 함께 요청한 경우 두 출처의 busy-time을 모읍니다."""
+    """사용자 자신의 일정과 외부 멤버 일정을 함께 요청한 경우만 busy-time을 모읍니다. 외부 멤버만의 조회에는 사용하지 않습니다."""
 
     result = _collect_member_schedules(
         member_names=member_names,
@@ -550,9 +573,11 @@ def week05_prompt_parts() -> list[str]:
         공유 저장소에 실제 등록된 일정과 동기화 결과를 확인할 때는 list_shared_schedules를 사용한다.
         사용자 자신의 일정과 외부 멤버의 busy-time을 함께 비교해 달라고 명시한 경우에만 collect_member_schedules를 사용한다.
         요청에 '나', '내 일정'처럼 사용자 자신의 일정이 포함되지 않았다면 collect_member_schedules를 사용하지 않는다.
+        예를 들어 '외부 멤버 철수의 일정'은 extract_schedules_from_history, '나와 철수의 일정을 함께'는 collect_member_schedules를 사용한다.
         collect_member_schedules는 앱 SQLite와 현재 대화의 임시 일정을 모두 확인한다.
         따라서 호출 뒤에는 personal_list_schedules나 personal_list_saved_schedules를 추가로 호출하지 않는다.
         personal_schedule_count가 0이면 해당 기간에 저장된 내 일정이 없는 것으로 판단한다.
+        일정 조회에 필요한 시작일과 종료일이 명확하지 않으면 날짜를 임의로 만들지 말고 사용자에게 묻는다.
 
         공유 일정의 직접 생성이나 갱신을 명확히 요청한 경우에만 create_shared_schedule을 사용한다.
         공유 일정 삭제 전에는 list_shared_schedules로 schedule_id 또는 source_conversation_id를 확인한다.
