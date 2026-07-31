@@ -185,18 +185,25 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
 
 
-def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
-    """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
+def _personal_schedules_for_current_scope(date_from: str, date_to: str) -> list[dict[str, Any]]:
+    """SQLite 저장 일정과 현재 대화의 임시 일정 중 요청 날짜 범위에 속하는 것만 group 조율 후보로 사용합니다."""
 
     # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
-    stored_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200)
+    # 외부 멤버 조회(extract_schedules_from_history)도 date_from/date_to로 걸러진 rows만 반환하므로,
+    # 날짜가 없는 일정은 두 쪽 다 범위를 판정할 수 없어 동일하게 제외한다.
+    stored_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(
+        limit=200, date_from=date_from, date_to=date_to
+    )
     stored_schedule_ids = {row.get("schedule_id") for row in stored_schedules if row.get("schedule_id")}
 
     session_id = current_session_scope()
     pending_schedules = [
         schedule
         for schedule in PERSONAL_SCHEDULES
-        if _schedule_scope(schedule) == session_id and schedule.get("id") not in stored_schedule_ids
+        if _schedule_scope(schedule) == session_id
+        and schedule.get("id") not in stored_schedule_ids
+        and schedule.get("date")
+        and date_from <= schedule["date"] <= date_to
     ]
 
     return [*stored_schedules, *pending_schedules]
@@ -306,17 +313,37 @@ def _collect_member_schedules(
             }
         )
 
-    external_payload = json.loads(
-        call_mcp_tool_sync(
-            "extract_schedules_from_history",
-            {
-                "member_names": member_names,
-                "date_from": date_from,
-                "date_to": date_to,
-            },
-        )
-    )
-    for row in external_payload.get("rows", []):
+    # "나"는 personal_schedules(App SQLite)가 정본이다. 외부 공유 저장소에도 "나" 사본이
+    # 동기화돼 있어(sync_personal_schedule_to_shared) 그대로 물으면 같은 일정이 두 번 나온다.
+    external_member_names = [name for name in member_names if name != PERSONAL_SHARED_MEMBER_NAME]
+
+    external_rows: list[dict[str, Any]] = []
+    external_error: str | None = None
+    if external_member_names:
+        try:
+            external_payload = json.loads(
+                call_mcp_tool_sync(
+                    "extract_schedules_from_history",
+                    {
+                        "member_names": external_member_names,
+                        "date_from": date_from,
+                        "date_to": date_to,
+                    },
+                )
+            )
+            # ok뿐 아니라 tool_name도 확인해, 다른 tool 응답이 잘못 파싱된 경우까지 실패로 잡는다.
+            if external_payload.get("ok", True) and external_payload.get("tool_name") in (
+                None,
+                "extract_schedules_from_history",
+            ):
+                external_rows = external_payload.get("rows", [])
+            else:
+                external_error = str(external_payload.get("error") or "extract_schedules_from_history_failed")
+        except Exception as exc:
+            # MCP 호출 실패가 이미 모은 personal_schedules rows까지 날리지 않도록 여기서 흡수한다.
+            external_error = f"{type(exc).__name__}: {exc}"
+
+    for row in external_rows:
         rows.append(
             {
                 "member_name": row.get("member_name"),
@@ -328,7 +355,15 @@ def _collect_member_schedules(
             }
         )
 
-    return {"rows": rows, "schedule_summary": external_schedule_summary(rows)}
+    result: dict[str, Any] = {
+        "rows": rows,
+        "schedule_summary": external_schedule_summary(rows),
+        # 외부 조회가 0건인지, 아예 실패했는지를 schedule_summary만으로는 구분할 수 없어 별도로 남긴다.
+        "external_schedule_count": len(external_rows),
+    }
+    if external_error is not None:
+        result["external_error"] = external_error
+    return result
 
 
 @tool(args_schema=SearchPreviousConversationsInput)
@@ -420,7 +455,7 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
         member_names=member_names,
         date_from=date_from,
         date_to=date_to,
-        personal_schedules=_personal_schedules_for_current_scope(),
+        personal_schedules=_personal_schedules_for_current_scope(date_from, date_to),
     )
     return json_payload({"ok": True, "tool_name": "collect_member_schedules", **collected})
 
@@ -433,8 +468,6 @@ def week05_tools() -> list[Any]:
         search_previous_conversations,
         load_conversation_messages,
         extract_schedules_from_history,
-        create_shared_schedule,
-        delete_shared_schedule,
         list_shared_schedules,
         collect_member_schedules,
     ]
