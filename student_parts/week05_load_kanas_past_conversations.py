@@ -299,7 +299,7 @@ def _collect_member_schedules(
             "date": structured.date,
             "start_time": structured.start_time,
             "end_time": structured.end_time,
-            "notes": None,
+            "notes": "",
         }
         for structured in (
             _structured_request_from_schedule_row(schedule) for schedule in personal_schedules
@@ -345,12 +345,10 @@ def load_conversation_messages(conversation_id: str) -> str:
 @tool(args_schema=ExtractSchedulesFromHistoryInput)
 def extract_schedules_from_history(member_names: list[str], date_from: str, date_to: str) -> str:
     """
-    외부 공유 일정 저장소에서 특정 멤버(들)의 기간 내 busy-time을 조회합니다. member_names, date_from, date_to는 모두 필수입니다.
-    - ex) "철수 일정 알려줘" (사용자가 기간을 말하지 않았다면 임의로 채우지 말고 어느 기간을 조회할지 먼저 되물어봅니다.)
+    외부 저장소에서 특정 멤버(들)의 기간 내 일정이나 busy-time을 조회합니다.
+    사용자가 기간을 말하지 않았다면 임의로 채우지 말고 어느 기간을 조회할지 먼저 되물어봅니다.
+    - ex) "이번 주 철수 일정 알려줘", "이번 달 남은 날 동안 영희 바쁜 시간 알려줘"
     """
-    
-    # TODO: 정확한 용도를 잘 모르겠다. list_shared_schedules을 써도 되지 않은가?
-    # 구현 가이드에는 이전 대화에서 추출한다고 되어 있는데, 코드 상에선 sqlite에 저장된 공유 일정을 읽는 것으로 확인됨... 어떤 방향으로 구현해야?
 
     return call_mcp_tool_sync(
         "extract_schedules_from_history",
@@ -464,10 +462,11 @@ def week05_prompt_parts() -> list[str]:
 
 - 대화 내용(텍스트) 자체가 궁금할 때: search_previous_conversations로 먼저 찾고, 특정 대화 전체가 필요하면 load_conversation_messages로 이어서 부른다.
     -> 이 때, search_previous_conversations로 찾은 대화의 title을 그대로 사용하여 검색하여 id를 찾고, load_conversation_messages를 사용한다
-- 외부 멤버들의 일정/바쁜 시간만 필요할 때(나는 제외): extract_schedules_from_history를 쓴다.
-- 나를 포함해 여러 사람의 일정을 한 번에 모아 비교해야 할 때(예: 다같이 시간 되는지 조율): collect_member_schedules를 쓴다. extract_schedules_from_history와 달리 내 일정도 함께 담는다.
-- 공유 일정 저장소에 지금 등록된 내용을 그대로 확인하거나 특정 source_conversation_id로 찾을 때: list_shared_schedules를 쓴다. 이건 등록 현황 조회용이고, 여러 사람 일정을 조율 목적으로 모으려면 collect_member_schedules를 우선한다.
+- 외부 멤버들의 일정/바쁜 시간만 필요할 때: extract_schedules_from_history를 쓴다.
+- 나를 포함한 여러 사람의 일정을 한 번에 모아 비교해야 할 때(예: 다같이 시간 되는지 조율): collect_member_schedules를 쓴다.
+- 공유 일정 저장소에 등록된 일정을 확인하거나, 수정/삭제 전 schedule_id를 확인할 때: list_shared_schedules를 쓴다.
 - 공유 일정 저장소에 직접 등록/삭제해야 할 때만 create_shared_schedule/delete_shared_schedule을 쓴다.
+    - 해당 schedule_id는 list_shared_schedules를 사용해 확인한 후 수행한다.
     """
     
     return [
