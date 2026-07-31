@@ -14,6 +14,7 @@ from fixed.external_people_store import (
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
+    PERSONAL_SHARED_MEMBER_NAME
 )
 from fixed.llm import chat_model
 from fixed.mcp_client import (
@@ -290,10 +291,11 @@ def _collect_member_schedules(
     personal_schedules: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
+    external_member_names = [name for name in member_names if name != PERSONAL_SHARED_MEMBER_NAME]
     external_payload = json.loads(
     call_mcp_tool_sync(
             "extract_schedules_from_history",
-            {"member_names": member_names, "date_from": date_from, "date_to": date_to},
+            {"member_names": external_member_names, "date_from": date_from, "date_to": date_to},
         )
     )
     external_rows = external_payload["rows"]
