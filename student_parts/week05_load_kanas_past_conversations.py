@@ -190,7 +190,7 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
     sqlite_store = AppSQLiteStore(CONFIG.app_db_path)
-    saved_schedules = sqlite_store.list_schedules()
+    saved_schedules = sqlite_store.list_schedules(limit=100)
 
     temporary_schedules = [
         schedule for schedule in PERSONAL_SCHEDULES
@@ -307,16 +307,16 @@ def _collect_member_schedules(
             "notes": "",
         }
         for s in personal_schedules
-        if s.get("date")
+        if s.get("date") and normalized_date_from <= s.get("date") <= normalized_date_to
     ]
 
-    external_schedules_payload = call_external_tool_payload("extract_schedules_from_history", {
+    external_schedules_str = call_mcp_tool_sync("extract_schedules_from_history", {
         "member_names": normalized_members,
         "date_from": normalized_date_from,
         "date_to": normalized_date_to,
     })
 
-    external_rows = external_schedules_payload if isinstance(external_schedules_payload, list) else []
+    external_rows = json.loads(external_schedules_str) if external_schedules_str else []
 
     all_rows = personal_rows + external_rows
 
@@ -430,7 +430,11 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
         date_to=date_to,
         personal_schedules=personal_schedules,
     )
-    return json_payload(result)
+    return json_payload({
+        "ok": True,
+        "tool_name": "collect_member_schedules",
+        **result,
+    })
 
 
 def week05_tools() -> list[Any]:
