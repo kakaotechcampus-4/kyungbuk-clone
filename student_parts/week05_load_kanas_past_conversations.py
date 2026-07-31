@@ -186,10 +186,17 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
 
 
-def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
+def _personal_schedules_for_current_scope(
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
-    schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules()
+    schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(date_from=date_from, date_to=date_to, limit=200)
     session_schedules = [s for s in PERSONAL_SCHEDULES if _schedule_scope(s) == current_session_scope()]
+    if date_from:
+        session_schedules = [s for s in session_schedules if s["date"] >= date_from]
+    if date_to:
+        session_schedules = [s for s in session_schedules if s["date"] <= date_to]
     saved_ids = {s["schedule_id"] for s in schedules}
     extra_schedules = [s for s in session_schedules if s["id"] not in saved_ids]
     return schedules + extra_schedules
@@ -377,8 +384,8 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
         member_names=member_names,
         date_from=date_from,
         date_to=date_to,
-        personal_schedules=_personal_schedules_for_current_scope(),
-        )
+        personal_schedules=_personal_schedules_for_current_scope(date_from=date_from, date_to=date_to),
+    )
     return json_payload(result)
 
 
