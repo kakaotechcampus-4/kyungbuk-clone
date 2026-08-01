@@ -190,7 +190,7 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
     sqlite_store = AppSQLiteStore(CONFIG.app_db_path)
-    saved_schedules = sqlite_store.list_schedules(limit=100)
+    saved_schedules = sqlite_store.list_schedules(limit=100, kind="personal_schedule")
 
     temporary_schedules = [
         schedule for schedule in PERSONAL_SCHEDULES
@@ -316,13 +316,19 @@ def _collect_member_schedules(
         "date_to": normalized_date_to,
     })
 
-    external_rows = json.loads(external_schedules_str) if external_schedules_str else []
+    external_payload = json.loads(external_schedules_str) if external_schedules_str else {}
+    external_rows = external_payload.get("rows", [])
 
     all_rows = personal_rows + external_rows
 
     summary = external_schedule_summary(all_rows)
 
+    members = ["나", *[name for name in normalized_members if name != "나"]]
+
     return {
+        "members": members,
+        "date_from": normalized_date_from,
+        "date_to": normalized_date_to,
         "rows": all_rows,
         "schedule_summary": summary,
     }
