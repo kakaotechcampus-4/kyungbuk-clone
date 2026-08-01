@@ -187,10 +187,10 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
 
 
-def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
+def _personal_schedules_for_current_scope(date_from: str | None = None, date_to: str | None = None) -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
-    saved = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200)
+    saved = AppSQLiteStore(CONFIG.app_db_path).list_schedules(date_from=date_from, date_to=date_to, limit=200)
     saved_ids = {row.get("schedule_id") for row in saved}
 
     scope = current_session_scope()
@@ -405,7 +405,7 @@ def list_shared_schedules(
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
     """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
 
-    personal_schedules = _personal_schedules_for_current_scope()
+    personal_schedules = _personal_schedules_for_current_scope(date_from=date_from, date_to=date_to)
     payload = _collect_member_schedules(member_names=member_names, date_from=date_from, date_to=date_to, personal_schedules=personal_schedules)
 
     return json_payload(payload)
