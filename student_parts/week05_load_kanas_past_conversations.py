@@ -366,6 +366,7 @@ def _collect_member_schedules(
             }
         )
 
+    rows.sort(key=lambda row: (row["date"] or "", row["start_time"] or "", row["member_name"] or ""))
     busy_rows = [row for row in rows if row["time_completeness"] == "complete"]
 
     return {"rows": rows, "busy_rows": busy_rows, "schedule_summary": external_schedule_summary(rows)}
