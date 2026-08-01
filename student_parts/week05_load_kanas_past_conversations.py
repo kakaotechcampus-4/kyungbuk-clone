@@ -381,7 +381,7 @@ def load_conversation_messages(conversation_id: str) -> str:
 
 @tool(args_schema=ExtractSchedulesFromHistoryInput)
 def extract_schedules_from_history(member_names: list[str], date_from: str, date_to: str) -> str:
-    """외부 SQLite 이전 대화에서 멤버별 일정을 추출합니다."""
+    """외부 SQLite 이전 대화에서 멤버별 일정을 추출합니다. 지정한 멤버들의 일정/바쁜 시간만 조회하며 내 일정은 포함하지 않습니다. 나를 포함해 비교하려면 collect_member_schedules를 사용하세요."""
 
     # TODO: call_mcp_tool_sync("extract_schedules_from_history", args)를 호출해 외부 멤버 busy-time rows를 반환하세요.
     return call_mcp_tool_sync(
@@ -447,7 +447,7 @@ def list_shared_schedules(
 
 @tool(args_schema=CollectMemberSchedulesInput)
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
-    """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
+    """내 일정과 지정한 멤버들의 일정을 함께 모아 비교합니다. 특정 멤버의 일정만 필요하면 extract_schedules_from_history를 사용하세요."""
 
     # TODO: 내 일정과 외부 멤버 busy-time rows를 모아 JSON 문자열로 반환하세요.
     personal_schedules = _personal_schedules_for_current_scope()
