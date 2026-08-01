@@ -294,6 +294,9 @@ def _collect_member_schedules(
     rows: list[dict[str, Any]] = []
     for schedule in personal_schedules:
         structured = _structured_request_from_schedule_row(schedule)
+        # 조회 기간(date_from~date_to) 밖의 내 일정은 busy-time에서 제외한다.
+        if structured.date and not (date_from <= structured.date <= date_to):
+            continue
         rows.append({
             "member_name": PERSONAL_SHARED_MEMBER_NAME,
             "title": structured.title,
@@ -303,19 +306,23 @@ def _collect_member_schedules(
             "notes": None,
         })
 
-    external_payload = call_external_tool_payload(
-        "extract_schedules_from_history",
-        {"member_names": member_names, "date_from": date_from, "date_to": date_to},
-    )
-    for row in external_payload.get("rows", []):
-        rows.append({
-            "member_name": row.get("member_name"),
-            "title": row.get("title"),
-            "date": row.get("date"),
-            "start_time": row.get("start_time"),
-            "end_time": row.get("end_time"),
-            "notes": row.get("notes"),
-        })
+    # 외부 공유 저장소에도 "나"의 일정이 동기화되어 있으므로, 위에서 이미 합친 내 일정과
+    # 중복되지 않도록 외부 조회에는 "나"를 제외한 멤버 이름만 넘긴다.
+    external_member_names = [name for name in member_names if name != PERSONAL_SHARED_MEMBER_NAME]
+    if external_member_names:
+        external_payload = call_external_tool_payload(
+            "extract_schedules_from_history",
+            {"member_names": external_member_names, "date_from": date_from, "date_to": date_to},
+        )
+        for row in external_payload.get("rows", []):
+            rows.append({
+                "member_name": row.get("member_name"),
+                "title": row.get("title"),
+                "date": row.get("date"),
+                "start_time": row.get("start_time"),
+                "end_time": row.get("end_time"),
+                "notes": row.get("notes"),
+            })
 
     return {"rows": rows, "schedule_summary": external_schedule_summary(rows)}
 
@@ -365,8 +372,19 @@ def create_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
-    # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    return call_mcp_tool_sync(
+        "create_shared_schedule",
+        {
+            "member_name": member_name,
+            "title": title,
+            "date": date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "notes": notes,
+            "source_conversation_id": source_conversation_id,
+            "schedule_id": schedule_id,
+        },
+    )
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -376,8 +394,10 @@ def delete_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
-    # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    return call_mcp_tool_sync(
+        "delete_shared_schedule",
+        {"schedule_id": schedule_id, "source_conversation_id": source_conversation_id},
+    )
 
 
 @tool(args_schema=ListSharedSchedulesInput)
@@ -416,6 +436,9 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
     return json_payload({
         "ok": True,
         "tool_name": "collect_member_schedules",
+        "member_names": member_names,
+        "date_from": date_from,
+        "date_to": date_to,
         "rows": result["rows"],
         "schedule_summary": result["schedule_summary"],
     })
@@ -429,6 +452,8 @@ def week05_tools() -> list[Any]:
         search_previous_conversations,
         load_conversation_messages,
         extract_schedules_from_history,
+        create_shared_schedule,
+        delete_shared_schedule,
         list_shared_schedules,
         collect_member_schedules,
     ]
@@ -451,7 +476,7 @@ def week05_prompt_parts() -> list[str]:
 - "철수는 언제 바빠?" 같은 외부 멤버 일정/바쁜 시간 질문은 extract_schedules_from_history를 호출합니다.
 - 공유 일정 저장소 자체를 확인할 때는 list_shared_schedules를 호출합니다.
 - "나랑 철수 둘 다 되는 시간" 같은 여러 사람의 일정을 한 번에 봐야 하면 collect_member_schedules로 내 일정과 외부 멤버 일정을 같은 표 형태로 모읍니다.
-- Week 5에서는 공유 일정 저장소에 새 row를 직접 등록/삭제하지 않고, 조회까지만 수행합니다.""",
+- 사용자가 공유 일정 저장소에 새 일정을 등록해달라고 명확히 요청하면 create_shared_schedule을 호출하고, 삭제를 요청하면 delete_shared_schedule을 호출합니다. 요청이 없으면 먼저 등록/삭제하지 않습니다.""",
     ]
 
 
