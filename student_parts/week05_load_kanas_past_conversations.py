@@ -292,13 +292,18 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
     external_member_names = [name for name in member_names if name != PERSONAL_SHARED_MEMBER_NAME]
-    external_payload = json.loads(
-    call_mcp_tool_sync(
-            "extract_schedules_from_history",
-            {"member_names": external_member_names, "date_from": date_from, "date_to": date_to},
+    try:
+        external_payload = json.loads(
+            call_mcp_tool_sync(
+                "extract_schedules_from_history",
+                {"member_names": external_member_names, "date_from": date_from, "date_to": date_to},
+            )
         )
-    )
-    external_rows = external_payload["rows"]
+        external_rows = external_payload["rows"]
+        external_error = None
+    except Exception as exc:
+        external_rows = []
+        external_error = f"외부 일정 조회 실패: {exc}"
 
     my_rows = []
     for s in personal_schedules:
@@ -316,6 +321,7 @@ def _collect_member_schedules(
         "rows": rows,
         "schedule_summary": external_schedule_summary(rows),
         "external_rows_found": len(external_rows),
+        "external_error": external_error,
     }
     
 
