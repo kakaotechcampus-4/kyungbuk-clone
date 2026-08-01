@@ -312,7 +312,11 @@ def _collect_member_schedules(
             "notes": None,
         })
     rows = my_rows + external_rows
-    return {"rows": rows, "schedule_summary": external_schedule_summary(rows)}
+    return {
+        "rows": rows,
+        "schedule_summary": external_schedule_summary(rows),
+        "external_rows_found": len(external_rows),
+    }
     
 
 
