@@ -372,8 +372,7 @@ def week05_prompt_parts() -> list[str]:
             "관련 대화와 conversation_id를 확인한 뒤, extract_schedules_from_history로 일정 rows를 가져온다.\n"
             "search_previous_conversations를 호출할 때 사람 이름은 member_names에 넣고, query에는 조사를 뗀 "
             "한두 단어짜리 대화 주제 핵심어(예: 일정, 회의, 인터뷰)만 넣는다. 사람 이름이나 "
-            "'전체 메시지', '원문'처럼 요청 방식을 가리키는 말은 query에 넣지 않는다. "
-            "rows가 비어 있으면 query를 '일정'처럼 더 일반적인 한 단어로 바꿔 한 번 더 호출한다.\n"
+            "'전체 메시지', '원문'처럼 요청 방식을 가리키는 말은 query에 넣지 않는다.\n"
             "대화 원문이나 전체 메시지를 보여 달라는 요청이면 검색으로 찾은 conversation_id로 "
             "load_conversation_messages를 호출해 rows의 sender/content/created_at 순서를 그대로 근거로 삼는다.\n"
             "예: '철수 대화 원문 전체를 보여줘' 요청은 "
@@ -385,7 +384,8 @@ def week05_prompt_parts() -> list[str]:
             "공유 일정 저장소에 등록된 row 자체를 확인해야 하면 list_shared_schedules를 호출하고, "
             "내 일정이 공유 저장소에 동기화됐는지 확인할 때는 member_names에 '나'를 넣어 호출한다. "
             "공유 일정 row를 직접 등록하거나 삭제해야 하면 create_shared_schedule / delete_shared_schedule을 호출한다.\n"
-            "일정을 추측하지 않고 tool 결과의 rows와 schedule_summary만 근거로 답하며, rows가 비어 있으면 기록을 찾지 못했다고 답한다.\n"
+            "일정을 추측하지 않고 tool 결과의 rows와 schedule_summary만 근거로 답하며, "
+            "rows가 비어 있으면 기록을 찾지 못했다고 답하고 어떤 핵심어로 검색했는지 함께 알려 준다.\n"
             "여러 사람의 최종 회의 시간 하나를 확정하는 일은 Week 6 범위이므로, 이번 주에는 모은 일정 근거를 정리해 알려 준다."
         ),
     ]
