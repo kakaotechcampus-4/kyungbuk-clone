@@ -432,6 +432,7 @@ def week05_prompt_parts() -> list[str]:
         extract_schedules_from_history를 사용하세요.
         여러 사람의 시간을 맞춰야 할 때는 collect_member_schedules로 내 일정과 외부 멤버 일정을 함께 확인하세요.
         공유 일정 저장소 자체를 조회/등록/삭제할 때는 list_shared_schedules / create_shared_schedule / delete_shared_schedule을 사용하세요.
+        list_shared_schedules를 필터 없이 호출하면 실습용 기본 공유 일정이 반환되니, 내가 등록한 공유 일정을 확인할 때는 member_names에 "나"를 포함하고 date_from/date_to도 함께 지정하세요.
         """,
     ]
 
