@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from typing import Any
 
 from langchain.agents import create_agent
@@ -208,6 +209,23 @@ def json_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _date_range_error(date_from: str | None, date_to: str | None) -> str | None:
+    """date_from/date_to가 있으면 YYYY-MM-DD 형식과 순서를 확인하고, 문제가 있으면 에러 메시지를 반환합니다."""
+
+    for label, value in (("date_from", date_from), ("date_to", date_to)):
+        if value is None:
+            continue
+        try:
+            date.fromisoformat(value)
+        except ValueError:
+            return f"{label}은(는) YYYY-MM-DD 형식의 날짜여야 합니다: {value!r}"
+
+    if date_from is not None and date_to is not None and date_from > date_to:
+        return f"date_from({date_from})은 date_to({date_to})보다 늦을 수 없습니다."
+
+    return None
+
+
 class SearchPreviousConversationsInput(BaseModel):
     """외부 이전 대화 검색 입력입니다."""
 
@@ -357,6 +375,10 @@ def load_conversation_messages(conversation_id: str) -> str:
 def extract_schedules_from_history(member_names: list[str], date_from: str, date_to: str) -> str:
     """외부 SQLite 이전 대화에서 멤버별 일정을 추출합니다."""
 
+    error = _date_range_error(date_from, date_to)
+    if error:
+        return json_payload({"ok": False, "error": error})
+
     return call_mcp_tool_sync("extract_schedules_from_history", {"member_names": member_names, "date_from": date_from, "date_to": date_to})
 
 
@@ -398,12 +420,20 @@ def list_shared_schedules(
 ) -> str:
     """외부 MCP 공유 일정 저장소에 등록된 일정을 조회합니다. 필터가 없으면 기본 공유 일정을 반환합니다."""
 
+    error = _date_range_error(date_from, date_to)
+    if error:
+        return json_payload({"ok": False, "error": error})
+
     return call_mcp_tool_sync("list_shared_schedules", {"member_names": member_names, "date_from": date_from, "date_to": date_to, "source_conversation_id": source_conversation_id, "limit": limit})
 
 
 @tool(args_schema=CollectMemberSchedulesInput)
 def collect_member_schedules(member_names: list[str], date_from: str, date_to: str) -> str:
     """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
+
+    error = _date_range_error(date_from, date_to)
+    if error:
+        return json_payload({"ok": False, "error": error})
 
     personal_schedules = _personal_schedules_for_current_scope(date_from=date_from, date_to=date_to)
     payload = _collect_member_schedules(member_names=member_names, date_from=date_from, date_to=date_to, personal_schedules=personal_schedules)
@@ -450,6 +480,9 @@ def week05_prompt_parts() -> list[str]:
             "특정하지 않았다면 마찬가지로 충분히 넓은 범위를 쓰세요. "
             "공유 일정 저장소에 등록된 일정 자체를 조회할 때는 검색 없이 바로 list_shared_schedules를 사용하세요. "
             "create_shared_schedule과 delete_shared_schedule은 아직 구현되지 않았으니 절대 호출하지 마세요. "
+            "extract_schedules_from_history, list_shared_schedules, collect_member_schedules 결과에 "
+            "\"ok\": false가 있으면 date_from/date_to 형식이나 순서가 잘못됐다는 뜻이니, 일정이 없다고 "
+            "답하지 말고 그 error 메시지를 바탕으로 사용자에게 날짜를 다시 확인해 달라고 알려주세요. "
             "개인 메모, 저장된 일정·할 일·알림, 지금까지의 채팅 기록 검색은 Week 1~4 도구를 그대로 사용하고, "
             "외부 멤버와 관련된 조회에만 이 Week 5 도구들을 사용하세요."
         ),
