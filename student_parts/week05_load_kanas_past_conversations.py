@@ -337,12 +337,15 @@ def _collect_member_schedules(
             }
         )
 
+    external_member_names = [
+        name for name in normalize_external_member_names(member_names) if name != PERSONAL_SHARED_MEMBER_NAME
+    ]
     external_payload = json.loads(
         call_mcp_tool_sync(
-            "extract_schedules_from_history",  
-            {"member_names": member_names, "date_from": date_from, "date_to": date_to},
+            "extract_schedules_from_history",
+            {"member_names": external_member_names, "date_from": date_from, "date_to": date_to},
         )
-    )  
+    )
     for row in external_payload.get("rows", []):  # MCP 서버가 이미 정규화해서 돌려줌
         has_end_time = row.get("end_time") not in (None, "", "미정")
         if row.get("start_time") and has_end_time:
