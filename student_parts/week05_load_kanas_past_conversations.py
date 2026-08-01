@@ -419,7 +419,19 @@ def create_shared_schedule(
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
     # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    return call_mcp_tool_sync(
+        "create_shared_schedule",
+        {
+            "member_name": member_name,
+            "title": title,
+            "date": date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "notes": notes,
+            "source_conversation_id": source_conversation_id,
+            "schedule_id": schedule_id,
+        },
+    )
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -430,7 +442,13 @@ def delete_shared_schedule(
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
     # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    return call_mcp_tool_sync(
+        "delete_shared_schedule",
+        {
+            "schedule_id": schedule_id,
+            "source_conversation_id": source_conversation_id,
+        },
+    )
 
 
 @tool(args_schema=ListSharedSchedulesInput)
@@ -479,7 +497,8 @@ def week05_tools() -> list[Any]:
         search_previous_conversations,
         load_conversation_messages,
         extract_schedules_from_history,
-        # 추가 과제(create_shared_schedule / delete_shared_schedule)는 아직 미구현이라 목록에서 제외합니다.
+        create_shared_schedule,
+        delete_shared_schedule,
         list_shared_schedules,
         collect_member_schedules,
     ]
@@ -531,6 +550,15 @@ def week05_prompt_parts() -> list[str]:
         (
             "공유 일정 저장소에 등록된 row 자체를 확인할 때는 list_shared_schedules를 쓴다. "
             "이것은 외부 대화에서 일정을 추출하는 tool이 아니라 저장소에 이미 등록된 row를 그대로 보는 tool이다."
+        ),
+        (
+            "공유 일정 저장소에 등록(create_shared_schedule)하거나 삭제(delete_shared_schedule)하는 것은 "
+            "사용자가 명시적으로 요청했을 때만 한다. 조회만 요청받았을 때 등록이나 삭제를 함께 하지 않는다."
+        ),
+        (
+            "삭제할 때는 schedule_id와 source_conversation_id 중 하나만 넘긴다. "
+            "두 조건은 OR로 묶여 있어 둘 다 넘기면 더 많이 지워진다. "
+            "schedule_id는 list_shared_schedules로 확인한 값만 쓰고 추측해서 만들어내지 않는다."
         ),
         (
             "답변은 tool 결과의 rows와 schedule_summary에 있는 내용만 근거로 삼고, "
