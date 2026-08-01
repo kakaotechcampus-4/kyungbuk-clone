@@ -316,20 +316,36 @@ def _collect_member_schedules(
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
         member_names, date_from, date_to
     )
-    external_rows_json = call_mcp_tool_sync(
-        "extract_schedules_from_history",
-        {
-            "member_names": normalized_member_names,
-            "date_from": normalized_date_from,
-            "date_to": normalized_date_to,
-        },
-    )
-    integrated_rows.extend(json.loads(external_rows_json))
 
-    return {
+    external_error: str | None = None
+    try:
+        external_rows_json = call_mcp_tool_sync(
+            "extract_schedules_from_history",
+            {
+                "member_names": normalized_member_names,
+                "date_from": normalized_date_from,
+                "date_to": normalized_date_to,
+            },
+        )
+        external_payload = json.loads(external_rows_json)
+        external_rows = external_payload.get("rows") if isinstance(external_payload, dict) else None
+        if not isinstance(external_rows, list):
+            raise ValueError(f"rows를 담은 dict가 아닌 응답을 받았습니다: {type(external_payload).__name__}")
+        integrated_rows.extend(external_rows)
+    except Exception as exc:
+        external_error = f"{type(exc).__name__}: {exc}"
+
+    result: dict[str, Any] = {
         "rows": integrated_rows,
         "schedule_summary": external_schedule_summary(integrated_rows),
     }
+    if external_error is not None:
+        result["external_schedule_error"] = (
+            "외부 멤버 일정 조회에 실패했습니다"
+            f"({external_error}). 이 결과의 rows에는 '나'의 일정만 포함되어 있으니, "
+            "외부 멤버 일정이 필요하면 다시 시도하거나 사용자에게 실패 사실을 안내하세요."
+        )
+    return result
 
 
 @tool(args_schema=SearchPreviousConversationsInput)
