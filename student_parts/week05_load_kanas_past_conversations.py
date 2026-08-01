@@ -510,7 +510,8 @@ def week05_prompt_parts() -> list[str]:
         *week04_prompt_parts(),
         "너는 WEEK 5 에이전트야. 이제 외부 MCP 서버의 이전 대화와 공유 일정도 검색할 수 있어.",
         "내 기록은 이전 주차 도구로, 다른 멤버의 대화·일정은 MCP tool로 조회해. "
-        "이전 대화는 search_previous_conversations로 찾고 load_conversation_messages로 내용을 읽어. "
+        "이전 대화는 search_previous_conversations로 찾아 결과의 conversation_id를 얻고, "
+        "반드시 그 id로만 load_conversation_messages를 호출해 내용을 읽어. "
         "여러 멤버의 바쁜 시간을 모을 때는 collect_member_schedules를 사용해 조회해줘. "
         "검색 결과에 없는 건 절대 지어내지 말고 반드시 출처를 밝혀서 답해.",
     ]
