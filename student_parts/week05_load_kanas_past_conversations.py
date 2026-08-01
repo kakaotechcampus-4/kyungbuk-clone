@@ -193,11 +193,21 @@ PERSONAL_SOURCE_NOTES = {
     "session_temp": "현재 대화 임시 일정",
 }
 
+# "외부 tool"이라고만 쓰면 Week 1-5 tool이 한 목록으로 들어오는 agent가 어디까지를 외부로 볼지
+# 알 수 없습니다. 남의 기록만 보는 tool과 공유 저장소/양쪽을 함께 보는 tool을 이름으로 구분합니다.
 EXTERNAL_SOURCE_PROMPT = (
     "Week 5부터 일정 근거는 두 저장소로 나뉜다. "
     "1) 내 일정(개인·그룹)은 앱 SQLite에 있고 Week 1-4 도구로 저장·조회한다. "
-    "2) 다른 사람의 이전 대화와 바쁜 시간은 외부 SQLite에 있고 MCP wrapper tool로만 볼 수 있다. "
-    "내 일정을 외부 tool로 찾으려 하거나 남의 일정을 Week 1-4 도구로 찾으려 하면 반드시 0건이 나온다."
+    "2) 다른 사람의 이전 대화와 바쁜 시간은 외부 SQLite에 있고, "
+    "search_previous_conversations, load_conversation_messages, extract_schedules_from_history "
+    "세 tool로만 볼 수 있다. Week 1-4 도구는 외부 SQLite를 보지 못한다. "
+    "3) 외부 SQLite에는 앱이 저장할 때 동기화한 내 일정 복사본도 함께 들어 있다. "
+    'extract_schedules_from_history나 list_shared_schedules에 "나"를 넣으면 그 복사본이 돌아오지만, '
+    "복사본은 중복이거나 앱 SQLite와 어긋날 수 있으므로 내 일정의 근거로 쓰지 않는다. "
+    "공유 저장소에 실제로 어떤 row가 등록됐는지 확인할 때만 list_shared_schedules로 조회한다. "
+    "4) collect_member_schedules는 앱 SQLite의 내 일정과 외부 멤버의 바쁜 시간을 한 번에 모으는 tool이다. "
+    '중복을 막으려고 외부 조회에서만 "나"를 빼고, 내 일정은 앱 SQLite에서 항상 함께 읽는다. '
+    "그래서 결과가 비어 있어도 개인 일정 조회 tool을 다시 부르지 않는다."
 )
 
 WEEK05_TOOL_CALL_PROMPT = """Week 5 tool 호출 규칙:
@@ -212,7 +222,13 @@ WEEK05_TOOL_CALL_PROMPT = """Week 5 tool 호출 규칙:
   내 일정 복사본까지 보려면 member_names에 "나"를 명시해야 한다. 필터를 비우면 실습용 기본 일정만 돌아온다.
 - date_from/date_to는 항상 YYYY-MM-DD로 넘긴다.
 - 조회 결과가 0건이면 "일정이 없다"고 단정하지 않는다. tool 결과의 note를 읽고 날짜 범위를 다시 확인한다.
-- 바쁜 시간 근거를 정리하는 것까지가 Week 5다. 여러 사람의 최종 회의 시간을 직접 확정하지는 않는다."""
+- 저장과 조율을 먼저 구분한다. 사용자가 날짜와 시간을 이미 정해 등록·저장을 요청하면
+  ("8월 2일 10시에 철수와 회의 등록해줘") 이것은 조율이 아니라 저장이다.
+  Week 3 규칙대로 extract_schedule_request → save_structured_request로 처리하고,
+  collect_member_schedules나 extract_schedules_from_history는 호출하지 않는다.
+- 시간이 아직 정해지지 않아 언제가 좋을지 찾아야 하는 요청만 조율이다
+  ("다음 주에 철수와 언제 회의하면 좋을지 알아봐 줘"). 이때 collect_member_schedules로 바쁜 시간 근거를 모은다.
+- 조율에서 바쁜 시간 근거를 정리하는 것까지가 Week 5다. 여러 사람의 최종 회의 시간을 직접 확정하지는 않는다."""
 
 
 def _schedule_scope(schedule: dict[str, Any]) -> str:
@@ -396,19 +412,26 @@ def _empty_busy_rows_note(date_from: str, date_to: str) -> str:
     )
 
 
-def _no_personal_rows_note(date_from: str, date_to: str) -> str:
+def _no_personal_rows_note(date_from: str, date_to: str, *, has_rows: bool) -> str:
     """내 일정이 0건일 때 개인 일정 조회 tool을 다시 부르지 않도록 결과에 근거를 실어 보냅니다.
 
     LLM E2E에서 이 tool이 내 일정 0건을 반환하자, agent가 곧바로
     personal_list_saved_schedules를 같은 날짜 범위로 다시 호출하는 중복이 관찰됐습니다.
     "내 일정도 함께 모은다"는 system prompt 지시로는 막히지 않았으므로,
     이미 조회했다는 사실을 tool 결과에 실어 의사결정 지점에서 끊습니다.
+
+    전체 0건일 때는 _empty_busy_rows_note()가 뒤에 이어 붙으므로,
+    "이 결과로 답하라"로 끝내면 날짜 재확인 안내와 충돌합니다. 그래서 마지막 문장만 나눕니다.
     """
 
+    tail = (
+        "같은 범위를 개인 일정 조회 tool로 다시 확인하지 말고, 이 결과로 답하세요."
+        if has_rows
+        else "같은 범위를 개인 일정 조회 tool로 다시 확인해도 결과는 같으니 재호출하지 마세요."
+    )
     return (
         "내 일정은 앱 SQLite와 현재 대화 임시 일정에서 이미 함께 조회했고 "
-        f"{date_from}~{date_to} 범위에는 0건입니다. "
-        "같은 범위를 개인 일정 조회 tool로 다시 확인하지 말고, 이 결과로 답하세요."
+        f"{date_from}~{date_to} 범위에는 0건입니다. " + tail
     )
 
 
@@ -583,10 +606,20 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
         "source": "sqlite:schedules+mcp:external_schedules",
         **payload,
     }
+    # 전체 0건은 "내 일정 0건"이기도 하므로 두 note를 배타적으로 쓰면 재조회 방지 근거가 사라집니다.
+    notes: list[str] = []
+    if not payload["personal_row_count"]:
+        notes.append(
+            _no_personal_rows_note(
+                payload["date_from"],
+                payload["date_to"],
+                has_rows=bool(payload["rows"]),
+            )
+        )
     if not payload["rows"]:
-        result["note"] = _empty_busy_rows_note(payload["date_from"], payload["date_to"])
-    elif not payload["personal_row_count"]:
-        result["note"] = _no_personal_rows_note(payload["date_from"], payload["date_to"])
+        notes.append(_empty_busy_rows_note(payload["date_from"], payload["date_to"]))
+    if notes:
+        result["note"] = " ".join(notes)
     return json_payload(result)
 
 
