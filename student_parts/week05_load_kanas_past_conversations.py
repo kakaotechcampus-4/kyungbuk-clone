@@ -302,56 +302,53 @@ def _collect_member_schedules(
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
     # TODO: 내 SQLite/임시 일정과 외부 MCP 일정 rows를 같은 구조로 합치세요.
-    # 외부 멤버 이름 정규화
-    norm_member_names = normalize_external_member_names(member_names)
-    norm_from, norm_to = normalize_external_schedule_date_bounds(norm_member_names, date_from, date_to)
-
     my_rows: list[dict[str, Any]] = []
-    for sch in personal_schedules: 
-        sch_date = sch.get("date") or ""
-        if norm_from and sch_date and sch_date < norm_from:
+    for sch in personal_schedules:
+        req = _structured_request_from_schedule_row(sch)
+        sch_date = req.date or ""
+        if date_from and sch_date and sch_date < date_from:
             continue
-        if norm_to and sch_date and sch_date > norm_to:
+        if date_to and sch_date and sch_date > date_to:
             continue
 
         my_rows.append(
             {
                 "member_name": "나",
-                "title": sch.get("title") or "제목 없음",
-                "date": sch.get("date"),
-                "start_time": sch.get("start_time"),
-                "end_time": sch.get("end_time"),
+                "title": req.title or "제목 없음",
+                "date": req.date,
+                "start_time": req.start_time,
+                "end_time": req.end_time,
                 "notes": sch.get("notes") or sch.get("reason"),
             }
         )
 
     # 외부 멤버 busy-time 가져오기
-    raw_external = call_mcp_tool_sync(
-        "extract_schedules_from_history",
-        {
-            "member_names": norm_member_names,
-            "date_from": norm_from,
-            "date_to": norm_to,
-        },
-    )
-
     ext_rows: list[dict[str, Any]] = []
+    fetch_error: str | None = None
     try:
+        raw_external = call_mcp_tool_sync(
+            "extract_schedules_from_history",
+            {
+                "member_names": member_names,
+                "date_from": date_from,
+                "date_to": date_to,
+            },
+        )
         parsed_external = json.loads(raw_external) if isinstance(raw_external, str) else raw_external
         if isinstance(parsed_external, dict):
             ext_rows = parsed_external.get("rows", [])
-    except Exception:
-        ext_rows = []
+    except Exception as e:
+        import logging
+        logging.error(f"외부 일정 조회 실패 (extract_schedules_from_history): {e}")
+        fetch_error = f"(외부 멤버 일정 조회 실패: {e})"
 
     combined_rows = [*my_rows, *ext_rows]
 
     summary = external_schedule_summary(combined_rows)
+    if fetch_error:
+        summary = f"{summary}\n{fetch_error}"
 
     return {
-        "ok": True,
-        "member_names": member_names,
-        "date_from": date_from,
-        "date_to": date_to,
         "rows": combined_rows,
         "schedule_summary": summary,
     }
@@ -372,7 +369,7 @@ def search_previous_conversations(
         "limit": limit,
     }
 
-    return call_mcp_tool_sync("search_previous_conversation", args)
+    return call_mcp_tool_sync("search_previous_conversations", args)
 
 
 @tool(args_schema=LoadConversationMessagesInput)
@@ -418,7 +415,18 @@ def create_shared_schedule(
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
     # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    args = {
+        "member_name": member_name,
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "notes": notes,
+        "source_conversation_id": source_conversation_id,
+        "schedule_id": schedule_id,
+    }
+
+    return call_mcp_tool_sync("create_shared_schedule", args)
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -429,7 +437,12 @@ def delete_shared_schedule(
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
     # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    args = {
+        "schedule_id": schedule_id,
+        "source_conversation_id": source_conversation_id,
+    }
+    
+    return call_mcp_tool_sync("delete_shared_schedule", args)
 
 
 @tool(args_schema=ListSharedSchedulesInput)
