@@ -386,9 +386,12 @@ def _collect_member_schedules(
 
     rows = personal_rows + external_rows
 
+    members = ["나", *normalized_member_names]
+
     return {
         "ok": True,
         "tool_name": "collect_member_schedules",
+        "members": members,
         "rows": rows,
         "schedule_summary": external_schedule_summary(rows),
     }
