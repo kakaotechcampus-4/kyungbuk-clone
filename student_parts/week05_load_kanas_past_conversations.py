@@ -7,7 +7,6 @@ from langchain.agents import create_agent
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from fixed.app_store import AppSQLiteStore
 from fixed.config import CONFIG
 from fixed.external_mcp import call_external_tool_payload
 from fixed.external_people_store import (
@@ -25,7 +24,7 @@ from fixed.mcp_client import (
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 from student_parts.week01_wake_up_nana import PERSONAL_SCHEDULES, join_system_prompt
 from student_parts.week02_structure_natural_language_requests import StructuredRequest
-from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week04_tools
+from student_parts.week04_retrieve_nanas_memory import SQLITE_STORE, week04_prompt_parts, week04_tools
 
 
 _WEEK05_AGENT: Any | None = None
@@ -189,8 +188,7 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
     # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
-    store = AppSQLiteStore(CONFIG.app_db_path)
-    saved_schedules = store.list_schedules(limit=200)
+    saved_schedules = SQLITE_STORE.list_schedules(limit=200)
     saved_ids = {row.get("schedule_id") for row in saved_schedules}
 
     current_session_id = current_session_scope()
@@ -304,23 +302,23 @@ def _collect_member_schedules(
             "notes": None,
         })
 
-    normalized_members = normalize_external_member_names(member_names)
-    normalized_from, normalized_to = normalize_external_schedule_date_bounds(member_names, date_from, date_to)
     external_payload = json.loads(
         call_mcp_tool_sync(
             "extract_schedules_from_history",
             {
-                "member_names": normalized_members,
-                "date_from": normalized_from,
-                "date_to": normalized_to,
+                "member_names": member_names,
+                "date_from": date_from,
+                "date_to": date_to,
             }
         )
     )
 
     external_rows = external_payload.get("rows", [])
-    rows.extend(external_rows)
 
-    return {"rows": rows, "schedule_summary": external_schedule_summary(rows)}
+    rows.extend(external_rows)
+    final_summary = external_schedule_summary(rows)
+
+    return {"rows": rows, "schedule_summary": final_summary}
 
 
 @tool(args_schema=SearchPreviousConversationsInput)
@@ -404,7 +402,17 @@ def create_shared_schedule(
     수정/삭제할 수 있습니다."""
 
     # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    args = {
+        "member_name": member_name,
+        "title": title,
+        "date": date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "notes": notes,
+        "source_conversation_id": source_conversation_id,
+        "schedule_id": schedule_id,
+    }
+    return call_mcp_tool_sync("create_shared_schedule", args)
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -419,7 +427,11 @@ def delete_shared_schedule(
     결과에서 해당 row가 더 이상 보이지 않아야 합니다."""
 
     # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    args = {
+        "schedule_id": schedule_id,
+        "source_conversation_id": source_conversation_id,
+    }
+    return call_mcp_tool_sync("delete_shared_schedule", args)
 
 
 @tool(args_schema=ListSharedSchedulesInput)
