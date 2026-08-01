@@ -519,6 +519,7 @@ def week05_prompt_parts() -> list[str]:
         "이전 대화는 search_previous_conversations로 찾아 결과의 conversation_id를 얻고, "
         "반드시 그 id로만 load_conversation_messages를 호출해 내용을 읽어. "
         "여러 멤버의 바쁜 시간을 모을 때는 collect_member_schedules를 사용해 조회해줘. "
+        "tool에 멤버 이름을 넘길 때는 '민준이'처럼 조사가 붙은 형태가 아니라 '민준' 같은 원형 이름만 넣어. "
         "검색 결과에 없는 건 절대 지어내지 말고 반드시 출처를 밝혀서 답해.",
     ]
 
