@@ -221,7 +221,7 @@ def json_payload(payload: dict[str, Any]) -> str:
 class SearchPreviousConversationsInput(BaseModel):
     """외부 이전 대화 검색 입력입니다."""
 
-    query: str
+    query: str = ""
     member_names: list[str] | None = None
     limit: int = Field(default=5, ge=1, le=50)
 
@@ -304,6 +304,7 @@ def _collect_member_schedules(
     normalized_from, normalized_to = normalize_external_schedule_date_bounds(
         member_names, date_from, date_to
     )
+    normalized_members = normalize_external_member_names(member_names)
 
     rows: list[dict[str, Any]] = []
 
@@ -329,30 +330,45 @@ def _collect_member_schedules(
         )
 
     # 2) 외부 멤버 busy-time을 MCP tool로 읽어 같은 구조로 합칩니다.
-    external_payload = call_mcp_tool_sync(
-        "extract_schedules_from_history",
-        {
-            "member_names": normalize_external_member_names(member_names),
-            "date_from": normalized_from,
-            "date_to": normalized_to,
-        },
-    )
-    external = json.loads(external_payload)
-    for row in external.get("rows", []):
-        rows.append(
+    #    "나" 일정은 앱 DB가 원본이고 외부 저장소에는 동기화 복사본만 있으므로,
+    #    외부 조회 대상에서 빼서 같은 일정이 rows에 두 번 들어가지 않게 합니다.
+    external_member_names = [
+        name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME
+    ]
+    if external_member_names:
+        external_payload = call_mcp_tool_sync(
+            "extract_schedules_from_history",
             {
-                "member_name": row.get("member_name"),
-                "title": row.get("title"),
-                "date": row.get("date"),
-                "start_time": row.get("start_time"),
-                "end_time": row.get("end_time"),
-                "notes": row.get("notes"),
-            }
+                "member_names": external_member_names,
+                "date_from": normalized_from,
+                "date_to": normalized_to,
+            },
         )
+        external = json.loads(external_payload)
+        for row in external.get("rows", []):
+            rows.append(
+                {
+                    "member_name": row.get("member_name"),
+                    "title": row.get("title"),
+                    "date": row.get("date"),
+                    "start_time": row.get("start_time"),
+                    "end_time": row.get("end_time"),
+                    "notes": row.get("notes"),
+                }
+            )
 
+    # rows에만 member_name이 있으면 일정이 0건인 멤버는 payload에서 사라집니다.
+    # "조회했는데 일정이 없음"과 "조회되지 않음"을 구분할 수 있도록 조회 조건도 함께 남깁니다.
+    members_with_rows = {row.get("member_name") for row in rows}
     return {
         "ok": True,
         "tool_name": "collect_member_schedules",
+        "members": normalized_members,
+        "date_from": normalized_from,
+        "date_to": normalized_to,
+        "members_without_schedules": [
+            name for name in normalized_members if name not in members_with_rows
+        ],
         "rows": rows,
         "schedule_summary": external_schedule_summary(rows),
     }
@@ -360,11 +376,15 @@ def _collect_member_schedules(
 
 @tool(args_schema=SearchPreviousConversationsInput)
 def search_previous_conversations(
-    query: str,
+    query: str = "",
     member_names: list[str] | None = None,
     limit: int = 5,
 ) -> str:
-    """외부 SQLite 데이터베이스에 저장된 이전 대화를 검색합니다. query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다."""
+    """외부 SQLite 데이터베이스에 저장된 이전 대화를 검색합니다.
+
+    query에는 LLM이 고른 짧은 핵심 명사나 구를 넣습니다. 찾을 키워드가 없고 특정
+    사람의 대화를 통째로 훑고 싶으면 query를 비우고 member_names만 넘깁니다.
+    """
 
     return call_mcp_tool_sync(
         "search_previous_conversations",
@@ -507,7 +527,9 @@ def week05_prompt_parts() -> list[str]:
             "- 과거 대화의 '내용'을 키워드로 찾아야 할 때만 search_previous_conversations를 씁니다. 이 검색은 "
             "query를 토큰화하지 않고 문자열 그대로 부분일치(LIKE)로 찾으므로, 문장이나 여러 단어를 나열하지 말고 "
             "실제 대화에 나올 법한 '한 개의 짧은 핵심 단어'만 넣으세요(예: '회의', 'QA'). 특정 사람으로 좁히려면 "
-            "query 대신 member_names 인자를 사용하고, 필요하면 load_conversation_messages로 전체 메시지를 확인합니다.\n"
+            "query 대신 member_names 인자를 사용하고, 사람 이름을 query에 넣지 마세요. '철수랑 무슨 얘기 했지?'처럼 "
+            "찾을 키워드가 없으면 query를 비우고 member_names만 넘겨 그 사람의 대화를 통째로 조회하고, "
+            "필요하면 load_conversation_messages로 전체 메시지를 확인합니다.\n"
             "- 공유 일정 저장소를 직접 확인·보정할 때는 list_shared_schedules / create_shared_schedule / "
             "delete_shared_schedule를 사용하고, 개인 저장·기억(RAG)은 이전 주차 도구로 처리합니다.\n"
             "도구가 빈 결과를 주면 곧바로 없다고 답하지 말고, 도구·query·기간·member_names가 요청과 맞았는지 "
