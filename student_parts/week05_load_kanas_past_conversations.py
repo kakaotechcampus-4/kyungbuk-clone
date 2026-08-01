@@ -194,7 +194,7 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     sqlite_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200)
     sqlite_ids = {schedule.get("schedule_id") for schedule in sqlite_schedules if schedule.get("schedule_id")}
 
-    session_id = current_session_scope()
+    session_id = current_session_scope() or DEFAULT_SESSION_SCOPE
     temp_schedules = [
         schedule
         for schedule in PERSONAL_SCHEDULES
@@ -284,6 +284,11 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
     )
 
 
+def _sort_key_value(value: str | None) -> tuple[bool, str]:
+    """None/미정 값을 정렬에서 항상 맨 뒤로 보내는 helper 함수"""
+    is_unspecified = not value or value in ("미정", "시간 미정")
+    return (is_unspecified, "" if is_unspecified else value)
+
 def _collect_member_schedules(
     *,
     member_names: list[str],
@@ -315,16 +320,22 @@ def _collect_member_schedules(
             }
         )
 
-    external_payload = json.loads(
-        call_mcp_tool_sync(
-            "extract_schedules_from_history",
-            {
-                "member_names": member_names,
-                "date_from": date_from,
-                "date_to": date_to,
-            }
-        )
+    external_payload_raw = call_mcp_tool_sync(
+        "extract_schedules_from_history",
+        {
+            "member_names": normalized_members,
+            "date_from":normalized_date_from,
+            "date_to": normalized_date_to,
+        }
     )
+
+    try:
+        external_payload = json.loads(external_payload_raw)
+    except (TypeError, json.JSONDecodeError):
+        external_payload = {}
+    if not isinstance(external_payload, dict):
+        external_payload = {}
+
 
     for row in external_payload.get("rows", []):
         rows.append(
@@ -338,7 +349,13 @@ def _collect_member_schedules(
             }
         )
 
-    rows.sort(key=lambda row: (row.get("date") or "", row.get("start_time") or "", row.get("member_name") or ""))
+    rows.sort(
+        key=lambda row: (
+            _sort_key_value(row.get("date")),
+            _sort_key_value(row.get("start_time")),
+            row.get("member_name") or "",
+        )
+    )
 
     return {
         "rows": rows,
@@ -457,7 +474,7 @@ def week05_tools() -> list[Any]:
         load_conversation_messages,
         extract_schedules_from_history,
         create_shared_schedule,
-        delete_shared_schedule,
+        # delete_shared_schedule,
         list_shared_schedules,
         collect_member_schedules,
     ]
@@ -476,7 +493,10 @@ def week05_prompt_parts() -> list[str]:
         *week04_prompt_parts(),
         # TODO: Week 5 Kana history agent system prompt를 자유롭게 추가하세요.
         "다른 팀원의 일정이나 내 일정과 합쳐서 봐야 하는 요청은 collect_member_schedules를 사용해.\n"
-        "이전 대화 자체를 찾거나 원문을 확인해야 할 때는 search_previous_conversations/load_conversation_messages/extract_schedules_from_history를 사용하고 "
+        "이전 대화를 찾거나 원문을 확인해야 할 때는 아래 기준으로 셋 중 하나만 선택해:\n"
+        "- 아직 어떤 대화인지 모르고 키워드로 찾아야 한다면 search_previous_conversations\n"
+        "- 이미 conversation_id를 알고 원문 전체가 필요하다면 load_conversation_messages\n"
+        "- 원문 없이 구조화된 일정만 필요하다면 extract_schedules_from_history\n"
         "등록된 공유 일정 목록 자체를 조회할 때는 list_shared_schedules를 사용해."
     ]
 
