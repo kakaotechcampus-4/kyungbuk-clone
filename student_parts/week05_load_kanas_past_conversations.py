@@ -11,6 +11,7 @@ from fixed.app_store import AppSQLiteStore
 from fixed.config import CONFIG
 from fixed.external_mcp import call_external_tool_payload
 from fixed.external_people_store import (
+    PERSONAL_SHARED_MEMBER_NAME,
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
@@ -295,7 +296,9 @@ class ListSharedSchedulesInput(BaseModel):
 class CollectMemberSchedulesInput(BaseModel):
     """내 일정과 외부 멤버 busy-time 수집 입력입니다."""
 
-    member_names: list[str]
+    member_names: list[str] = Field(
+        description="나를 제외한 외부 멤버 이름 목록입니다. 내 일정은 이 tool이 항상 자동으로 포함하므로 여기에 '나'는 넣지 않습니다."
+    )
     date_from: str
     date_to: str
 
@@ -323,7 +326,14 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
-    normalized_members = normalize_external_member_names(member_names)
+    # 내 일정은 personal_rows로 이미 항상 포함되므로, 외부 조회 대상에 "나"가 섞여 있어도
+    # 여기서 제거합니다. LLM이 member_names에 "나"를 넣는지 여부가 결과에 영향을 주지 않도록
+    # (외부 복사본과의 중복을 막도록) 하기 위함입니다.
+    normalized_members = [
+        name
+        for name in normalize_external_member_names(member_names)
+        if name != PERSONAL_SHARED_MEMBER_NAME
+    ]
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
         member_names, date_from, date_to
     )
@@ -345,7 +355,7 @@ def _collect_member_schedules(
         structured = _structured_request_from_schedule_row(schedule)
         personal_rows.append(
             {
-                "member_name": "나",
+                "member_name": PERSONAL_SHARED_MEMBER_NAME,
                 "title": structured.title,
                 "date": structured.date,
                 "start_time": structured.start_time,
