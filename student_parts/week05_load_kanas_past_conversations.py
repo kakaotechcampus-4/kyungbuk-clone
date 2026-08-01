@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-
+from datetime import datetime, timedelta 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
@@ -181,7 +181,16 @@ call_mcp_tool_sync = call_local_mcp_tool_sync
 load_langchain_mcp_tools = load_local_mcp_tools
 load_langchain_mcp_tools_sync = load_local_mcp_tools_sync
 
-
+def _resolve_end_time(start_time: str, end_time: str | None) -> str:
+    """end_time이 '미정'이거나 없으면 start_time 기준 기본 소요시간을 적용합니다."""
+    if end_time and end_time != "미정":
+        return end_time
+    try:
+        start = datetime.strptime(start_time, "%H:%M")
+        return (start + timedelta(hours=1)).strftime("%H:%M")
+    except (ValueError, TypeError):
+        return end_time or "미정"
+    
 def _schedule_scope(schedule: dict[str, Any]) -> str:
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
 
@@ -316,7 +325,7 @@ def _collect_member_schedules(
             "title": structured.title,
             "date": structured.date,
             "start_time": structured.start_time,
-            "end_time": structured.end_time,
+            "end_time": _resolve_end_time(structured.start_time, structured.end_time),
             "notes": "",
         })
 
