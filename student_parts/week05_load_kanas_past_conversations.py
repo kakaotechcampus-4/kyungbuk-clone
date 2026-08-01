@@ -319,14 +319,21 @@ def _collect_member_schedules(
             continue  
         if normalized_date_to and (date is None or date > normalized_date_to):
             continue  
+        if request.start_time and request.end_time:
+            completeness = "complete"
+        elif request.start_time:
+            completeness = "start_only"
+        else:
+            completeness = "date_only"
         rows.append(
             {
-                "member_name": PERSONAL_SHARED_MEMBER_NAME,  
+                "member_name": PERSONAL_SHARED_MEMBER_NAME,
                 "title": request.title,
                 "date": date,
                 "start_time": request.start_time,
                 "end_time": request.end_time,
-                "notes": None, 
+                "notes": None,
+                "time_completeness": completeness,
             }
         )
 
@@ -337,6 +344,13 @@ def _collect_member_schedules(
         )
     )  
     for row in external_payload.get("rows", []):  # MCP 서버가 이미 정규화해서 돌려줌
+        has_end_time = row.get("end_time") not in (None, "", "미정")
+        if row.get("start_time") and has_end_time:
+            completeness = "complete"
+        elif row.get("start_time"):
+            completeness = "start_only"
+        else:
+            completeness = "date_only"
         rows.append(
             {
                 "member_name": row.get("member_name"),
@@ -344,11 +358,14 @@ def _collect_member_schedules(
                 "date": row.get("date"),
                 "start_time": row.get("start_time"),
                 "end_time": row.get("end_time"),
-                "notes": row.get("notes"),  
+                "notes": row.get("notes"),
+                "time_completeness": completeness,
             }
         )
 
-    return {"rows": rows, "schedule_summary": external_schedule_summary(rows)}
+    busy_rows = [row for row in rows if row["time_completeness"] == "complete"]
+
+    return {"rows": rows, "busy_rows": busy_rows, "schedule_summary": external_schedule_summary(rows)}
 
 
 @tool(args_schema=SearchPreviousConversationsInput)
@@ -438,7 +455,7 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
     personal_schedules = _personal_schedules_for_current_scope(date_from=date_from, date_to=date_to)
     payload = _collect_member_schedules(member_names=member_names, date_from=date_from, date_to=date_to, personal_schedules=personal_schedules)
 
-    return json_payload(payload)
+    return json_payload({"ok": True, "rows": payload["rows"], "busy_rows": payload["busy_rows"]})
 
 
 def week05_tools() -> list[Any]:
@@ -478,6 +495,14 @@ def week05_prompt_parts() -> list[str]:
             "나와 다른 멤버들의 일정을 함께 보고 회의 시간을 조율해야 하면 검색 없이 바로 "
             "collect_member_schedules로 내 일정과 외부 멤버 busy-time을 한 번에 모으세요. 이때도 날짜를 "
             "특정하지 않았다면 마찬가지로 충분히 넓은 범위를 쓰세요. "
+            "collect_member_schedules 결과의 busy_rows는 시작·종료 시간이 모두 확실한 일정만 모아둔 것입니다. "
+            "바쁜 시간을 답할 때는 이 busy_rows에 있는 항목만 \"확실히 안 되는 시간대\"로 안내하고, 여기 없는 "
+            "일정을 만들어내지 마세요. rows 중 busy_rows에 없는(time_completeness가 start_only 또는 "
+            "date_only인) 항목은 \"확실히 안 되는 시간대\"에 넣지 말고 별도로 \"참고\"라고 표시해서 안내하세요. "
+            "참고 항목은 \"그런 일정이 있으니 참고하세요\"처럼 뭉뚱그리지 말고, \"참고: [멤버] [날짜] "
+            "[시작시간]부터 시작하는 [제목] 일정이 있어요\" 형식으로 각 일정을 하나씩 구체적으로 나열하세요. "
+            "member_name/title/date/start_time이 모두 같은 항목은 rows에 여러 번 나와도 한 번만 나열하세요. "
+            "같은 일정을 두 곳에 중복으로 넣지 마세요. "
             "공유 일정 저장소에 등록된 일정 자체를 조회할 때는 검색 없이 바로 list_shared_schedules를 사용하세요. "
             "create_shared_schedule과 delete_shared_schedule은 아직 구현되지 않았으니 절대 호출하지 마세요. "
             "extract_schedules_from_history, list_shared_schedules, collect_member_schedules 결과에 "
