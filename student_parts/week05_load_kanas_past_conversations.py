@@ -191,9 +191,9 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
 
     saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200)
     saved_ids = {
-        str(schedule_id)
+        schedule["schedule_id"]
         for schedule in saved_schedules
-        if (schedule_id := schedule.get("schedule_id") or schedule.get("id"))
+        if schedule.get("schedule_id")
     }
 
     session_id = current_session_scope()
@@ -201,8 +201,8 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     for schedule in PERSONAL_SCHEDULES:
         if _schedule_scope(schedule) != session_id:
             continue
-        schedule_id = schedule.get("schedule_id") or schedule.get("id")
-        if schedule_id and str(schedule_id) in saved_ids:
+        schedule_id = schedule.get("id")
+        if schedule_id and schedule_id in saved_ids:
             continue
         temporary_schedules.append(schedule)
 
@@ -279,7 +279,6 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
     """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
 
     return StructuredRequest(
-        kind="personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -308,7 +307,7 @@ def _collect_member_schedules(
     rows: list[dict[str, Any]] = []
     for schedule in personal_schedules:
         request = _structured_request_from_schedule_row(schedule)
-        schedule_date = str(request.date or "").split("T", 1)[0].strip()
+        schedule_date = (request.date or "").split("T", 1)[0].strip()
         if not schedule_date:
             continue
         if normalized_date_from and schedule_date < normalized_date_from:
@@ -411,8 +410,19 @@ def create_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
-    # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    return call_mcp_tool_sync(
+        "create_shared_schedule",
+        {
+            "member_name": member_name,
+            "title": title,
+            "date": date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "notes": notes,
+            "source_conversation_id": source_conversation_id,
+            "schedule_id": schedule_id,
+        },
+    )
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -422,8 +432,13 @@ def delete_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
-    # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    return call_mcp_tool_sync(
+        "delete_shared_schedule",
+        {
+            "schedule_id": schedule_id,
+            "source_conversation_id": source_conversation_id,
+        },
+    )
 
 
 @tool(args_schema=ListSharedSchedulesInput)
@@ -470,6 +485,8 @@ def week05_tools() -> list[Any]:
         search_previous_conversations,
         load_conversation_messages,
         extract_schedules_from_history,
+        create_shared_schedule,
+        delete_shared_schedule,
         list_shared_schedules,
         collect_member_schedules,
     ]
@@ -493,7 +510,9 @@ def week05_prompt_parts() -> list[str]:
             "load_conversation_messages로 전체 메시지를 확인한다. 외부 멤버의 일정만 필요하면 "
             "extract_schedules_from_history를 사용하고, 내 일정과 외부 멤버 일정을 함께 비교할 "
             "때는 collect_member_schedules를 사용한다. 공유 일정 저장소의 row를 확인할 때는 "
-            "list_shared_schedules를 사용한다. tool 결과의 rows와 schedule_summary만 근거로 "
+            "list_shared_schedules를 사용하고, 공유 일정을 직접 등록하거나 삭제할 때는 각각 "
+            "create_shared_schedule과 delete_shared_schedule을 사용한다. tool 결과의 rows와 "
+            "schedule_summary만 근거로 "
             "답하며 조회되지 않은 내용은 추측하지 않는다. Week 5에서는 일정 조회와 busy-time "
             "설명까지만 수행하고 여러 사람의 최종 회의 시간을 선택하거나 확정하지 않는다."
         ),
