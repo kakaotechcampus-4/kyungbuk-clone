@@ -416,7 +416,8 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
         title=schedule.get("title"),
         date=schedule.get("date"),
         start_time=schedule.get("start_time"),
-        end_time=schedule.get("end_time"),
+        # week1 관례 "미정"(끝 시간 없음)은 week3 스키마의 None 으로 번역 (validator 가 "미정"을 거부)
+        end_time=None if schedule.get("end_time") in (None, "", "미정") else schedule.get("end_time"),
         members=schedule.get("attendees") or [],         # attendees → members 에 저장, 없으면 None 저장
         original_text=schedule.get("title") or "",       
         source_schedule_id=schedule.get("id"),           # id → source_schedule_id 에 저장
