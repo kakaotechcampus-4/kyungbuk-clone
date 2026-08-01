@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 import json
 from typing import Any
 
@@ -232,8 +233,8 @@ class ExtractSchedulesFromHistoryInput(BaseModel):
     """외부 멤버 일정 추출 입력입니다."""
 
     member_names: list[str]
-    date_from: str
-    date_to: str
+    date_from: str = Field(description="조회 시작일. YYYY-MM-DD 또는 ISO datetime 형식이며 빈 값은 허용하지 않습니다.")
+    date_to: str = Field(description="조회 종료일. YYYY-MM-DD 또는 ISO datetime 형식이며 빈 값은 허용하지 않습니다.")
 
 
 class CreateSharedScheduleInput(BaseModel):
@@ -270,8 +271,8 @@ class CollectMemberSchedulesInput(BaseModel):
     """내 일정과 외부 멤버 busy-time 수집 입력입니다."""
 
     member_names: list[str]
-    date_from: str
-    date_to: str
+    date_from: str = Field(description="수집 시작일. YYYY-MM-DD 또는 ISO datetime 형식이며 빈 값은 허용하지 않습니다.")
+    date_to: str = Field(description="수집 종료일. YYYY-MM-DD 또는 ISO datetime 형식이며 빈 값은 허용하지 않습니다.")
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
@@ -432,6 +433,31 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
         date_from,
         date_to,
     )
+    try:
+        start_date = date.fromisoformat(normalized_date_from)
+        end_date = date.fromisoformat(normalized_date_to)
+    except ValueError:
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "collect_member_schedules",
+                "error_type": "invalid_date_range",
+                "error": "date_from과 date_to는 비어 있지 않은 YYYY-MM-DD 또는 ISO datetime 형식이어야 합니다.",
+                "rows": [],
+                "schedule_summary": "",
+            }
+        )
+    if start_date > end_date:
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "collect_member_schedules",
+                "error_type": "invalid_date_range",
+                "error": "date_from은 date_to보다 늦을 수 없습니다.",
+                "rows": [],
+                "schedule_summary": "",
+            }
+        )
     collected = _collect_member_schedules(
         member_names=member_names,
         date_from=normalized_date_from,
@@ -473,7 +499,8 @@ def week05_prompt_parts() -> list[str]:
             "외부 멤버의 이전 대화와 일정은 직접 DB를 읽지 말고 MCP wrapper tool로만 조회한다. "
             "대화 근거가 필요하면 search_previous_conversations로 찾은 뒤 conversation_id로 "
             "load_conversation_messages를 호출한다. 외부 멤버 일정 조회에는 구체적인 멤버 이름을 넣고, "
-            "이름이 없으면 빈 목록으로 조회하지 말고 사용자에게 확인한다. "
+            "이름이 없으면 빈 목록으로 조회하지 말고 사용자에게 확인한다. 날짜 범위는 비워 두지 말고 "
+            "YYYY-MM-DD 또는 ISO datetime 형식으로 넣으며, 날짜를 알 수 없으면 사용자에게 확인한다. "
             "공유 저장소의 등록 현황은 list_shared_schedules로 확인하며 필요하면 나를 포함한다. "
             "내 일정과 외부 멤버 busy-time을 함께 볼 때는 collect_member_schedules를 사용하고, "
             "이 도구에서 나의 일정은 앱 SQLite 결과만 근거로 한다."
