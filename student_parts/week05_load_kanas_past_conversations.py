@@ -11,6 +11,7 @@ from fixed.app_store import AppSQLiteStore
 from fixed.config import CONFIG
 from fixed.external_mcp import call_external_tool_payload
 from fixed.external_people_store import (
+    PERSONAL_SHARED_MEMBER_NAME,
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
@@ -305,7 +306,12 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
-    normalized_members = normalize_external_member_names(member_names)
+    # 내 일정은 my_rows 경로가 담당하므로 외부(MCP) 검색 대상에서 "나"는 제외
+    # (공유 사본이 PERSONAL_SHARED_MEMBER_NAME 이름표로 저장되어 중복 유입되는 것 방지)
+    external_member_names = [
+        name for name in member_names if name != PERSONAL_SHARED_MEMBER_NAME
+    ]
+    normalized_members = normalize_external_member_names(external_member_names)
     normalized_from, normalized_to = normalize_external_schedule_date_bounds(
         member_names, date_from, date_to
     )
