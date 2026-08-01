@@ -304,7 +304,8 @@ def _collect_member_schedules(
     for schedule in personal_schedules:
         structured = _structured_request_from_schedule_row(schedule)
         schedule_date = structured.date or ""
-        if schedule_date and not (normalized_date_from <= schedule_date <= normalized_date_to):
+        # 날짜가 없으면 요청한 기간 안에 있는지 확인할 수 없으니 후보에서 제외한다.
+        if not schedule_date or not (normalized_date_from <= schedule_date <= normalized_date_to):
             continue
         rows.append(
             {
@@ -388,8 +389,19 @@ def create_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
 
-    # TODO: call_mcp_tool_sync("create_shared_schedule", args)로 공유 일정 row를 생성/갱신하세요.
-    ...
+    return call_mcp_tool_sync(
+        "create_shared_schedule",
+        {
+            "member_name": member_name,
+            "title": title,
+            "date": date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "notes": notes,
+            "source_conversation_id": source_conversation_id,
+            "schedule_id": schedule_id,
+        },
+    )
 
 
 @tool(args_schema=DeleteSharedScheduleInput)
@@ -399,8 +411,10 @@ def delete_shared_schedule(
 ) -> str:
     """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
 
-    # TODO: call_mcp_tool_sync("delete_shared_schedule", args)로 공유 일정을 삭제하세요.
-    ...
+    return call_mcp_tool_sync(
+        "delete_shared_schedule",
+        {"schedule_id": schedule_id, "source_conversation_id": source_conversation_id},
+    )
 
 
 @tool(args_schema=ListSharedSchedulesInput)
@@ -449,7 +463,8 @@ def week05_tools() -> list[Any]:
         extract_schedules_from_history,
         list_shared_schedules,
         collect_member_schedules,
-        # create_shared_schedule, delete_shared_schedule은 추가 과제 구현 후 여기에 추가한다.
+        create_shared_schedule,
+        delete_shared_schedule,
     ]
 
 
@@ -476,6 +491,9 @@ def week05_prompt_parts() -> list[str]:
         - "나랑 다른 사람들 다 같이 언제 비나" 처럼 여러 사람의 일정을 한 번에 봐야 하면
           collect_member_schedules를 호출한다. 이 tool은 내 일정과 외부 멤버 busy-time을
           같은 구조로 합쳐서 반환한다.
+        - 공유 일정 저장소에 일정을 직접 등록/수정해야 하면 create_shared_schedule을,
+          삭제해야 하면 delete_shared_schedule을 호출한다. 등록/삭제 후에는 list_shared_schedules로
+          다시 조회해서 반영됐는지 확인한다.
 
         범위:
         - 이번 주는 각자의 바쁜 시간을 모으는 것까지다. 모은 일정 중 실제로 다 같이 가능한
