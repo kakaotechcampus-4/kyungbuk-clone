@@ -190,7 +190,7 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
     store = AppSQLiteStore(CONFIG.app_db_path)
-    db_schedules = store.list_schedules(limit=100)
+    db_schedules = store.list_schedules(limit=100, kind="personal_schedule")
     current_scope = current_session_scope()
     temp_schedules = [s for s in PERSONAL_SCHEDULES if _schedule_scope(s) == current_scope]
     
@@ -292,24 +292,23 @@ def _collect_member_schedules(
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
     norm_members = normalize_external_member_names(member_names)
-    d_from, d_to = normalize_external_schedule_date_bounds(date_from, date_to)
+    d_from, d_to = normalize_external_schedule_date_bounds(member_names, date_from, date_to)
     
     rows = []
     
-    if "나" in norm_members:
-        for s in personal_schedules:
-            req = _structured_request_from_schedule_row(s)
-            if not req.date:
-                continue
-            if d_from <= req.date <= d_to:
-                rows.append({
-                    "member_name": "나",
-                    "title": req.title or req.original_text,
-                    "date": req.date,
-                    "start_time": req.start_time or "00:00",
-                    "end_time": req.end_time or "미정",
-                    "notes": ", ".join(req.members) if req.members else None,
-                })
+    for s in personal_schedules:
+        req = _structured_request_from_schedule_row(s)
+        if not req.date:
+            continue
+        if d_from <= req.date <= d_to:
+            rows.append({
+                "member_name": "나",
+                "title": req.title or req.original_text,
+                "date": req.date,
+                "start_time": req.start_time or "00:00",
+                "end_time": req.end_time or "미정",
+                "notes": ", ".join(req.members) if req.members else None,
+            })
                 
     ext_members = [m for m in norm_members if m != "나"]
     if ext_members:
@@ -317,12 +316,9 @@ def _collect_member_schedules(
             "extract_schedules_from_history", 
             {"member_names": ext_members, "date_from": d_from, "date_to": d_to}
         )
-        try:
-            ext_dict = json.loads(ext_res)
-            if "rows" in ext_dict:
-                rows.extend(ext_dict["rows"])
-        except json.JSONDecodeError:
-            pass
+        ext_dict = json.loads(ext_res)
+        if "rows" in ext_dict:
+            rows.extend(ext_dict["rows"])
             
     rows.sort(key=lambda r: (r["date"], r.get("start_time", "00:00")))
     
