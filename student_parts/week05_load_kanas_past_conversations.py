@@ -32,6 +32,11 @@ from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week
 
 _WEEK05_AGENT: Any | None = None
 
+call_mcp_tool = call_local_mcp_tool
+call_mcp_tool_sync = call_local_mcp_tool_sync
+load_langchain_mcp_tools = load_local_mcp_tools
+load_langchain_mcp_tools_sync = load_local_mcp_tools_sync
+
 def _schedule_scope(schedule: dict[str, Any]) -> str:
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
 
@@ -161,15 +166,24 @@ def _collect_member_schedules(
             continue
         if normalized_date_to and schedule_date > normalized_date_to:
             continue
+        end_time = request.end_time or "미정"
+        base_notes = schedule.get("notes") or (
+            "앱 SQLite 저장 일정" if schedule.get("schedule_id") else "현재 대화 임시 일정"
+        )
+        notes = (
+            f"{base_notes} (종료 시간 미정 - 확정 전까지는 해당 날짜 전체가 예약된 것으로 간주)"
+            if end_time == "미정"
+            else base_notes
+        )
+
         my_rows.append(
             {
                 "member_name": "나",
                 "title": request.title or "제목 없음",
                 "date": schedule_date,
                 "start_time": request.start_time or "미정",
-                "end_time": request.end_time or "미정",
-                "notes": schedule.get("notes")
-                or ("앱 SQLite 저장 일정" if schedule.get("schedule_id") else "현재 대화 임시 일정"),
+                "end_time": end_time,
+                "notes": notes,
             }
         )
 
