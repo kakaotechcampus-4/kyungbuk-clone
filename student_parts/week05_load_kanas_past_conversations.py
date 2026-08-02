@@ -373,7 +373,8 @@ def _collect_member_schedules(
     return {
         "ok": bool(external_payload.get("ok", True)),
         "tool_name": "collect_member_schedules",
-        "member_names": requested_members,
+        # "나"는 항상 대상에 포함되므로 requested_members 대신 명시적으로 더해준다.
+        "member_names": [PERSONAL_SHARED_MEMBER_NAME, *external_members],
         "external_member_names": external_members,
         "date_from": normalized_date_from,
         "date_to": normalized_date_to,
