@@ -201,7 +201,7 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     ret: list[dict[str, Any]] = []
 
     sqlite_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(
-        limit=50,
+        limit=200,
         kind='personal_schedule'
     )
     current_session = current_session_scope()
@@ -315,8 +315,10 @@ class SturcturedSchedule(BaseModel):
                     notes=row.get("notes") or ""
                 )
             elif 'id' in row or 'request_id' in row:
+                attendees = ['나']
+                attendees.extend(row.get("attendees") or [])
                 return cls(
-                    member_name=", ".join(row.get("attendees", [])),
+                    member_name=','.join(attendees),
                     title=row.get("title") or "",
                     date=row.get("date") or "",
                     start_time=row.get("start_time") or "",
