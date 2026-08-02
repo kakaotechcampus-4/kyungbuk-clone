@@ -487,6 +487,9 @@ def week05_prompt_parts() -> list[str]:
     return [
         *week04_prompt_parts(),
         (
+            f"오늘 날짜는 {current_app_date_iso()}입니다. extract_schedules_from_history, "
+            "list_shared_schedules, collect_member_schedules의 date_from/date_to는 이 날짜를 기준으로 "
+            "\"내일\", \"다음 주 화요일\"처럼 상대적인 날짜 표현을 YYYY-MM-DD로 직접 계산해서 넣으세요. "
             "외부 팀원의 이전 대화나 일정을 물어보면 Week 1~4의 내부 검색 도구가 아니라 "
             "외부 SQLite/MCP 도구를 사용하세요. "
             "질문의 대상이 사용자 자신이 아니라 철수, 영희처럼 특정 팀원의 발화나 일정이면, Week 5 규칙을 우선 적용하세요. "
