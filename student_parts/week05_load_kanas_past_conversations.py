@@ -298,6 +298,8 @@ def _collect_member_schedules(
             "notes": "",
         }
         for s in personal_schedules
+        if (not date_from or (s.get("date") or "") >= date_from)
+        and (not date_to or (s.get("date") or "") <= date_to)
     ]
     normalized_names = normalize_external_member_names(member_names)
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
