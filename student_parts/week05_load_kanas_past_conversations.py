@@ -201,6 +201,7 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     ret: list[dict[str, Any]] = []
 
     sqlite_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(
+        limit=50,
         kind='personal_schedule'
     )
     current_session = current_session_scope()
@@ -361,9 +362,11 @@ def _collect_member_schedules(
             continue
         rows.append(SturcturedSchedule.normalize(schedule).model_dump())
 
+    schedule_summary = external_schedule_summary(rows=rows)
+
     ret = {
         "rows": rows,
-        "schedule_summary": data.get('schedule_summary', ""),
+        "schedule_summary": schedule_summary,
         "member_name": normalized_member_names
     }
 
