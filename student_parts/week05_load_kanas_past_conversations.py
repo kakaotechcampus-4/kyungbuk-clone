@@ -532,6 +532,8 @@ def load_conversation_messages(conversation_id: str) -> str:
 def extract_schedules_from_history(member_names: list[str], date_from: str, date_to: str) -> str:
     """외부 SQLite 이전 대화에서 다른 멤버들의 일정만 추출합니다.
 
+    '철수는 언제 바빠?'처럼 다른 멤버의 일정·바쁜 시간·가능 시간 질문에 사용합니다.
+    지난 대화 내용 검색(search_previous_conversations)이 아니라 이 tool이 담당합니다.
     내 일정은 포함되지 않습니다. 나를 포함해 여러 사람의 일정을 한 번에 모아야
     하면 collect_member_schedules를 사용합니다.
     """
@@ -702,7 +704,7 @@ WEEK04_SEARCH_SOURCES["search_previous_conversations"] = {
 }
 WEEK04_SEARCH_SOURCES["extract_schedules_from_history"] = {
     "what": "외부 MCP 저장소에 있는 다른 멤버들의 일정(busy-time)",
-    "when": "다른 멤버들의 일정이나 바쁜 시간을 확인할 때",
+    "when": "'철수는 언제 바빠?'처럼 다른 멤버의 일정·바쁜 시간·가능 시간을 확인할 때(대화 검색이 아니라 이 tool)",
 }
 
 # Week 4까지의 검색은 전부 "내" 기억이었다. Week 5부터는 다른 멤버들의 기록이 외부
@@ -720,6 +722,8 @@ WEEK05_EXTERNAL_SOURCE_PROMPT = (
     "내 일정까지 함께 모아야 하면 collect_member_schedules를 사용한다(내 일정은 항상 포함된다). "
     "'공유 일정'을 보여 달라는 요청은 내 일정 목록(personal_list_saved_schedules)이 아니라 "
     "list_shared_schedules(외부 공유 일정 저장소)로 조회한다. "
+    "공유 일정 저장소에서 사용자 본인의 일정은 member_name '나'로 저장되므로, "
+    "조회·삭제 필터에 '나나'(내 이름)나 다른 표현을 쓰지 말고 '나'를 쓴다. "
     "외부 tool 결과의 rows와 schedule_summary를 근거로만 답하고, "
     "외부 기록에 없는 멤버 일정을 지어내지 않는다. "
     "여러 사람의 최종 회의 시간을 고르는 조율은 아직 Week 5 범위가 아니다."
