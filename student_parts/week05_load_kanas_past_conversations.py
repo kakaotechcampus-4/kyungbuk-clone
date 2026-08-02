@@ -193,12 +193,19 @@ def _personal_schedules_for_current_scope(date_from: str | None = None, date_to:
 
     saved = AppSQLiteStore(CONFIG.app_db_path).list_schedules(date_from=date_from, date_to=date_to, limit=200)
     saved_ids = {row.get("schedule_id") for row in saved}
+    saved_contents = {(row.get("title"), row.get("date"), row.get("start_time"), row.get("end_time")) for row in saved}
 
     scope = current_session_scope()
     temp_only = []
     for schedule in PERSONAL_SCHEDULES:
-        if _schedule_scope(schedule) == scope and schedule.get("id") not in saved_ids:
-            temp_only.append(schedule)
+        if _schedule_scope(schedule) != scope:
+            continue
+        if schedule.get("id") in saved_ids:
+            continue
+        content_key = (schedule.get("title"), schedule.get("date"), schedule.get("start_time"), schedule.get("end_time"))
+        if content_key in saved_contents:
+            continue
+        temp_only.append(schedule)
 
     return saved + temp_only
 
