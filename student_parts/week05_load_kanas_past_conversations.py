@@ -279,6 +279,7 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
     """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
 
     return StructuredRequest(
+        kind="personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
