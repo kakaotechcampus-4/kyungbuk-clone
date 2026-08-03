@@ -182,12 +182,20 @@ load_langchain_mcp_tools = load_local_mcp_tools
 load_langchain_mcp_tools_sync = load_local_mcp_tools_sync
 
 def _resolve_end_time(start_time: str, end_time: str | None) -> str:
-    """end_time이 '미정'이거나 없으면 start_time 기준 기본 소요시간을 적용합니다."""
+    """end_time이 '미정'이거나 없으면 start_time 기준 기본 1시간 소요를 적용합니다.
+
+    정책: 종료 시간이 불명확한 일정은 시작 시각으로부터 1시간짜리 busy-time으로 간주합니다.
+    자정을 넘어가는 경우 같은 날 최대 시각(23:59)으로 제한해, 날짜가 바뀌면서
+    "종료가 시작보다 이른 시각"으로 잘못 해석되는 것을 방지합니다.
+    """
     if end_time and end_time != "미정":
         return end_time
     try:
         start = datetime.strptime(start_time, "%H:%M")
-        return (start + timedelta(hours=1)).strftime("%H:%M")
+        candidate = start + timedelta(hours=1)
+        if candidate.date() != start.date():
+            return "23:59"
+        return candidate.strftime("%H:%M")
     except (ValueError, TypeError):
         return end_time or "미정"
     
