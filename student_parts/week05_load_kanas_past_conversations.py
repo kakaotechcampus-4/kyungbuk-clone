@@ -359,15 +359,19 @@ def _collect_member_schedules(
 
     # rows에만 member_name이 있으면 일정이 0건인 멤버는 payload에서 사라집니다.
     # "조회했는데 일정이 없음"과 "조회되지 않음"을 구분할 수 있도록 조회 조건도 함께 남깁니다.
+    # "나"는 member_names와 무관하게 앱 DB에서 항상 조회하므로 조회 대상 목록에 함께 남깁니다.
+    # member_names=[]로 호출해도 rows에는 내 일정이 들어가므로, members가 비어 있으면
+    # rows와 조회 조건이 서로 어긋납니다.
     members_with_rows = {row.get("member_name") for row in rows}
+    queried_members = [PERSONAL_SHARED_MEMBER_NAME, *external_member_names]
     return {
         "ok": True,
         "tool_name": "collect_member_schedules",
-        "members": normalized_members,
+        "members": queried_members,
         "date_from": normalized_from,
         "date_to": normalized_to,
         "members_without_schedules": [
-            name for name in normalized_members if name not in members_with_rows
+            name for name in queried_members if name not in members_with_rows
         ],
         "rows": rows,
         "schedule_summary": external_schedule_summary(rows),
