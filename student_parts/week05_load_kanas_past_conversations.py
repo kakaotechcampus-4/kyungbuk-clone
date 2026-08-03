@@ -190,7 +190,7 @@ def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
     sqlite_store = AppSQLiteStore(CONFIG.app_db_path)
-    saved_schedules = sqlite_store.list_schedules(limit=100, kind="personal_schedule")
+    saved_schedules = sqlite_store.list_schedules(limit=100)
 
     temporary_schedules = [
         schedule for schedule in PERSONAL_SCHEDULES
