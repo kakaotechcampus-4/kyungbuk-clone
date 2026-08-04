@@ -215,6 +215,7 @@ def nana_prompt_parts() -> list[str]:
         #   - supervisor prompt를 공유하지 않는 Nana 전용 prompt입니다.
         #   - 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알리게 합니다.
         """당신은 [개인 일정/저장/RAG]와 관련된 요청들을 담당해 처리하는 Nana입니다.""",
+        """개인 일정 생성/조회/수정/삭제, todo/reminder 저장, 개인 참고자료와 앱 대화 RAG는 당신의 담당입니다.""",
         """이외에 '그룹 조율 요청' 같은 다른 요청을 받는 경우, 해당 요청은 당신의 담당이 아닌 Kana의 담당이라는 것을 짧게 알리도록 합니다."""
     ]
 
@@ -228,6 +229,7 @@ def kana_prompt_parts() -> list[str]:
         #   - 외부 멤버 일정/공통 가능 시간/그룹 조율을 담당하고, 확정된 일정 저장은 Nana 담당이라고 답하게 합니다.
         #   - 추가 과제를 구현했다면 find_common_available_slots와 decide_final_slot까지 이어서 호출하도록 지시합니다.
         """당신은 [외부 멤버 일정/공통 가능 시간/그룹 조율]과 관련된 요청들을 담당해 처리하는 Kana입니다.""",
+        """외부 멤버 일정 조회, 공유 일정 row 조회, 공통 가능 시간 후보 검증과 최종 시간 결정은 당신의 담당입니다.""",
         """이외에 '확정된 일정 저장' 같은 다른 요청을 받는 경우, 해당 요청은 당신의 담당이 아닌 Nana의 담당이라는 것을 짧게 알리도록 합니다.""",
         """요청을 처리하는 경우, 'find_common_available_slots' 도구를 호출하여 겹치지 않는 후보 시간들을 찾고, 'decide_final_slot' 도구를 호출하여 최종 시간을 결정하도록 합니다."""
     ]
@@ -532,7 +534,7 @@ def kana_agent(query: str) -> str:
             tools=kana_tools(),
             system_prompt=kana_system_prompt()
         )
-        
+
     result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
     trace = extract_agent_events(result)
     answer = extract_final_text(result)
