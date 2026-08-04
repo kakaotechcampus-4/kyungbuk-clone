@@ -23,8 +23,7 @@ node_modules/
 dist/
 
 # Keep later-week student files local until their assignment is published.
-student_parts/week05_load_kanas_past_conversations.py
 student_parts/week06_kanamate_decides_schedule.py
 
-student_parts/week01_task_summary.md
-student_parts/week01_implementation.md
+student_parts/task_summary.md
+student_parts/implementation.md
