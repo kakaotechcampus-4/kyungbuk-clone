@@ -11,6 +11,7 @@ from fixed.app_store import AppSQLiteStore
 from fixed.config import CONFIG
 from fixed.external_mcp import call_external_tool_payload
 from fixed.external_people_store import (
+    PERSONAL_SHARED_MEMBER_NAME,
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
@@ -292,13 +293,22 @@ def _collect_member_schedules(
 
     normalized_members = normalize_external_member_names(member_names)
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(member_names, date_from, date_to)
+    # "나"는 항상 내 일정(personal_schedules)으로 채우므로, 외부 조회에서는 빼서 같은 일정이
+    # 로컬 SQLite와 외부 공유 저장소 양쪽에서 한 번씩 잡히는 중복을 막는다.
+    external_member_names = [name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME]
+    queried_members = [PERSONAL_SHARED_MEMBER_NAME, *external_member_names]
 
     rows: list[dict[str, Any]] = []
     for schedule in personal_schedules:
         structured = _structured_request_from_schedule_row(schedule)
+        schedule_date = structured.date or ""
+        if normalized_date_from and schedule_date < normalized_date_from:
+            continue
+        if normalized_date_to and schedule_date > normalized_date_to:
+            continue
         rows.append(
             {
-                "member_name": "나",
+                "member_name": PERSONAL_SHARED_MEMBER_NAME,
                 "title": structured.title,
                 "date": structured.date,
                 "start_time": structured.start_time,
@@ -307,25 +317,26 @@ def _collect_member_schedules(
             }
         )
 
-    external_payload = json.loads(
-        call_mcp_tool_sync(
-            "extract_schedules_from_history",
-            {"member_names": normalized_members, "date_from": normalized_date_from, "date_to": normalized_date_to},
+    if external_member_names:
+        external_payload = json.loads(
+            call_mcp_tool_sync(
+                "extract_schedules_from_history",
+                {"member_names": external_member_names, "date_from": normalized_date_from, "date_to": normalized_date_to},
+            )
         )
-    )
-    for row in external_payload.get("rows", []):
-        rows.append(
-            {
-                "member_name": row.get("member_name"),
-                "title": row.get("title"),
-                "date": row.get("date"),
-                "start_time": row.get("start_time"),
-                "end_time": row.get("end_time"),
-                "notes": row.get("notes") or "",
-            }
-        )
+        for row in external_payload.get("rows", []):
+            rows.append(
+                {
+                    "member_name": row.get("member_name"),
+                    "title": row.get("title"),
+                    "date": row.get("date"),
+                    "start_time": row.get("start_time"),
+                    "end_time": row.get("end_time"),
+                    "notes": row.get("notes") or "",
+                }
+            )
 
-    return {"rows": rows, "schedule_summary": external_schedule_summary(rows)}
+    return {"members": queried_members, "rows": rows, "schedule_summary": external_schedule_summary(rows)}
 
 
 @tool(args_schema=SearchPreviousConversationsInput)
