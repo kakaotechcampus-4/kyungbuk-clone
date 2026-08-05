@@ -322,28 +322,29 @@ def tool_name(tool_object: Any) -> str:
     return getattr(tool_object, "name", getattr(tool_object, "__name__", str(tool_object)))
 
 
-FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
-    "여러 사람의 공통 가능 시간 후보를 검증하는 tool입니다. 이 tool은 최적 시간을 스스로 "
-    "계산해주지 않습니다. 반드시 앞선 tool(collect_member_schedules 등)에서 받은 busy_rows를 "
-    "그대로 복사해서 넘기고, 그 busy_rows를 직접 읽어 겹치지 않는 시간대를 candidate_slots로 "
-    "골라 넘겨야 합니다. "
-    "candidate_slots의 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), "
-    "duration_minutes, reason 필드를 모두 포함해야 하고, 어떤 busy_rows 항목과도 겹치면 "
-    "안 됩니다. "
-    "이 tool 결과만으로 답변을 끝내지 말고, 후보 중 하나를 선택해 decide_final_slot을 "
-    "이어서 호출해 최종 확정까지 마치세요."
-)
+FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = """
+    여러 사람의 공통 가능 시간 후보를 검증하는 tool입니다. 이 tool은 최적 시간을 스스로
+    계산해주지 않습니다. 반드시 앞선 tool(collect_member_schedules 등)에서 받은 busy_rows를
+    그대로 복사해서 넘기고, 그 busy_rows를 직접 읽어 겹치지 않는 시간대를 candidate_slots로
+    골라 넘겨야 합니다.
+    candidate_slots의 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM),
+    duration_minutes, reason 필드를 모두 포함해야 하고, 어떤 busy_rows 항목과도 겹치면
+    안 됩니다.
+    이 tool 결과만으로 답변을 끝내지 말고, 후보 중 하나를 선택해 decide_final_slot을
+    이어서 호출해 최종 확정까지 마치세요.
+"""
 
-
-DECIDE_FINAL_SLOT_DESCRIPTION = (
-    # TODO: decide_final_slot tool description을 자유롭게 작성하세요.
-    #   - 이 Python tool이 최종 시간을 자동 선택하지 않는다는 점을 분명히 알려야 합니다.
-    #     agent가 selected_index 또는 selected_slot과 final_slot을 직접 골라 넘기게 만듭니다.
-    #   - final_slot 형식('YYYY-MM-DD HH:MM-HH:MM')과 needs_agent_selection, reason을 채우는 기준을 적습니다.
-    #   - 아직 고르지 않았다면 final_slot은 null, needs_agent_selection은 true로 두게 합니다.
-    #   - 근거 trace를 위해 candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘기게 합니다.
-    ""
-)
+DECIDE_FINAL_SLOT_DESCRIPTION = """
+    여러 사람의 공통 가능 시간 중 최종 회의 시간을 확정해 기록하는 tool입니다. 이 tool은
+    최종 시간을 스스로 고르지 않습니다. find_common_available_slots가 반환한 candidate_slots
+    중에서 agent가 직접 하나를 골라 selected_index 또는 selected_slot으로 넘기고,
+    final_slot도 'YYYY-MM-DD HH:MM-HH:MM' 형식의 문자열로 함께 채워야 확정됩니다.
+    아직 확정할 후보를 고르지 못했다면 final_slot은 비워두고(null)
+    needs_agent_selection을 true로 남겨두세요. reason에는 이 선택 또는 보류의 이유를
+    사용자에게 설명할 수 있게 적으세요.
+    근거 추적을 위해 candidate_slots, busy_rows, member_names, date_from, date_to도
+    앞선 tool output에서 복사해 그대로 함께 넘기세요.
+"""
 
 
 class FindCommonAvailableSlotsInput(BaseModel):
