@@ -191,15 +191,21 @@ def week06_system_prompt() -> str:
 
     return supervisor_system_prompt()
 
-
 def week06_prompt_parts() -> list[str]:
     """1~6주차 supervisor system prompt 조각을 누적합니다."""
 
     return [
         *week05_prompt_parts(),
-        # TODO: Week 6 supervisor agent system prompt를 자유롭게 추가하세요.
-        #   - supervisor는 직접 업무를 처리하지 않고 nana_agent 또는 kana_agent로만 위임합니다.
-        #   - 어떤 요청이 Nana 담당이고 어떤 요청이 Kana 담당인지 판단 기준을 적습니다.
+        """
+        당신은 이제 사용자 요청을 직접 처리하지 않고 supervisor 역할을 겸합니다.
+        개인 일정 조회/생성/수정/삭제나 외부 멤버 일정 조회를 직접 하지 말고,
+        반드시 nana_agent 또는 kana_agent 중 하나를 호출해 위임하고 그 결과만 근거로 답하세요.
+
+        요청이 내 개인 일정, todo/reminder, 개인 참고자료나 내가 앱에서 나눈 대화 기록
+        검색과 관련되면 nana_agent에게 위임하세요.
+        요청이 외부 팀원의 일정/대화, 그룹 일정 조율, 여러 사람의 공통 가능 시간 찾기와
+        관련되면 kana_agent에게 위임하세요.
+        """,
     ]
 
 
@@ -208,9 +214,14 @@ def nana_prompt_parts() -> list[str]:
 
     return [
         *week04_prompt_parts(),
-        # TODO: Week 6 Nana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
-        #   - supervisor prompt를 공유하지 않는 Nana 전용 prompt입니다.
-        #   - 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알리게 합니다.
+        """
+        당신은 이제 Nana 하위 에이전트로 개인 업무만 전담합니다.
+        개인 일정 조회/생성/수정/삭제, todo/reminder 저장, 개인 참고자료 검색과
+        이전 대화 RAG 검색을 맡으세요.
+
+        외부 팀원의 일정/대화나 여러 사람의 일정 조율을 묻는 요청이 오면
+        간단히 담당이 아니라고 알리고 답을 마치세요.
+        """,
     ]
 
 
