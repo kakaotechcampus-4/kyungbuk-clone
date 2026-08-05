@@ -15,6 +15,7 @@ from fixed.external_people_store import (
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
+    strip_parenthetical_text,
 )
 from fixed.llm import chat_model
 from fixed.mcp_client import (
@@ -160,9 +161,15 @@ WEEK05_MCP_HISTORY_PROMPT = (
 #     이미 SQLite에 저장된 일정과 임시 일정이 중복되지 않도록 schedule_id/id를 기준으로 한 번 걸러냅니다.
 #     날짜 범위는 파이썬 필터가 아니라 DB 조회 인자로 넘겨 limit 안에서 일정이 밀려 누락되지 않게 합니다.
 #
-#   - [메인] _dedupe_preserving_order(names) / _busy_time_text(value) / _schedule_time_status(start, end)
+#   - [메인] dedupe_preserving_order(names) / _busy_time_text(value) / _schedule_time_status(start, end)
 #     alias 정규화 뒤 중복 멤버 이름 제거, "미정" 자리 표시 시간 걸러내기,
 #     시간 정보 완성도(complete/start_only/date_only) 분류를 담당하는 작은 helper들입니다.
+#     dedupe_preserving_order는 Week 6 find_common_available_slots도 같은 규칙을 써야 해서 공개했습니다.
+#
+#   - [메인] _my_schedule_notes(request) / _dedupe_schedule_rows(rows)
+#     내 일정 row의 notes를 개인/그룹(참석자 포함)으로 구분하고, 앱 DB와 공유 저장소 양쪽에서
+#     들어온 같은 일정을 한 번만 남깁니다. 두 경로가 제목과 시간을 다르게 다듬으므로
+#     (member_name, date, start_time, 소괄호 제거한 제목)을 비교 키로 씁니다.
 #
 #   - [메인] _external_busy_rows(...)
 #     외부 MCP busy-time 조회를 감싸 rows와 external_status를 함께 돌려줍니다.
@@ -227,8 +234,12 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
 
 
-def _dedupe_preserving_order(names: list[str]) -> list[str]:
-    """alias 변환 뒤 같은 이름이 두 번 남지 않도록 첫 등장 순서를 유지하며 중복을 제거합니다."""
+def dedupe_preserving_order(names: list[str]) -> list[str]:
+    """alias 변환 뒤 같은 이름이 두 번 남지 않도록 첫 등장 순서를 유지하며 중복을 제거합니다.
+
+    Week 6 find_common_available_slots도 같은 규칙으로 members를 만들어야 해서 공개 helper로 둡니다.
+    두 주차가 각자 중복을 제거하면 같은 요청에서 payload의 member 목록이 서로 달라질 수 있습니다.
+    """
 
     seen: set[str] = set()
     unique: list[str] = []
@@ -363,10 +374,15 @@ class CollectMemberSchedulesInput(BaseModel):
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
-    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
+    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다.
+
+    SQLite row는 `request_kind`로 개인/그룹을 구분합니다. Week 1 임시 일정 row에는
+    이 값이 없으므로 개인 일정으로 봅니다. kind를 개인으로 고정하면 그룹 회의가
+    "내 일정"이 아닌 것으로 읽혀 busy-time 근거에서 빠집니다.
+    """
 
     return StructuredRequest(
-        kind="personal_schedule",
+        kind="group_schedule" if row.get("request_kind") == "group_schedule" else "personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -402,6 +418,44 @@ def _schedule_time_status(start_time: str, end_time: str) -> str:
     if start_time:
         return "start_only"
     return "date_only"
+
+
+def _my_schedule_notes(request: StructuredRequest) -> str:
+    """내 일정 row가 개인 일정인지, 참석자가 있는 그룹 일정인지 설명합니다.
+
+    그룹 회의도 owner가 '나'인 내 일정이라 busy-time 근거는 같지만, 참석자가 있는 일정은
+    "누구와 잡힌 회의라서 이 시간이 막혔다"까지 근거로 남겨야 조율 답변에서 이유를 설명할 수 있다.
+    """
+
+    if request.kind != "group_schedule":
+        return "Nana 개인 일정"
+    members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
+    return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
+
+
+def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """같은 일정이 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다.
+
+    앱 DB에 저장된 내 일정은 공유 저장소에도 자동 동기화되므로, member_names에 "나"가
+    들어온 호출에서는 같은 일정이 두 경로로 들어옵니다. 앞에 오는 앱 DB row를 남깁니다.
+
+    두 경로가 같은 일정을 서로 다르게 다듬기 때문에 값을 그대로 비교하면 안 됩니다.
+      - 공유 저장소는 제목에서 소괄호를 지우고 공백을 하나로 줄입니다. 앱 DB는 원문을 둡니다.
+      - 앱 DB 경로만 end_time "미정"을 "18:00"으로 바꿉니다. 그래서 end_time은 키에서 뺍니다.
+        같은 사람이 같은 날 같은 시각에 시작하는 같은 제목의 일정은 하나로 봅니다.
+      - start_time이 비어 있으면 공유 저장소는 "미정"으로 저장하므로 같은 값으로 맞춥니다.
+    """
+
+    deduped: dict[tuple[str, ...], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            str(row.get("member_name") or "").strip(),
+            str(row.get("date") or "").strip(),
+            str(row.get("start_time") or "").strip() or "미정",
+            strip_parenthetical_text(str(row.get("title") or "")),
+        )
+        deduped.setdefault(key, row)
+    return list(deduped.values())
 
 
 def _external_busy_rows(
@@ -465,7 +519,7 @@ def _collect_member_schedules(
     # alias와 실제 이름이 함께 들어오면(["A", "철수"] → ["철수", "철수"]) 정규화 결과가 겹친다.
     # SQL IN 조회 결과는 중복되지 않으므로, 반환 payload의 member_names도 같은 계약을 갖도록
     # 입력 순서를 유지하면서 중복을 제거한다.
-    normalized_members = _dedupe_preserving_order(normalize_external_member_names(member_names))
+    normalized_members = dedupe_preserving_order(normalize_external_member_names(member_names))
     # "나"는 앱 SQLite에서 직접 읽는다. 개인 일정은 공유 저장소에도 복사되므로,
     # 외부 조회 대상에 "나"를 남겨 두면 같은 일정이 두 번 rows에 들어간다.
     external_member_names = [name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME]
@@ -484,7 +538,7 @@ def _collect_member_schedules(
         start_time = _busy_time_text(request.start_time)
         end_time = _busy_time_text(request.end_time)
         time_status = _schedule_time_status(start_time, end_time)
-        notes = "앱에 저장된 내 일정"
+        notes = _my_schedule_notes(request)
         if time_status != "complete":
             notes += " · 시간이 불완전해 그날 일정이 있다는 근거로만 사용"
         personal_rows.append(
@@ -511,8 +565,16 @@ def _collect_member_schedules(
             _busy_time_text(row.get("end_time")),
         )
 
+    # 내 일정을 저장하면 공유 저장소에도 "나" row로 동기화되므로, member_names에 "나"가 들어온
+    # 호출에서는 같은 일정이 앱 DB 경로와 공유 저장소 경로로 두 번 들어온다. 여기서 한 번 걸러낸다.
+    #
+    # 정렬보다 먼저 걸러야 한다. _dedupe_schedule_rows는 앞에 오는 row를 남기는데, 정렬을 먼저 하면
+    # 같은 일정의 외부 row가 앞으로 올 수 있고 그러면 notes가 "앱 개인 일정 자동 동기화"로 남는다.
+    # personal_rows를 앞에 두고 먼저 dedupe해야 (C)에서 만든 내 일정 notes가 살아남는다.
+    merged_rows = [*personal_rows, *external_rows]
+    rows = _dedupe_schedule_rows(merged_rows)
+    duplicate_rows_removed = len(merged_rows) - len(rows)
     # 두 출처를 합친 뒤 날짜/시작시간 순으로 세워 둔다. LLM이 "이 시간대는 겹친다"를 읽기 쉬워진다.
-    rows = [*personal_rows, *external_rows]
     rows.sort(key=lambda row: (str(row.get("date") or ""), str(row.get("start_time") or "")))
     schedule_summary = external_schedule_summary(rows)
     if external_state["external_status"] == "failed":
@@ -524,8 +586,11 @@ def _collect_member_schedules(
         "member_names": [PERSONAL_SHARED_MEMBER_NAME, *external_member_names],
         "date_from": date_from,
         "date_to": date_to,
+        # personal_rows/external_rows는 dedupe 전 출처별 원본이라 rows보다 합이 클 수 있다.
+        # 몇 건이 겹쳐서 빠졌는지 함께 남겨 trace에서 개수 차이를 바로 설명할 수 있게 한다.
         "personal_rows": personal_rows,
         "external_rows": external_rows,
+        "duplicate_rows_removed": duplicate_rows_removed,
         "rows": rows,
         "schedule_summary": schedule_summary,
         **external_state,
