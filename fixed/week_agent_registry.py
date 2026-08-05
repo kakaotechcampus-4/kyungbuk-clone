@@ -2,8 +2,9 @@ from __future__ import annotations
 
 """현재 활성 주차에 맞는 student_parts agent를 찾아 실행하는 registry입니다.
 
-main 브랜치는 Week 1-5 학생 문제를 공개하므로 이 registry도 Week 1-5 agent를
-매핑합니다. 전체 Week 1-6 흐름은 `week_1_to_6f` 브랜치에 보존되어 있습니다.
+각 주차 파일은 같은 이름의 `build_week_agent()`를 제공하고, 이 모듈은 설정값이나
+UI 입력으로 받은 week 번호를 실제 Python 모듈로 매핑합니다. 앱 런타임은 개별 주차의
+구현을 직접 import하지 않고 이 registry만 사용합니다.
 """
 
 import importlib
@@ -27,6 +28,7 @@ WEEK_AGENT_MODULES = {
     3: "student_parts.week03_build_nanas_logbook",
     4: "student_parts.week04_retrieve_nanas_memory",
     5: "student_parts.week05_load_kanas_past_conversations",
+    6: "student_parts.week06_kanamate_decides_schedule",
 }
 
 
@@ -47,14 +49,14 @@ class ActiveWeekAgentStreamEvent:
 
 
 def normalize_active_week(active_week: int | str | None) -> int:
-    """main 브랜치 허용 범위를 벗어난 legacy week 값은 Week 1로 정규화합니다."""
+    """입력된 주차 값을 1~6 사이 정수로 정규화하고 범위를 검증합니다."""
 
     try:
         week = int(active_week or 1)
     except (TypeError, ValueError):
-        return 1
+        week = 1
     if week not in WEEK_AGENT_MODULES:
-        return 1
+        raise ValueError("active_week은 1부터 6 사이여야 합니다.")
     return week
 
 
