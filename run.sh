@@ -16,6 +16,7 @@ Usage:
   ./run.sh --week3         Run the Week 3 Gradio app
   ./run.sh --week4         Run the Week 4 Gradio app
   ./run.sh --week5         Run the Week 5 Gradio app
+  ./run.sh --week6         Run the Week 6 Gradio app
   ./run.sh --install       Run uv sync, then run the Week 1 Gradio app
   ./run.sh --conda [ARGS]  Use the legacy conda environment.yml runner
   ./run.sh --help          Show this help
@@ -39,11 +40,11 @@ run_uv() {
   fi
 
   local active_week="1"
-  if [[ "${1:-}" =~ ^--week([12345])$ ]]; then
+  if [[ "${1:-}" =~ ^--week([1-6])$ ]]; then
     active_week="${BASH_REMATCH[1]}"
     shift
   elif [[ "${1:-}" =~ ^--week[0-9]+$ ]]; then
-    echo "main 브랜치는 Week 1-5만 포함합니다. Week 6은 week_1_to_6f 브랜치를 사용하세요." >&2
+    echo "지원하는 주차는 Week 1-6입니다: --week1 ~ --week6" >&2
     exit 1
   fi
   export KANANA_ACTIVE_WEEK="$active_week"
@@ -79,11 +80,11 @@ run_conda() {
   fi
 
   local active_week="1"
-  if [[ "${1:-}" =~ ^--week([12345])$ ]]; then
+  if [[ "${1:-}" =~ ^--week([1-6])$ ]]; then
     active_week="${BASH_REMATCH[1]}"
     shift
   elif [[ "${1:-}" =~ ^--week[0-9]+$ ]]; then
-    echo "main 브랜치는 Week 1-5만 포함합니다. Week 6은 week_1_to_6f 브랜치를 사용하세요." >&2
+    echo "지원하는 주차는 Week 1-6입니다: --week1 ~ --week6" >&2
     exit 1
   fi
   export KANANA_ACTIVE_WEEK="$active_week"
