@@ -408,21 +408,9 @@ def _collect_member_schedules(
         )
     )
 
-    external_rows = []
+    external_rows = list(external_payload.get("rows") or [])
 
-    for row in external_payload.get("rows", []):
-        external_row = {
-            "member_name": row.get("member_name"),
-            "title": row.get("title"),
-            "date": row.get("date"),
-            "start_time": row.get("start_time"),
-            "end_time": row.get("end_time"),
-            "notes": _my_schedule_notes(request),
-        }
-
-        external_rows.append(external_row)
-
-    rows = _dedupe_schedule_rows([*personal_rows, *external_payload.get("rows", [])])
+    rows = _dedupe_schedule_rows([*personal_rows, *external_rows,])
     return {
         "ok": True,
         "tool_name": "collect_member_schedules",
