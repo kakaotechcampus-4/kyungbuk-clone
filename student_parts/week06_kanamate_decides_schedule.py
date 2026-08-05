@@ -444,6 +444,7 @@ def decide_final_slot(
 
 
 def kana_tools() -> list[Any]:
+    # find_common_available_slots/decide_final_slot(추가 과제)은 미구현이라 제외
     return [
         extract_schedule_request,
         search_previous_conversations,
@@ -451,8 +452,6 @@ def kana_tools() -> list[Any]:
         extract_schedules_from_history,
         list_shared_schedules,
         collect_member_schedules,
-        find_common_available_slots,
-        decide_final_slot,
     ]
 
 
