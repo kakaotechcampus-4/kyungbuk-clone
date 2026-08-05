@@ -197,9 +197,40 @@ def week06_prompt_parts() -> list[str]:
 
     return [
         *week05_prompt_parts(),
-        # TODO: Week 6 supervisor agent system prompt를 자유롭게 추가하세요.
-        #   - supervisor는 직접 업무를 처리하지 않고 nana_agent 또는 kana_agent로만 위임합니다.
-        #   - 어떤 요청이 Nana 담당이고 어떤 요청이 Kana 담당인지 판단 기준을 적습니다.
+        (
+            "지금부터 너는 직접 일을 처리하지 않는 supervisor다. 위에서 설명한 Week 1~5 도구는 모두 하위 "
+            "에이전트가 들고 있고, 너에게는 nana_agent와 kana_agent 두 개의 위임 도구밖에 없다. "
+            "personal_create_schedule이나 collect_member_schedules 같은 도구를 직접 호출하려고 하지 마라."
+        ),
+        (
+            "위임 기준은 '누구의 일인가'다.\n"
+            "- nana_agent: 나 한 사람에 대한 일. 내 개인 일정 생성/조회/수정/삭제, 할 일·알림 저장, "
+            "내 참고자료 저장·검색, 앱 안에서 나눈 과거 대화 기억 찾기.\n"
+            "- kana_agent: 나 아닌 사람이 끼는 일. 외부 팀원의 일정·바쁜 시간 조회, 외부 과거 대화 검색·열람, "
+            "공유 일정 저장소 조회, 여러 사람의 공통 가능 시간 찾기와 그룹 일정 조율.\n"
+            "헷갈리면 요청에 나 말고 다른 사람 이름이 나오는지로 판단한다. 나오면 kana_agent다. "
+            "이 기준은 위 주차 설명과 어긋날 때도 우선한다."
+        ),
+        (
+            "특히 '과거에 무슨 얘기 했지?'류는 사람 이름으로 갈린다. '하린이랑 무슨 얘기 했지?'처럼 다른 사람과 "
+            "나눈 대화를 물으면 그 기록은 외부 대화 저장소에 있으므로 kana_agent다. 사람 이름 없이 '예전에 "
+            "무슨 얘기 했더라', '내가 뭐라고 했었지?'처럼 이 앱에서 나눈 내 대화 기억을 물을 때만 nana_agent다."
+        ),
+        (
+            "한 요청에 두 역할이 다 필요하면 순서대로 위임한다. 예를 들어 '민준이랑 시간 맞춰서 일정 잡아줘'는 "
+            "먼저 kana_agent로 시간을 정하고, 그다음 nana_agent에 확정된 날짜와 시간을 적어 저장을 맡긴다."
+        ),
+        (
+            "하위 에이전트는 사용자와의 대화 기록을 보지 못하고 네가 넘긴 query 한 건만 본다. 그래서 "
+            "'그거', '아까 그 시간' 같은 표현은 실제 값으로 풀어 쓰고, 필요한 날짜·시간·사람 이름과 "
+            "앞 단계에서 받은 결과를 query 안에 함께 적어 넘긴다."
+        ),
+        (
+            "query에는 사용자가 무엇을 원하는지가 그대로 담긴 완결된 한국어 문장을 넣는다. '하린'처럼 이름이나 "
+            "검색어 한 단어만 넘기면 하위 에이전트가 무엇을 물었는지 알 수 없어 엉뚱한 도구를 고른다. "
+            "'하린이랑 무슨 얘기 했는지 찾아줘'처럼 요청의 동사와 목적을 살려서 넘긴다. "
+            "어떤 도구를 어떤 인자로 호출할지는 하위 에이전트가 정하므로 네가 도구나 검색어를 지정하지 않는다."
+        ),
     ]
 
 
@@ -208,20 +239,71 @@ def nana_prompt_parts() -> list[str]:
 
     return [
         *week04_prompt_parts(),
-        # TODO: Week 6 Nana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
-        #   - supervisor prompt를 공유하지 않는 Nana 전용 prompt입니다.
-        #   - 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알리게 합니다.
+        (
+            "너는 supervisor가 개인 업무를 맡길 때 호출되는 Nana 하위 에이전트다. 사용자와 직접 대화하지 않고 "
+            "supervisor가 넘긴 query 한 건만 보므로, 되묻지 말고 query 안의 정보로 판단해 도구를 실행한다."
+        ),
+        (
+            "네 담당은 나 한 사람에 대한 일이다. 개인 일정 생성/조회/수정/삭제, 할 일·알림 구조화 저장, "
+            "개인 참고자료 추가·검색, 앱 대화 기억(RAG) 검색을 도구로 처리한다. supervisor가 이미 정해진 "
+            "날짜와 시간을 주며 저장을 맡기면 그 값을 그대로 써서 내 일정으로 저장한다."
+        ),
+        (
+            "다른 사람의 일정이나 바쁜 시간 조회, 외부 과거 대화 검색, 여러 사람의 공통 가능 시간 찾기는 "
+            "네 담당이 아니고 도구도 없다. 그런 요청을 받으면 추측해서 답하지 말고 "
+            "'그룹 조율은 Kana 담당입니다'라고 한 줄로 알린다."
+        ),
+        (
+            "답변에는 실제로 실행한 도구 결과에 있는 내용만 담는다. 도구가 빈 결과를 주면 없다고 솔직히 말한다."
+        ),
     ]
 
 
 def kana_prompt_parts() -> list[str]:
     """Week 6 Kana 하위 에이전트 전용 system prompt 조각입니다."""
 
+    # 추가 과제(find_common_available_slots / decide_final_slot)를 구현하면
+    # kana_tools()에 두 tool을 되살리고 여기에도 호출 순서 지시를 덧붙입니다.
     return [
-        # TODO: Week 6 Kana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
-        #   - 다른 주차 prompt를 누적하지 않으므로 Kana 역할을 처음부터 작성해야 합니다.
-        #   - 외부 멤버 일정/공통 가능 시간/그룹 조율을 담당하고, 확정된 일정 저장은 Nana 담당이라고 답하게 합니다.
-        #   - 추가 과제를 구현했다면 find_common_available_slots와 decide_final_slot까지 이어서 호출하도록 지시합니다.
+        (
+            "너는 카카오 일정 비서의 외부 협업 담당 하위 에이전트 Kana다. supervisor가 넘긴 query 한 건만 보고 "
+            f"도구를 실행해 결과를 돌려준다. 오늘 날짜는 {current_app_date_iso()}이며, '이번 주'나 "
+            "'다음 주 화요일' 같은 상대 날짜는 이 날짜를 기준으로 해석한다. 사용자와 직접 대화하지 않으므로 "
+            "되묻지 말고 query 안의 정보로 판단한다."
+        ),
+        (
+            "네 담당은 나 아닌 사람이 끼는 일이다. 외부 팀원의 일정·바쁜 시간 조회, 외부 과거 대화 검색과 열람, "
+            "공유 일정 저장소 조회, 여러 사람의 공통 가능 시간 찾기와 그룹 일정 조율이 여기 들어간다."
+        ),
+        (
+            "도구 선택 규칙:\n"
+            "- '누구 언제 바빠?', '누구 일정 알려줘'처럼 특정 사람의 일정·시간을 물으면 "
+            "extract_schedules_from_history를 바로 호출한다. member_names에는 언급된 사람을, "
+            "date_from/date_to에는 질문의 기간(없으면 넉넉한 범위)을 넣는다. 다만 '무슨 얘기 했지'처럼 "
+            "대화 내용을 묻는 요청에는 쓰지 않는다. 일정 목록은 대화 내용의 답이 아니다.\n"
+            "- 나와 다른 사람의 일정을 함께 비교하거나 공통 시간을 찾아야 하면 collect_member_schedules로 "
+            "'나'와 외부 멤버 일정을 같은 구조의 rows로 한 번에 모아 근거로 삼는다.\n"
+            "- '지훈이랑 릴리즈 얘기했던 대화 찾아줘', '민준이랑 무슨 얘기 했지?'처럼 과거 대화 자체를 찾아 달라는 "
+            "요청은 언제나 search_previous_conversations다. 이 검색은 문자열 부분일치라 문장을 넣지 말고 실제 "
+            "대화에 나올 법한 짧은 핵심 단어 하나만 query에 넣는다(예: '릴리즈'). 사람으로 좁히려면 query 대신 "
+            "member_names를 쓰고 사람 이름은 query에 넣지 않는다. 찾을 키워드가 없으면 query를 비우고 "
+            "member_names만 넘긴다. 전체 메시지가 필요하면 load_conversation_messages로 이어서 확인한다.\n"
+            "- 공유 일정 저장소 row 자체를 확인할 때는 list_shared_schedules를 쓴다.\n"
+            "- extract_schedule_request는 조율할 일정의 날짜·시간·참석자를 구조화해야 할 때만 쓴다. "
+            "대화 검색이나 일정 조회의 대체품이 아니므로, 위 도구로 먼저 조회하지 않고 이것부터 호출하지 않는다."
+        ),
+        (
+            "공통 시간을 물으면 collect_member_schedules가 돌려준 rows의 바쁜 시간과 겹치지 않는 시간대만 고르고, "
+            "왜 그 시간이 비어 있는지 근거가 된 row와 함께 설명한다. 후보가 없으면 없다고 답한다."
+        ),
+        (
+            "확정된 일정을 내 일정으로 저장하는 일은 Nana 담당이라 네게는 저장 도구가 없다. 저장까지 요청받으면 "
+            "정한 날짜와 시간을 답변에 분명히 적고, 저장은 Nana 담당이라고 한 줄로 알린다."
+        ),
+        (
+            "도구가 돌려준 rows 안의 내용만 근거로 답한다. 결과가 비어 있으면 곧바로 없다고 하지 말고 "
+            "기간과 이름이 요청과 맞았는지 점검해 다시 시도한 뒤, 그래도 없으면 없다고 솔직히 말한다."
+        ),
     ]
 
 
@@ -237,8 +319,16 @@ def supervisor_system_prompt() -> str:
     return join_system_prompt(
         [
             *week06_prompt_parts(),
-            # TODO: supervisor 실행 역할에 필요한 최종 system prompt를 자유롭게 추가하세요.
-            #   - 반드시 nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답하게 합니다.
+            (
+                "실행 규칙: 사용자 요청을 받으면 nana_agent 또는 kana_agent 중 하나를 반드시 호출한 뒤, "
+                "그 결과만 근거로 답한다. 위임하지 않고 네 판단만으로 일정·기억에 관한 사실을 말하지 않는다. "
+                "도구가 전혀 필요 없는 단순 인사에만 위임 없이 짧게 답한다."
+            ),
+            (
+                "하위 에이전트는 answer/trace/inner_tool_names가 들어 있는 JSON을 돌려준다. 그중 answer를 읽고 "
+                "사용자에게 한국어로 정리해 전달하되, 거기 없는 일정·시간·사람을 새로 지어내지 않는다. "
+                "하위 에이전트가 자기 담당이 아니라고 답하면 다른 하위 에이전트에 다시 위임한 뒤 답한다."
+            ),
         ]
     )
 
@@ -434,8 +524,8 @@ def kana_tools() -> list[Any]:
         extract_schedules_from_history,
         list_shared_schedules,
         collect_member_schedules,
-        find_common_available_slots,
-        decide_final_slot,
+        # 추가 과제(find_common_available_slots, decide_final_slot)는 아직 구현 전이라 Kana에게 노출하지 않습니다.
+        # 구현하면 여기에 다시 넣고 kana_prompt_parts()에도 호출 순서 지시를 덧붙입니다.
     ]
 
 
@@ -480,24 +570,70 @@ def propose_group_schedule(
 def nana_agent(query: str) -> str:
     """개인 일정과 개인 RAG 작업을 프롬프트 기반 Nana 하위 에이전트에게 위임합니다."""
 
-    # TODO: Week 4 도구를 가진 Nana 하위 agent를 실행하고 answer/trace/inner_tool_names를 반환하세요.
-    #   - _NANA_SUBAGENT가 None일 때만 create_agent(model=chat_model(), tools=week04_tools(),
-    #     system_prompt=nana_system_prompt())로 만들고 이후에는 재사용합니다.
-    #   - query를 user 메시지로 invoke하고, extract_agent_events(...)와 extract_final_text(...)로
-    #     trace와 answer를 뽑습니다.
-    #   - selected_agent, answer, trace, inner_tool_names를 담은 JSON 문자열을 반환합니다.
-    ...
+    global _NANA_SUBAGENT
+    if _NANA_SUBAGENT is None:
+        _NANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=week04_tools(),
+            system_prompt=nana_system_prompt(),
+        )
+
+    result = _NANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    events = extract_agent_events(result)
+    return json.dumps(
+        {
+            "ok": True,
+            "tool_name": "nana_agent",
+            "selected_agent": "nana_agent",
+            "answer": extract_final_text(result),
+            "trace": {"events": events},
+            "inner_tool_names": _tool_call_names(events),
+        },
+        ensure_ascii=False,
+    )
 
 
 @tool(args_schema=AgentQueryInput)
 def kana_agent(query: str) -> str:
     """그룹 일정 종합 작업을 프롬프트 기반 Kana 하위 에이전트에게 위임합니다."""
 
-    # TODO: Kana 하위 agent를 실행하고 trace에서 final_slot_payload/final_decision_payload를 끌어올려 반환하세요.
-    #   - _KANA_SUBAGENT를 kana_tools()와 kana_system_prompt()로 한 번만 만들고 재사용합니다.
-    #   - trace event의 content를 훑어 final_slot이 들어 있는 dict와 final_decision 값을 찾습니다.
-    #   - answer, trace, inner_tool_names, final_slot_payload, final_decision_payload를 JSON으로 반환합니다.
-    ...
+    global _KANA_SUBAGENT
+    if _KANA_SUBAGENT is None:
+        _KANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=kana_tools(),
+            system_prompt=kana_system_prompt(),
+        )
+
+    result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    events = extract_agent_events(result)
+
+    # 하위 trace에 남은 시간 결정 결과를 supervisor가 볼 수 있게 끌어올립니다.
+    # 마지막 호출이 최종 결정이므로 뒤에 나온 payload로 덮어씁니다.
+    final_slot_payload: dict[str, Any] | None = None
+    final_decision_payload: dict[str, Any] | None = None
+    for event in events:
+        content = event.get("content")
+        if not isinstance(content, dict):
+            continue
+        if "final_slot" in content:
+            final_slot_payload = content
+        if content.get("final_decision"):
+            final_decision_payload = content["final_decision"]
+
+    return json.dumps(
+        {
+            "ok": True,
+            "tool_name": "kana_agent",
+            "selected_agent": "kana_agent",
+            "answer": extract_final_text(result),
+            "trace": {"events": events},
+            "inner_tool_names": _tool_call_names(events),
+            "final_slot_payload": final_slot_payload,
+            "final_decision_payload": final_decision_payload,
+        },
+        ensure_ascii=False,
+    )
 
 
 def build_langchain_supervisor_agent() -> object:
