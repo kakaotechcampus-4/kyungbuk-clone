@@ -2,11 +2,12 @@ from __future__ import annotations
 
 """Week 4 개인 참고자료 RAG를 위한 ChromaDB 저장소입니다."""
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
 from fixed.config import CONFIG, PROXY_TOKEN_PLACEHOLDER
-from fixed.store_base import new_id, now_iso
 
 
 class OpenAIEmbeddingFunction:
@@ -129,34 +130,43 @@ class PersonalReferenceStore:
 
         if self.collection.count():
             return
-        seeded_at = now_iso()
         self.collection.add(
             ids=[item["id"] for item in self.DEFAULT_REFERENCES],
             documents=[item["content"] for item in self.DEFAULT_REFERENCES],
-            metadatas=[
-                {"title": item["title"], "tags": ",".join(item["tags"]), "created_at": seeded_at}
-                for item in self.DEFAULT_REFERENCES
-            ],
+            metadatas=[{"title": item["title"], "tags": ",".join(item["tags"])} for item in self.DEFAULT_REFERENCES],
         )
 
     def add_personal_reference(self, title: str, content: str, tags: list[str] | None = None) -> dict[str, Any]:
-        """개인 참고자료 하나를 ChromaDB에 저장하고 저장된 메타데이터를 반환합니다."""
+        """개인 참고자료 하나를 ChromaDB에 저장하고 저장된 메타데이터를 반환합니다.
 
-        reference_id = new_id("ref")
-        created_at = now_iso()
-        self.collection.add(
-            ids=[reference_id],
-            documents=[content],
-            metadatas=[{"title": title, "tags": ",".join(tags or []), "created_at": created_at}],
-        )
+        reference_id를 내용 기반 해시로 만들어, agent가 같은 참고자료를 반복 저장해도
+        중복 embedding 호출과 중복 검색 결과가 생기지 않게 합니다.
+        """
+
+        normalized_tags = tags or []
+        reference_id = self._reference_id(title, content, normalized_tags)
+        already_exists = bool(self.collection.get(ids=[reference_id]).get("ids"))
+        if not already_exists:
+            self.collection.add(
+                ids=[reference_id],
+                documents=[content],
+                metadatas=[{"title": title, "tags": ",".join(normalized_tags)}],
+            )
         return {
             "reference_id": reference_id,
             "title": title,
             "content": content,
-            "tags": tags or [],
-            "created_at": created_at,
+            "tags": normalized_tags,
+            "already_exists": already_exists,
             "backend": self.backend_info(),
         }
+
+    def _reference_id(self, title: str, content: str, tags: list[str]) -> str:
+        """제목/본문/태그가 같으면 항상 같은 reference_id가 나오게 합니다."""
+
+        source = {"title": title, "content": content, "tags": sorted(str(tag) for tag in tags)}
+        encoded = json.dumps(source, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return f"ref_{hashlib.sha256(encoded).hexdigest()[:32]}"
 
     def search_personal_references(self, query: str, limit: int = 3) -> list[dict[str, Any]]:
         """query와 가까운 개인 참고자료를 ChromaDB에서 검색합니다."""
@@ -172,7 +182,6 @@ class PersonalReferenceStore:
                     "title": metadata.get("title", ""),
                     "content": document,
                     "tags": metadata.get("tags", ""),
-                    "created_at": metadata.get("created_at", ""),
                     "distance": distance,
                 }
             )
