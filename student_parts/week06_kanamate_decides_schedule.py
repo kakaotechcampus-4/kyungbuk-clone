@@ -248,8 +248,11 @@ def supervisor_system_prompt() -> str:
     return join_system_prompt(
         [
             *week06_prompt_parts(),
-            # TODO: supervisor 실행 역할에 필요한 최종 system prompt를 자유롭게 추가하세요.
-            #   - 반드시 nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답하게 합니다.
+            (
+                "요청을 직접 해결하거나 delegate 호출 없이 답하지 마라. "
+                "반드시 nana_agent 또는 kana_agent 중 요청 책임에 맞는 하나를 호출하고, "
+                "그 결과의 answer와 trace payload만 근거로 사용자에게 답한다."
+            ),
         ]
     )
 
