@@ -425,14 +425,14 @@ def _collect_member_schedules(
         return {"ok": False, "error": f"날짜 범위 입력 오류: {date_error}", "rows": []}
 
     # 외부 저장소 규칙으로 멤버 이름(별칭 통일)과 날짜 범위(ISO datetime → 날짜)를 정규화한다.
-    # "나"는 외부 멤버가 아니므로 외부 조회 명단에서는 뺀다.
-    # 별칭과 실명을 함께 넣으면 정규화 후 같은 이름이 중복될 수 있어(리뷰 반영:
-    # ["A", "철수"] → ["철수", "철수"]) 입력 순서를 유지하며 중복을 제거한다.
+    # 순서가 중요하다(2차 리뷰 반영): 정규화 → "나" 제외 → 중복 제거.
+    # "나" 제외를 정규화보다 먼저 하면 별칭이 "나"로 풀리는 입력이 외부 조회 명단에
+    # 그대로 남고, 중복 제거를 먼저 하면 별칭+실명이 같은 이름으로 겹친다.
     external_members = list(
         dict.fromkeys(
-            normalize_external_member_names(
-                [name for name in member_names if str(name).strip() not in (PERSONAL_SHARED_MEMBER_NAME, "")]
-            )
+            name
+            for name in normalize_external_member_names(member_names)
+            if name != PERSONAL_SHARED_MEMBER_NAME
         )
     )
     normalized_from, normalized_to = normalize_external_schedule_date_bounds(
@@ -500,9 +500,25 @@ def _collect_member_schedules(
         )
 
     # 출처별로 뭉쳐 있던 rows를 전체 시간순으로 정렬한다(리뷰 반영). 같은 시간대의
-    # 충돌을 LLM이 읽기 쉽고 Week 6 입력도 예측 가능해진다. 시간 미정은 그 날짜의
-    # 맨 앞에 온다(빈 문자열 정렬) — 놓치기 쉬운 일정을 먼저 보여주는 쪽을 택했다.
-    rows.sort(key=lambda row: (row.get("date") or "", row.get("start_time") or "", row.get("member_name") or ""))
+    # 충돌을 LLM이 읽기 쉽고 Week 6 입력도 예측 가능해진다.
+    # 시간 미정 일정은 그 날짜의 맨 뒤에 둔다(2차 리뷰 반영) — 처음엔 빈 문자열
+    # 정렬로 우연히 맨 앞에 뒀는데, 시간순 목록의 의미를 유지하려면 시간 있는
+    # 일정이 먼저 오고 미정은 뒤로 가되 그 존재를 summary 경고로 알리는 쪽이
+    # 명확하다. 정책이 우연이 아니라 정렬 키에 직접 드러나게 했다.
+    def _row_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
+        start_time = str(row.get("start_time") or "").strip()
+        time_unspecified = start_time in ("", "미정")
+        return (row.get("date") or "", time_unspecified, start_time, row.get("member_name") or "")
+
+    rows.sort(key=_row_sort_key)
+
+    # 시간 정보가 불완전한 일정이 섞여 있으면 요약에 경고를 덧붙인다(2차 리뷰 반영).
+    schedule_summary = external_schedule_summary(rows)
+    unresolved_count = sum(1 for row in rows if not row["calculable"])
+    if unresolved_count:
+        schedule_summary += (
+            f"\n※ 시간 정보가 불완전한 일정 {unresolved_count}건 포함 — 공통 시간 계산에서는 제외됩니다."
+        )
 
     result: dict[str, Any] = {
         "member_names": [PERSONAL_SHARED_MEMBER_NAME, *external_members],
@@ -510,7 +526,7 @@ def _collect_member_schedules(
         "date_to": normalized_to,
         "rows": rows,
         # 요약을 같이 주면 LLM이 바쁜 시간을 자연어로 설명하기 쉽다. 정렬된 rows 순서를 따른다.
-        "schedule_summary": external_schedule_summary(rows),
+        "schedule_summary": schedule_summary,
     }
     if external_error:
         result["external_error"] = external_error
@@ -547,7 +563,8 @@ def search_previous_conversations(
         payload["retry_hint"] = (
             "LIKE 검색이라 여러 단어 query는 0건이 되기 쉽습니다. 핵심 단어 하나로 줄이거나, "
             "query를 빈 문자열로 두고 member_names만으로 다시 검색하세요. "
-            "대화 원문이 목적이면 재검색 rows의 conversation_id로 load_conversation_messages를 호출하세요."
+            "대화 원문이 목적이면 재검색 rows의 conversation_id로 load_conversation_messages를 호출하세요. "
+            "멤버의 일정·바쁜 시간이 목적이면 대화가 아니라 extract_schedules_from_history로 조회하세요."
         )
         return json_payload(payload)
     return result_text
@@ -763,6 +780,10 @@ WEEK05_EXTERNAL_SOURCE_PROMPT = (
     "conversation_id로 load_conversation_messages를 호출해 원문으로 답한다. "
     "search_previous_conversations의 query에는 핵심 단어 하나만 넣고, "
     "특정 멤버의 대화 목록이 목적이면 query를 빈 문자열로 두고 member_names만 넣는다. "
+    "'철수는 언제 바빠?', '가능한 시간이 언제야?'처럼 멤버의 일정·바쁜 시간·가능 시간 질문은 "
+    "대화 검색(search_previous_conversations)이 아니라 extract_schedules_from_history로 답한다. "
+    "일정 조회에서 기간을 지정하지 않은 질문은 오늘 하루가 아니라 오늘부터 2주 범위로 조회하고, "
+    "그래도 없으면 없다고 답하기 전에 기간을 넓혀 한 번 더 조회한다. "
     "다른 멤버들만의 일정은 extract_schedules_from_history로 추출하고, "
     "내 일정까지 함께 모아야 하면 collect_member_schedules를 사용한다(내 일정은 항상 포함된다). "
     "'공유 일정'을 보여 달라는 요청은 내 일정 목록(personal_list_saved_schedules)이 아니라 "
