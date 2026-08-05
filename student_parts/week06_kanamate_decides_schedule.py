@@ -206,6 +206,11 @@ def week06_prompt_parts() -> list[str]:
         "- 개인 일정 생성/조회/수정/삭제, 할 일/알림 저장, 개인 참고자료나 대화 검색 요청은 nana_agent에게 위임합니다.\n"
         "- 외부 팀원과의 대화/일정 조회, 여러 사람의 공통 가능 시간 조율 요청은 kana_agent에게 위임합니다.\n"
         "- 개인 업무와 외부 조율 업무가 섞여 있으면 필요한 만큼 두 tool을 순서대로 호출합니다.\n",
+        "## Supervisor 위임 예시 (혼동 방지)\n"
+        "- \"민준이랑 서연 일정 확인해줘\", \"철수 언제 바빠?\", \"팀원들 이번 주 가능한 시간 찾아줘\"처럼\n"
+        "  '나' 이외의 특정 사람 이름이나 '팀원'/'멤버'가 언급된 일정 조회·조율 요청은 항상 kana_agent에게 위임합니다.\n"
+        "- \"내 일정\", \"내가 저장한 할 일\", \"알림 설정해줘\"처럼 사용자 본인의 개인 데이터를 묻는 요청만\n"
+        "  nana_agent에게 위임합니다. 다른 사람 이름이 하나라도 등장하면 nana_agent로 보내지 않습니다.\n",
     ]
 
 
@@ -509,7 +514,29 @@ def nana_agent(query: str) -> str:
     #   - query를 user 메시지로 invoke하고, extract_agent_events(...)와 extract_final_text(...)로
     #     trace와 answer를 뽑습니다.
     #   - selected_agent, answer, trace, inner_tool_names를 담은 JSON 문자열을 반환합니다.
-    ...
+    global _NANA_SUBAGENT
+    if _NANA_SUBAGENT is None:
+        _NANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=week04_tools(),
+            system_prompt=nana_system_prompt(),
+        )
+
+    result = _NANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    events = extract_agent_events(result)
+    answer = extract_final_text(result)
+
+    return json.dumps(
+        {
+            "ok": True,
+            "tool_name": "nana_agent",
+            "selected_agent": "nana_agent",
+            "answer": answer,
+            "trace": events,
+            "inner_tool_names": _tool_call_names(events),
+        },
+        ensure_ascii=False,
+    )
 
 
 @tool(args_schema=AgentQueryInput)
