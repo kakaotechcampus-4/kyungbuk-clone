@@ -11,24 +11,19 @@ from fixed.external_people_store import normalize_external_member_names
 from fixed.langchain_trace import extract_agent_events, extract_final_text
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
-from fixed.schedule_decision import (
-    CommonSlotCandidate,
-    decide_final_slot_payload,
-    find_common_available_slots_payload,
-    normalize_date_bound,
-)
+from fixed.schedule_decision import (CommonSlotCandidate,
+                                     decide_final_slot_payload,
+                                     find_common_available_slots_payload,
+                                     normalize_date_bound)
 from student_parts.week01_wake_up_nana import join_system_prompt
-from student_parts.week02_structure_natural_language_requests import extract_schedule_request
-from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week04_tools
+from student_parts.week02_structure_natural_language_requests import \
+    extract_schedule_request
+from student_parts.week04_retrieve_nanas_memory import (week04_prompt_parts,
+                                                        week04_tools)
 from student_parts.week05_load_kanas_past_conversations import (
-    collect_member_schedules,
-    extract_schedules_from_history,
-    list_shared_schedules,
-    load_conversation_messages,
-    search_previous_conversations,
-    week05_prompt_parts,
-)
-
+    collect_member_schedules, extract_schedules_from_history,
+    list_shared_schedules, load_conversation_messages,
+    search_previous_conversations, week05_prompt_parts)
 
 _NANA_SUBAGENT: Any | None = None
 _KANA_SUBAGENT: Any | None = None
@@ -202,7 +197,7 @@ def week06_prompt_parts() -> list[str]:
         #   - 어떤 요청이 Nana 담당이고 어떤 요청이 Kana 담당인지 판단 기준을 적습니다.
         """supervisor는 직접 업무를 처리하지 않고, nana_agent 또는 kana_agent 둘 중 하나로만 위임합니다.""",
         """[개인 일정/저장/RAG]와 관련된 요청들은 Nana의 담당이므로, 해당 요청들은 nana_agent에게 위임하도록 합니다.""",
-        """[외부 멤버 일정/공통 가능 시간/그룹 조율]과 관련된 요청들은 Kana의 담당이므로, 해당 요청들은 kana_agent에게 위임하도록 합니다."""
+        """[외부 멤버 일정/공통 가능 시간/그룹 조율]과 관련된 요청들은 Kana의 담당이므로, 해당 요청들은 kana_agent에게 위임하도록 합니다.""",
     ]
 
 
@@ -216,7 +211,7 @@ def nana_prompt_parts() -> list[str]:
         #   - 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알리게 합니다.
         """당신은 [개인 일정/저장/RAG]와 관련된 요청들을 담당해 처리하는 Nana입니다.""",
         """개인 일정 생성/조회/수정/삭제, todo/reminder 저장, 개인 참고자료와 앱 대화 RAG는 당신의 담당입니다.""",
-        """이외에 '그룹 조율 요청' 같은 다른 요청을 받는 경우, 해당 요청은 당신의 담당이 아닌 Kana의 담당이라는 것을 짧게 알리도록 합니다."""
+        """이외에 '그룹 조율 요청' 같은 다른 요청을 받는 경우, 해당 요청은 당신의 담당이 아닌 Kana의 담당이라는 것을 짧게 알리도록 합니다.""",
     ]
 
 
@@ -231,7 +226,7 @@ def kana_prompt_parts() -> list[str]:
         """당신은 [외부 멤버 일정/공통 가능 시간/그룹 조율]과 관련된 요청들을 담당해 처리하는 Kana입니다.""",
         """외부 멤버 일정 조회, 공유 일정 row 조회, 공통 가능 시간 후보 검증과 최종 시간 결정은 당신의 담당입니다.""",
         """이외에 '확정된 일정 저장' 같은 다른 요청을 받는 경우, 해당 요청은 당신의 담당이 아닌 Nana의 담당이라는 것을 짧게 알리도록 합니다.""",
-        """요청을 처리하는 경우, 'find_common_available_slots' 도구를 호출하여 겹치지 않는 후보 시간들을 찾고, 'decide_final_slot' 도구를 호출하여 최종 시간을 결정하도록 합니다."""
+        """요청을 처리하는 경우, 'find_common_available_slots' 도구를 호출하여 겹치지 않는 후보 시간들을 찾고, 'decide_final_slot' 도구를 호출하여 최종 시간을 결정하도록 합니다.""",
     ]
 
 
@@ -251,13 +246,17 @@ def supervisor_system_prompt() -> str:
             #   - 반드시 nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답하게 합니다.
             """당신은 사용자의 요청을 받아 하위 agent에게 작업을 분배하는 supervisor입니다.""",
             """절대 사용자 요청을 직접 처리하지 않고, nana_agent 또는 kana_agent 둘 중 하나를 호출해 요청을 처리하도록 합니다.""",
-            """하위 agent의 실행이 종료되면, 그들이 반환하는 결과만을 근거로 사용해 사용자에게 최종적으로 응답을 제공하도록 합니다."""
+            """하위 agent의 실행이 종료되면, 그들이 반환하는 결과만을 근거로 사용해 사용자에게 최종적으로 응답을 제공하도록 합니다.""",
         ]
     )
 
 
 def _tool_call_names(events: list[dict[str, Any]]) -> list[str]:
-    return [event["tool_name"] for event in events if event.get("event") == "tool_call" and event.get("tool_name")]
+    return [
+        event["tool_name"]
+        for event in events
+        if event.get("event") == "tool_call" and event.get("tool_name")
+    ]
 
 
 def extract_langchain_trace(result: dict[str, Any]) -> dict[str, Any]:
@@ -270,7 +269,10 @@ def extract_langchain_trace(result: dict[str, Any]) -> dict[str, Any]:
     selected_agent: str | None = None
 
     for event in events:
-        if event.get("event") == "tool_call" and event.get("tool_name") in {"nana_agent", "kana_agent"}:
+        if event.get("event") == "tool_call" and event.get("tool_name") in {
+            "nana_agent",
+            "kana_agent",
+        }:
             selected_agent = event["tool_name"]
         content = event.get("content")
         if isinstance(content, dict):
@@ -292,7 +294,9 @@ def extract_langchain_trace(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def tool_name(tool_object: Any) -> str:
-    return getattr(tool_object, "name", getattr(tool_object, "__name__", str(tool_object)))
+    return getattr(
+        tool_object, "name", getattr(tool_object, "__name__", str(tool_object))
+    )
 
 
 FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
@@ -334,10 +338,18 @@ DECIDE_FINAL_SLOT_DESCRIPTION = (
 
 
 class FindCommonAvailableSlotsInput(BaseModel):
-    member_names: list[str] = Field(description="공통 가능 시간을 찾아야 하는 외부 멤버 이름 목록")
-    date_from: str = Field(description="조회 시작 날짜. ISO datetime이면 날짜 부분만 사용")
-    date_to: str = Field(description="조회 종료 날짜. ISO datetime이면 날짜 부분만 사용")
-    duration_minutes: int = Field(default=60, ge=30, le=480, description="회의 길이(분)")
+    member_names: list[str] = Field(
+        description="공통 가능 시간을 찾아야 하는 외부 멤버 이름 목록"
+    )
+    date_from: str = Field(
+        description="조회 시작 날짜. ISO datetime이면 날짜 부분만 사용"
+    )
+    date_to: str = Field(
+        description="조회 종료 날짜. ISO datetime이면 날짜 부분만 사용"
+    )
+    duration_minutes: int = Field(
+        default=60, ge=30, le=480, description="회의 길이(분)"
+    )
     workday_start: str = Field(default="09:00", description="허용 업무 시간 시작 HH:MM")
     workday_end: str = Field(default="18:00", description="허용 업무 시간 종료 HH:MM")
     limit: int = Field(default=5, ge=1, le=20, description="최대 후보 수")
@@ -352,13 +364,21 @@ class FindCommonAvailableSlotsInput(BaseModel):
             "duration_minutes, reason을 포함하고 busy_rows와 겹치면 안 됩니다."
         ),
     )
-    llm_reason: str | None = Field(default=None, description="LLM agent가 후보 목록을 고른 전체 이유")
+    llm_reason: str | None = Field(
+        default=None, description="LLM agent가 후보 목록을 고른 전체 이유"
+    )
 
 
 class DecideFinalSlotInput(BaseModel):
-    candidate_slots: list[Any] = Field(default_factory=list, description="find_common_available_slots 결과의 후보 목록")
-    selected_slot: Any | None = Field(default=None, description="LLM agent가 직접 고른 후보 객체")
-    selected_index: int | None = Field(default=None, description="LLM agent가 직접 고른 candidate_slots index")
+    candidate_slots: list[Any] = Field(
+        default_factory=list, description="find_common_available_slots 결과의 후보 목록"
+    )
+    selected_slot: Any | None = Field(
+        default=None, description="LLM agent가 직접 고른 후보 객체"
+    )
+    selected_index: int | None = Field(
+        default=None, description="LLM agent가 직접 고른 candidate_slots index"
+    )
     final_slot: str | None = Field(
         default=None,
         description="최종 확정 시간 텍스트. 형식은 'YYYY-MM-DD HH:MM-HH:MM'. 미확정이면 null",
@@ -367,12 +387,18 @@ class DecideFinalSlotInput(BaseModel):
         default=None,
         description="후보 선택이 더 필요하면 true, final_slot을 확정했으면 false",
     )
-    member_names: list[str] | None = Field(default=None, description="회의 대상 멤버 목록")
+    member_names: list[str] | None = Field(
+        default=None, description="회의 대상 멤버 목록"
+    )
     date_from: str | None = Field(default=None, description="요청 날짜 범위 시작")
     date_to: str | None = Field(default=None, description="요청 날짜 범위 종료")
     duration_minutes: int = Field(default=60, description="회의 길이(분)")
-    reason: str | None = Field(default=None, description="최종 선택 또는 보류에 대한 사용자-facing 설명")
-    busy_rows: list[dict[str, Any]] | None = Field(default=None, description="최종 결정 근거로 남길 busy_rows")
+    reason: str | None = Field(
+        default=None, description="최종 선택 또는 보류에 대한 사용자-facing 설명"
+    )
+    busy_rows: list[dict[str, Any]] | None = Field(
+        default=None, description="최종 결정 근거로 남길 busy_rows"
+    )
 
 
 class ProposeGroupScheduleInput(BaseModel):
@@ -414,11 +440,13 @@ def find_common_available_slots_dict(
     norm_date_from, norm_date_to = normalize_date_bound(date_from, date_to)
 
     if busy_rows is None:
-        collected_str = collect_member_schedules.invoke({
-            "member_names": norm_mem_names,
-            "date_from": norm_date_from,
-            "date_to": norm_date_to
-        })
+        collected_str = collect_member_schedules.invoke(
+            {
+                "member_names": norm_mem_names,
+                "date_from": norm_date_from,
+                "date_to": norm_date_to,
+            }
+        )
         collected_data = json.loads(collected_str)
         busy_rows = collected_data.get("rows", [])
 
@@ -434,14 +462,16 @@ def find_common_available_slots_dict(
         workday_end=workday_end,
         limit=limit,
         candidate_slots=candidate_slots,
-        llm_reason=llm_reason
+        llm_reason=llm_reason,
     )
 
     return payload
 
 
-
-@tool(description=FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION, args_schema=FindCommonAvailableSlotsInput)
+@tool(
+    description=FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION,
+    args_schema=FindCommonAvailableSlotsInput,
+)
 def find_common_available_slots(
     member_names: list[str],
     date_from: str,
@@ -467,9 +497,9 @@ def find_common_available_slots(
         limit=limit,
         busy_rows=busy_rows,
         candidate_slots=candidate_slots,
-        llm_reason=llm_reason
+        llm_reason=llm_reason,
     )
-    
+
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -546,8 +576,15 @@ def propose_group_schedule(
 ) -> str:
     """Kana가 고른 후보 시간으로 최종 그룹 일정 결정 페이로드를 만듭니다."""
 
-    slots = [slot.model_dump() if hasattr(slot, "model_dump") else slot for slot in candidate_slots or []]
-    selected = selected_slot.model_dump() if hasattr(selected_slot, "model_dump") else selected_slot
+    slots = [
+        slot.model_dump() if hasattr(slot, "model_dump") else slot
+        for slot in candidate_slots or []
+    ]
+    selected = (
+        selected_slot.model_dump()
+        if hasattr(selected_slot, "model_dump")
+        else selected_slot
+    )
     payload = {
         "title": title,
         "members": normalize_external_member_names(member_names),
@@ -556,7 +593,10 @@ def propose_group_schedule(
         "reason": reason,
         "candidate_slots": slots,
     }
-    return json.dumps({"ok": True, "tool_name": "propose_group_schedule", "final_decision": payload}, ensure_ascii=False)
+    return json.dumps(
+        {"ok": True, "tool_name": "propose_group_schedule", "final_decision": payload},
+        ensure_ascii=False,
+    )
 
 
 @tool(args_schema=AgentQueryInput)
@@ -574,9 +614,7 @@ def nana_agent(query: str) -> str:
 
     if _NANA_SUBAGENT is None:
         _NANA_SUBAGENT = create_agent(
-            model=chat_model(), 
-            tools=week04_tools(),
-            system_prompt=nana_system_prompt()
+            model=chat_model(), tools=week04_tools(), system_prompt=nana_system_prompt()
         )
 
     result = _NANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
@@ -584,7 +622,15 @@ def nana_agent(query: str) -> str:
     answer = extract_final_text(result)
     inner_tool_names = _tool_call_names(trace)
 
-    return json.dumps({"selected_agent": "nana_agent", "answer": answer, "trace": trace, "inner_tool_names": inner_tool_names}, ensure_ascii=False)
+    return json.dumps(
+        {
+            "selected_agent": "nana_agent",
+            "answer": answer,
+            "trace": trace,
+            "inner_tool_names": inner_tool_names,
+        },
+        ensure_ascii=False,
+    )
 
 
 @tool(args_schema=AgentQueryInput)
@@ -595,14 +641,12 @@ def kana_agent(query: str) -> str:
     #   - _KANA_SUBAGENT를 kana_tools()와 kana_system_prompt()로 한 번만 만들고 재사용합니다.
     #   - trace event의 content를 훑어 final_slot이 들어 있는 dict와 final_decision 값을 찾습니다.
     #   - answer, trace, inner_tool_names, final_slot_payload, final_decision_payload를 JSON으로 반환합니다.
-    
+
     global _KANA_SUBAGENT
-    
+
     if _KANA_SUBAGENT is None:
         _KANA_SUBAGENT = create_agent(
-            model=chat_model(), 
-            tools=kana_tools(),
-            system_prompt=kana_system_prompt()
+            model=chat_model(), tools=kana_tools(), system_prompt=kana_system_prompt()
         )
 
     result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
@@ -620,16 +664,16 @@ def kana_agent(query: str) -> str:
                 final_slot_payload = content
             if "final_decision" in content:
                 final_decision_payload = content["final_decision"]
-                
+
     payload = {
         "selected_agent": "kana_agent",
-        "answer": answer, 
-        "trace": trace, 
-        "inner_tool_names": inner_tool_names, 
-        "final_slot_payload": final_slot_payload, 
-        "final_decision_payload": final_decision_payload
+        "answer": answer,
+        "trace": trace,
+        "inner_tool_names": inner_tool_names,
+        "final_slot_payload": final_slot_payload,
+        "final_decision_payload": final_decision_payload,
     }
-                
+
     return json.dumps(payload, ensure_ascii=False)
 
 
