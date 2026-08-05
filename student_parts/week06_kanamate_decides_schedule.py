@@ -280,6 +280,13 @@ def supervisor_system_prompt() -> str:
             *week06_prompt_parts(),
             # TODO: supervisor 실행 역할에 필요한 최종 system prompt를 자유롭게 추가하세요.
             #   - 반드시 nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답하게 합니다.
+            (
+                "모든 사용자 요청은 반드시 nana_agent 또는 kana_agent 중 하나를 호출하세요."
+                "하위 agent를 호출하지 않은 채 직접 답변을 작성하지 마세요.\n"
+                "하위 agent에게는 사용자의 요청 전체를 이해할 수 있는 구체적인 query를 전달하세요.\n"
+                "하위 agent를 호출한 뒤에는 그 tool 결과만 근거로 최종 답변을 작성하세요. "
+                "하위 agent가 답하지 않은 내용을 추측하지 마세요.\n"    
+            ),
         ]
     )
 
@@ -527,7 +534,44 @@ def nana_agent(query: str) -> str:
     #   - query를 user 메시지로 invoke하고, extract_agent_events(...)와 extract_final_text(...)로
     #     trace와 answer를 뽑습니다.
     #   - selected_agent, answer, trace, inner_tool_names를 담은 JSON 문자열을 반환합니다.
-    ...
+    
+    global _NANA_SUBAGENT
+    
+    if _NANA_SUBAGENT is None:
+        _NANA_SUBAGENT = create_agent(
+            model = chat_model(),
+            tools = week04_tools(),
+            system_prompt =  nana_system_prompt(),
+        )
+        
+        result = _NANA_SUBAGENT.invoke(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": query,
+                    }
+                ]
+            }
+        )
+        
+        events = extract_agent_events(result)
+        answer = extract_final_text(result)
+        inner_tool_names = _tool_call_names(events)
+        
+        return json.dumps(
+            {
+                "ok": True,
+                "tool_name": "nana_agent",
+                "selected_agent": "nana",
+                "answer": answer,
+                "trace": events,
+                "inner_tool_names": inner_tool_names,
+            },
+            ensure_ascii=False,
+        )
+    
+    
 
 
 @tool(args_schema=AgentQueryInput)
