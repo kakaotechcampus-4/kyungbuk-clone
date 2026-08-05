@@ -261,11 +261,19 @@ def supervisor_system_prompt() -> str:
     return join_system_prompt(
         [
             *week06_prompt_parts(),
-            # TODO: supervisor 실행 역할에 필요한 최종 system prompt를 자유롭게 추가하세요.
-            #   - 반드시 nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답하게 합니다.
+            """
+            사용자 요청을 받으면 먼저 nana_agent 또는 kana_agent 중 어느 쪽 담당인지
+            판단한 뒤, 그 tool을 호출하세요. tool을 호출하지 않고 직접 답변을 지어내지
+            마세요.
+
+            개인 일정과 외부 멤버 조율이 모두 필요한 요청이면 kana_agent로 먼저
+            공통 가능 시간을 확정한 뒤, 저장이 필요하면 nana_agent를 이어서 호출하세요.
+
+            최종 답변은 반드시 호출한 하위 agent의 결과만 근거로 작성하고,
+            결과에 없는 내용을 추측해서 덧붙이지 마세요.
+            """,
         ]
     )
-
 
 def _tool_call_names(events: list[dict[str, Any]]) -> list[str]:
     return [event["tool_name"] for event in events if event.get("event") == "tool_call" and event.get("tool_name")]
