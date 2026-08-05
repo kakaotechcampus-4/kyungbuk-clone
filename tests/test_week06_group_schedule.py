@@ -364,6 +364,32 @@ def test_empty_and_all_rejected_notes_differ() -> None:
         assert any("needs_agent_selection=true" in note for note in payload["notes"])
 
 
+def test_member_with_no_rows_is_flagged_not_assumed_free() -> None:
+    """rows가 0건인 멤버를 짚어 줘야 합니다.
+
+    EXTERNAL_MEMBER_ALIAS가 비어 있어 "민준이"처럼 조사가 붙은 이름은 정규화되지 않고
+    외부 저장소에서 0건이 돌아옵니다. 그 payload는 "일정이 없어 한가함"과 모양이 같아서
+    확인 없이 넘어가면 이미 바쁜 사람의 시간에 회의를 잡게 됩니다.
+    """
+
+    payload = w6.find_common_available_slots_dict(
+        member_names=["민준이"],
+        date_from="2026-07-16",
+        date_to="2026-07-16",
+        busy_rows=[],
+        candidate_slots=[],
+    )
+    assert "민준이" in payload["members_without_rows"]
+    assert any("조사가 붙어" in note for note in payload["notes"])
+
+
+def test_member_with_rows_is_not_flagged() -> None:
+    """rows가 있는 멤버는 짚지 않아야 합니다."""
+
+    payload = _find_slots([])
+    assert "민준" not in payload["members_without_rows"]
+
+
 def test_members_dedupe_alias_and_real_name() -> None:
     """alias와 실제 이름이 함께 들어와도 members에 같은 사람이 두 번 남으면 안 됩니다.
 

@@ -244,6 +244,9 @@ WEEK06_KANA_PROMPT = (
     "외부 멤버 데이터는 SQL로 직접 읽지 않고 반드시 주어진 MCP wrapper tool로만 접근한다.\n"
     "외부 멤버가 무슨 말을 했는지 찾을 때는 search_previous_conversations로 대화를 검색해 conversation_id를 얻고, "
     "원문을 그대로 봐야 할 때만 그 id를 load_conversation_messages에 넘긴다. conversation_id를 사용자에게 묻지 않는다.\n"
+    "멤버 이름은 조사를 뗀 이름만 넘긴다. '민준이랑', '민준이가'는 '민준'으로, '하린과'는 '하린'으로 넘긴다. "
+    "조사가 붙은 이름은 외부 저장소에서 찾지 못해 그 사람의 일정이 0건으로 돌아오고, "
+    "그러면 실제로는 바쁜 사람이 한가한 것처럼 보여 이미 잡힌 시간에 회의를 잡게 된다.\n"
     "'언제 시간이 되는지', '회의 시간 잡자'처럼 여러 사람의 시간을 맞추는 요청은 collect_member_schedules 하나로 "
     "내 일정과 외부 멤버 일정을 같은 rows 구조로 모은다. extract_schedules_from_history와 개인 일정 조회를 따로 "
     "부르지 않는다. collect_member_schedules 결과의 external_status가 ok가 아니면 외부 멤버 일정을 못 가져온 "
@@ -785,6 +788,20 @@ def find_common_available_slots_dict(
         notes.append(
             f"시간이 미정인 일정 {len(soft_rows)}건은 겹침 검증에 쓸 수 없었습니다. "
             "해당 날짜 후보는 확정 전에 사용자 확인이 필요합니다."
+        )
+
+    # rows가 하나도 없는 멤버를 짚어 준다. 이름에 조사가 붙어 있으면("민준이") 외부 저장소에서
+    # 못 찾아 0건이 돌아오는데, 그 상태는 "일정이 없어 한가함"과 payload 모양이 같다.
+    # EXTERNAL_MEMBER_ALIAS가 비어 있어 정규화가 이름을 고쳐 주지 않으므로 여기서 드러내 준다.
+    # 정말 일정이 없을 수도 있으니 오류로 막지 않고 확인만 요청한다.
+    members_with_rows = {str(row.get("member_name") or "").strip() for row in collected_rows}
+    members_without_rows = [name for name in evidence_members if name not in members_with_rows]
+    payload["members_without_rows"] = members_without_rows
+    if members_without_rows and collection_state["collection_status"] in ("ok", "provided"):
+        notes.append(
+            f"{', '.join(members_without_rows)}의 일정이 rows에 하나도 없습니다. "
+            "이름에 조사가 붙어 있지 않은지(예: '민준이' → '민준') 확인하고, "
+            "정말 일정이 없는 것이라면 그대로 진행하세요. 확인 없이 한가하다고 단정하지 마세요."
         )
     # 걸러진 후보와 그 이유를 남긴다. 이유 없이 "후보 0개"만 주면 agent가 원인을 추측해서
     # 실제로는 비어 있는 시간을 "전부 예약됨"으로 설명하는 답변이 나온다(실행에서 관찰).
