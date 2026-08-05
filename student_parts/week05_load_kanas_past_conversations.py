@@ -381,7 +381,9 @@ def _my_schedule_notes(request: StructuredRequest) -> str:
     if request.kind != "group_schedule":
         return "Nana 개인 일정"
     members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
-    return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
+    # 구분자는 ASCII 하이픈을 쓴다 — 특수문자 '·'는 LLM이 busy_rows를 인자로 복사할 때
+    # 깨지는 경우가 앱 검증에서 관측됐다(로 변형).
+    return f"Nana 그룹 일정 - 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
 
 
 def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

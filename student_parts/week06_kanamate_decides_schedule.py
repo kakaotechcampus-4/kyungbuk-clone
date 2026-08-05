@@ -204,8 +204,13 @@ def week06_prompt_parts() -> list[str]:
         "내 개인 일정의 생성/조회/수정/삭제, 할 일/알림 저장, 내 참고자료·내 지난 대화 검색은 nana_agent에 위임한다. "
         "다른 멤버(철수/하린 등)의 일정·대화 조회, 공유 일정 저장소, 여러 사람의 공통 가능 시간과 "
         "최종 회의 시간 결정은 kana_agent에 위임한다. "
-        "한 요청에 개인 업무와 그룹 업무가 섞여 있으면 순서대로 각각 위임한다. "
+        "위임은 한 번에 하나의 하위 agent만 호출하고, 결과를 읽은 뒤에 필요할 때만 다음 위임을 한다. "
+        "두 agent를 동시에 호출하지 않는다. "
         "하위 agent가 담당이 아니라고 답하면 같은 query를 반복하지 말고 다른 agent에 위임한다. "
+        "일정 저장/수정/삭제 같은 상태 변경은 사용자가 이번 메시지에서 명시적으로 요청했을 때만 위임한다. "
+        "하위 agent가 '저장은 Nana 담당'이라고 답하는 것은 사용자 요청이 아니므로, 그때는 저장하지 말고 "
+        "제안된 시간을 알려주며 저장할지 사용자에게 물어본다. "
+        "확정된 회의 저장을 위임할 때는 회의 제목뿐 아니라 참석자 이름 전부와 날짜/시간을 query에 그대로 담는다. "
         "하위 agent는 이 대화의 이전 내용을 보지 못하므로, '그 대화', '방금 그 시간'처럼 "
         "앞선 턴을 가리키는 후속 요청을 위임할 때는 필요한 맥락(누구의 무엇인지, 날짜/시간)을 "
         "query에 함께 적어 하위 agent가 그 문장만으로 이해할 수 있게 한다."
@@ -257,7 +262,8 @@ def kana_prompt_parts() -> list[str]:
         "③ 검증된 후보에서 최종 시간을 네가 직접 골라 decide_final_slot에 넘겨 기록한 뒤 그 결과로 답한다. "
         "tool은 후보나 최종 시간을 대신 골라주지 않는다 — 고르는 것은 네 역할이다. "
         "검색 결과와 tool 결과만 근거로 답하고, 기록에 없는 일정을 지어내지 않는다. "
-        "확정된 일정을 앱에 저장하는 것은 Nana 담당이므로 저장 요청은 Nana에게 맡기라고 답한다."
+        "너는 일정을 저장할 수 없고 저장은 사용자가 원할 때만 이루어진다. 시간을 제안한 뒤에는 "
+        "'이 시간으로 저장할까요?'처럼 사용자의 확인을 구하는 문장으로 끝내고, 저장을 지시하는 문장은 쓰지 않는다."
     )
     return [kana_role, kana_slot_flow]
 
@@ -292,14 +298,19 @@ def extract_langchain_trace(result: dict[str, Any]) -> dict[str, Any]:
     inner_tool_names: list[str] = []
     final_slot_payload: dict[str, Any] | None = None
     final_decision_payload: dict[str, Any] | None = None
-    selected_agent: str | None = None
+    delegated_agents: list[str] = []
+    worked_agent: str | None = None
 
     for event in events:
         if event.get("event") == "tool_call" and event.get("tool_name") in {"nana_agent", "kana_agent"}:
-            selected_agent = event["tool_name"]
+            delegated_agents.append(event["tool_name"])
         content = event.get("content")
         if isinstance(content, dict):
             inner_tool_names.extend(content.get("inner_tool_names") or [])
+            # 병렬/다중 위임에서 "마지막 호출"은 거절만 한 agent일 수 있다(앱 검증에서 재현).
+            # 실제로 tool을 실행한 agent를 선택된 agent로 본다.
+            if content.get("inner_tool_names") and content.get("selected_agent"):
+                worked_agent = content["selected_agent"]
             if content.get("final_slot_payload"):
                 final_slot_payload = content["final_slot_payload"]
             elif "final_slot" in content:
@@ -309,7 +320,8 @@ def extract_langchain_trace(result: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "events": events,
-        "supervisor_selected_agent": selected_agent,
+        "supervisor_selected_agent": worked_agent or (delegated_agents[-1] if delegated_agents else None),
+        "delegated_agents": delegated_agents,
         "inner_tool_names": inner_tool_names,
         "final_slot_payload": final_slot_payload,
         "final_decision_payload": final_decision_payload,
