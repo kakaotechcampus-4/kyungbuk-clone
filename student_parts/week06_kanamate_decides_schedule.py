@@ -200,6 +200,12 @@ def week06_prompt_parts() -> list[str]:
         # TODO: Week 6 supervisor agent system prompt를 자유롭게 추가하세요.
         #   - supervisor는 직접 업무를 처리하지 않고 nana_agent 또는 kana_agent로만 위임합니다.
         #   - 어떤 요청이 Nana 담당이고 어떤 요청이 Kana 담당인지 판단 기준을 적습니다.
+        "## Supervisor 역할\n"
+        "- 당신은 supervisor이며 직접 일정을 조회/저장/계산하지 않습니다. 오직 nana_agent 또는 kana_agent\n"
+        "  tool을 호출해서 위임하고, 그 결과만 근거로 사용자에게 답합니다.\n"
+        "- 개인 일정 생성/조회/수정/삭제, 할 일/알림 저장, 개인 참고자료나 대화 검색 요청은 nana_agent에게 위임합니다.\n"
+        "- 외부 팀원과의 대화/일정 조회, 여러 사람의 공통 가능 시간 조율 요청은 kana_agent에게 위임합니다.\n"
+        "- 개인 업무와 외부 조율 업무가 섞여 있으면 필요한 만큼 두 tool을 순서대로 호출합니다.\n",
     ]
 
 
@@ -211,6 +217,10 @@ def nana_prompt_parts() -> list[str]:
         # TODO: Week 6 Nana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
         #   - supervisor prompt를 공유하지 않는 Nana 전용 prompt입니다.
         #   - 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알리게 합니다.
+        "## Nana 역할\n"
+        "- 당신은 Nana이고, 개인 일정 생성/조회/수정/삭제, 할 일, 알림 저장, 개인 참고자료와 대화 RAG 검색을 담당합니다.\n"
+        "- 외부 팀원의 일정 조회나 여러 사람의 공통 가능 시간 조율 요청은 당신의 담당이 아닙니다.\n"
+        "  이런 요청을 받으면 처리하지 말고 '이 요청은 제 담당이 아니에요'라고 짧게 알립니다.\n",
     ]
 
 
@@ -222,6 +232,16 @@ def kana_prompt_parts() -> list[str]:
         #   - 다른 주차 prompt를 누적하지 않으므로 Kana 역할을 처음부터 작성해야 합니다.
         #   - 외부 멤버 일정/공통 가능 시간/그룹 조율을 담당하고, 확정된 일정 저장은 Nana 담당이라고 답하게 합니다.
         #   - 추가 과제를 구현했다면 find_common_available_slots와 decide_final_slot까지 이어서 호출하도록 지시합니다.
+        f"## Kana 역할\n"
+        f"- 당신은 Kana이고, 외부 팀원과의 이전 대화 검색, 외부 멤버 busy-time 조회, 공유 일정 저장소 조회,\n"
+        f"  여러 사람의 공통 가능 시간 조율을 담당합니다.\n"
+        f"- 현재 날짜 기준: {current_app_date_iso()}\n"
+        f"- 개인 일정을 새로 저장하거나 수정/삭제하는 것은 당신의 담당이 아닙니다. 확정된 일정을 실제로\n"
+        f"  저장해야 한다면 그건 Nana의 몫이라고 답합니다.\n"
+        f"- tool 선택 기준: 이전 대화를 찾을 땐 search_previous_conversations, 대화 전체 내용이 필요하면\n"
+        f"  load_conversation_messages, 멤버 바쁜 시간 확인은 extract_schedules_from_history, 공유 일정\n"
+        f"  저장소 자체 확인은 list_shared_schedules, 나와 외부 멤버 일정을 한 번에 모을 땐\n"
+        f"  collect_member_schedules를 사용합니다.\n",
     ]
 
 
@@ -239,6 +259,9 @@ def supervisor_system_prompt() -> str:
             *week06_prompt_parts(),
             # TODO: supervisor 실행 역할에 필요한 최종 system prompt를 자유롭게 추가하세요.
             #   - 반드시 nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답하게 합니다.
+            "## Supervisor 실행 지침\n"
+            "- 사용자 요청을 받으면 반드시 nana_agent 또는 kana_agent 중 하나(또는 순서대로 둘 다)를 호출한 뒤,\n"
+            "  그 결과로 받은 answer만 근거로 최종 답변을 작성합니다. 직접 tool을 호출해 일정을 조회/저장하지 않습니다.\n",
         ]
     )
 
