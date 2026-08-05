@@ -191,6 +191,7 @@ def week06_system_prompt() -> str:
 
     return supervisor_system_prompt()
 
+
 def week06_prompt_parts() -> list[str]:
     """1~6주차 supervisor system prompt 조각을 누적합니다."""
 
