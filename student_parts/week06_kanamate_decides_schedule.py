@@ -219,7 +219,10 @@ def week06_prompt_parts() -> list[str]:
         "앞선 턴을 가리키는 후속 요청을 위임할 때는 필요한 맥락(누구의 무엇인지, 날짜/시간)을 "
         "query에 함께 적어 하위 agent가 그 문장만으로 이해할 수 있게 한다. "
         "위임 query는 사용자 문장을 바꿔 쓰지 말고 원문 그대로 담는다 — 표현을 바꾸면 "
-        "사용자의 의도(조율인지 저장인지)가 변형된다. 맥락 보충은 원문 뒤에 덧붙인다."
+        "사용자의 의도(조율인지 저장인지)가 변형된다. 맥락 보충은 원문 뒤에 덧붙인다. "
+        "단, 이전 턴에서 이미 수행된 위임을 다시 보내지 않는다 — 후속 요청(삭제/확정/저장 등)에는 "
+        "이번 작업 query 하나만 위임하고, 이전 결과가 필요하면 요청 원문이 아니라 그 결과 내용"
+        "(시간·참석자 등)을 맥락으로 덧붙인다. 이전 저장·조율 요청을 재전송하면 같은 작업이 중복 실행된다."
     )
     return [
         *week05_prompt_parts(),
@@ -237,7 +240,9 @@ def nana_prompt_parts() -> list[str]:
         "'그룹 조율은 Kana 담당'이라고 짧게 답한다. "
         "다른 멤버가 참석하는 회의인데 시작 시간이 정해지지 않았다면, 요청 표현이 저장처럼 들려도 그것은 시간 조율 요청이다 — "
         "시간 미정 상태로 저장하지 말고 'Kana 담당'이라고 답한다. "
-        "단, 사용자가 시간을 미정으로 두고 저장하겠다고 명시한 경우는 저장 요청이므로 그대로 저장한다."
+        "단, 사용자가 시간을 미정으로 두고 저장하겠다고 명시한 경우는 저장 요청이므로 그대로 저장한다. "
+        "일정을 저장하기 전 같은 날짜의 기존 일정과 시간이 겹치면 바로 저장하지 말고, "
+        "겹치는 일정을 알리고 그래도 저장할지 확인을 구한다."
     )
     return [
         *week04_prompt_parts(),
@@ -491,7 +496,24 @@ def find_common_available_slots(
         candidate_slots=candidate_slots,
         llm_reason=llm_reason,
     )
-    return json.dumps({"ok": True, "tool_name": "find_common_available_slots", **result}, ensure_ascii=False)
+    payload = {"ok": True, "tool_name": "find_common_available_slots", **result}
+    # 앱 검증에서 재현된 실패: Kana가 후보를 고르지 않고 빈 candidate_slots로 호출한 뒤
+    # 빈 결과를 "가능 시간 없음"으로 해석했다(빈 날이 많은데도). 이 tool은 후보를
+    # 계산하지 않으므로, 후보 없이 온 호출에는 교정 방법을 결과에 실어 보낸다
+    # (Week 4 coverage / Week 5 retry_hint와 같은 결과-내-안내 방식).
+    if not candidate_slots:
+        payload["retry_hint"] = (
+            "candidate_slots가 비어 있습니다. 이 tool은 후보를 대신 계산하지 않습니다 — "
+            "busy_rows와 겹치지 않는 빈 시간대를 네가 직접 골라 candidate_slots에 채워 "
+            "다시 호출하세요. busy가 없는 날은 업무 시간 내 어느 시간이든 후보가 될 수 있습니다. "
+            "빈 결과를 '가능 시간 없음'으로 해석하면 안 됩니다."
+        )
+    elif not payload.get("candidate_slots"):
+        payload["retry_hint"] = (
+            "제안한 후보가 모두 busy와 겹쳐 탈락했습니다. busy_rows를 다시 읽고 겹치지 않는 "
+            "다른 시간대로 후보를 골라 재호출하세요."
+        )
+    return json.dumps(payload, ensure_ascii=False)
 
 
 @tool(description=DECIDE_FINAL_SLOT_DESCRIPTION, args_schema=DecideFinalSlotInput)
@@ -577,6 +599,52 @@ def propose_group_schedule(
     return json.dumps({"ok": True, "tool_name": "propose_group_schedule", "final_decision": payload}, ensure_ascii=False)
 
 
+# 같은 대화에서 상태 변경(저장/삭제/등록)을 수행한 위임 query를 기억한다.
+# supervisor가 후속 턴에서 이전 요청 원문을 재전송해 같은 저장이 중복 실행되는 실패가
+# 프롬프트 수정 4회로도 재발해, 합의된 에스컬레이션 기준대로 코드 게이트로 승격했다.
+# 읽기 전용 위임의 반복은 막지 않는다.
+_WRITE_TOOL_NAMES = {
+    "save_structured_request", "personal_create_schedule", "personal_update_saved_schedule",
+    "personal_delete_saved_schedules", "create_shared_schedule", "delete_shared_schedule",
+    "add_personal_reference",
+}
+_EXECUTED_WRITE_QUERIES: dict[str, set[str]] = {}
+
+
+def _replayed_write_query(query: str) -> bool:
+    """현재 대화에서 이미 상태 변경을 수행한 것과 동일한 query인지 확인합니다."""
+
+    from fixed.session_scope import current_session_scope
+
+    return query.strip() in _EXECUTED_WRITE_QUERIES.get(current_session_scope(), set())
+
+
+def _remember_write_query(query: str, inner_tool_names: list[str]) -> None:
+    """상태 변경 tool이 실행된 위임 query를 대화 범위로 기억합니다."""
+
+    from fixed.session_scope import current_session_scope
+
+    if set(inner_tool_names) & _WRITE_TOOL_NAMES:
+        _EXECUTED_WRITE_QUERIES.setdefault(current_session_scope(), set()).add(query.strip())
+
+
+def _replay_refusal_payload(agent_tool: str, query: str) -> str:
+    """중복 재실행을 막고 supervisor가 읽고 교정할 수 있는 payload를 돌려줍니다."""
+
+    return json.dumps(
+        {
+            "ok": False,
+            "selected_agent": agent_tool,
+            "error": (
+                "이 query는 이 대화에서 이미 저장/삭제 등 상태 변경을 수행한 요청과 동일해 "
+                "재실행하지 않았습니다. 이전 요청을 다시 보내지 말고, 이번에 필요한 작업만 "
+                "새 query로 위임하세요."
+            ),
+        },
+        ensure_ascii=False,
+    )
+
+
 def _run_subagent(agent: Any, query: str) -> tuple[str, list[dict[str, Any]]]:
     """하위 agent를 한 번 실행하고 (answer, trace events)를 반환합니다."""
 
@@ -610,10 +678,13 @@ def nana_agent(query: str) -> str:
         _NANA_SUBAGENT = create_agent(
             model=chat_model(), tools=week04_tools(), system_prompt=nana_system_prompt()
         )
+    if _replayed_write_query(query):
+        return _replay_refusal_payload("nana_agent", query)
     try:
         answer, events = _run_subagent(_NANA_SUBAGENT, query)
     except Exception as exc:
         return _subagent_error_payload("nana_agent", exc)
+    _remember_write_query(query, _tool_call_names(events))
     return json.dumps(
         {
             "ok": True,
@@ -635,10 +706,13 @@ def kana_agent(query: str) -> str:
         _KANA_SUBAGENT = create_agent(
             model=chat_model(), tools=kana_tools(), system_prompt=kana_system_prompt()
         )
+    if _replayed_write_query(query):
+        return _replay_refusal_payload("kana_agent", query)
     try:
         answer, events = _run_subagent(_KANA_SUBAGENT, query)
     except Exception as exc:
         return _subagent_error_payload("kana_agent", exc)
+    _remember_write_query(query, _tool_call_names(events))
 
     # 하위 trace를 훑어 최종 시간 결정 payload를 top-level로 끌어올린다.
     # supervisor와 UI가 하위 event 전체를 뒤지지 않고도 최종 결정을 읽을 수 있게 하기 위해서다.
