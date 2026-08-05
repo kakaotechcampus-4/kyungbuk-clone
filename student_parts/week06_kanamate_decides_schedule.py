@@ -489,13 +489,30 @@ def propose_group_schedule(
 def nana_agent(query: str) -> str:
     """개인 일정과 개인 RAG 작업을 프롬프트 기반 Nana 하위 에이전트에게 위임합니다."""
 
-    # TODO: Week 4 도구를 가진 Nana 하위 agent를 실행하고 answer/trace/inner_tool_names를 반환하세요.
-    #   - _NANA_SUBAGENT가 None일 때만 create_agent(model=chat_model(), tools=week04_tools(),
-    #     system_prompt=nana_system_prompt())로 만들고 이후에는 재사용합니다.
-    #   - query를 user 메시지로 invoke하고, extract_agent_events(...)와 extract_final_text(...)로
-    #     trace와 answer를 뽑습니다.
-    #   - selected_agent, answer, trace, inner_tool_names를 담은 JSON 문자열을 반환합니다.
-    ...
+    # nana_agent 가 존재하면 기존 에이전트를 사용
+    # 없을 경우 새로 생성
+    global _NANA_SUBAGENT
+    if _NANA_SUBAGENT is None:
+        _NANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=week04_tools(),
+            system_prompt=nana_system_prompt(),
+        )
+    # supervisor 에서 넘어온 지시문(query) 를 nana_agent 가 수행 후 결과를 result 에 저장
+    result = _NANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    # result(대화 원본)에서 tool 호출 기록만 dict 형태로 추출해 events 에 저장
+    events = extract_agent_events(result)
+
+    # supervisor_agent 에게 돌려줄 결과를 JSON 문자열로 변환하여 반환
+    return json.dumps(
+        {
+            "selected_agent": "nana_agent",
+            "answer": extract_final_text(result),
+            "trace": events,
+            "inner_tool_names": _tool_call_names(events),
+        },
+        ensure_ascii=False, # 한글 깨짐 방지
+    )
 
 
 @tool(args_schema=AgentQueryInput)
