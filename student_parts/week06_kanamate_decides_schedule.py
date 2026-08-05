@@ -323,14 +323,15 @@ def tool_name(tool_object: Any) -> str:
 
 
 FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
-    # TODO: find_common_available_slots tool description을 자유롭게 작성하세요.
-    #   - 이 Python tool이 후보를 계산하지 않는다는 점을 Kana agent에게 분명히 알려야 합니다.
-    #     agent가 busy_rows를 읽고 candidate_slots를 직접 채워 넘기게 만드는 것이 핵심입니다.
-    #   - candidate_slots 각 항목이 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM),
-    #     duration_minutes, reason을 포함해야 한다는 형식을 적습니다.
-    #   - 후보는 어떤 busy row와도 겹치면 안 되고, busy_rows도 앞선 tool output에서 복사해 넘기게 합니다.
-    #   - 이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출하도록 유도합니다.
-    ""
+    "여러 사람의 공통 가능 시간 후보를 검증하는 tool입니다. 이 tool은 최적 시간을 스스로 "
+    "계산해주지 않습니다. 반드시 앞선 tool(collect_member_schedules 등)에서 받은 busy_rows를 "
+    "그대로 복사해서 넘기고, 그 busy_rows를 직접 읽어 겹치지 않는 시간대를 candidate_slots로 "
+    "골라 넘겨야 합니다. "
+    "candidate_slots의 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), "
+    "duration_minutes, reason 필드를 모두 포함해야 하고, 어떤 busy_rows 항목과도 겹치면 "
+    "안 됩니다. "
+    "이 tool 결과만으로 답변을 끝내지 말고, 후보 중 하나를 선택해 decide_final_slot을 "
+    "이어서 호출해 최종 확정까지 마치세요."
 )
 
 
