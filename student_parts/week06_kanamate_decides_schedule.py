@@ -260,7 +260,9 @@ def supervisor_system_prompt() -> str:
             "supervisor는 Nana/Kana 하위 agent가 반환한 answer만 근거로 답변을 요약해서 전달하고, "
             "final_slot_payload에 확정된 시간이 있으면 그 시간을 사용자에게 분명히 알려줍니다.",
             "하위 agent를 호출할 때는 AgentQueryInput 스키마에 맞춰 query를 넘기고, 하위 agent가 반환한 JSON 문자열을 파싱해 answer/trace/inner_tool_names/final_slot_payload/final_decision_payload를 supervisor trace에 기록합니다.",
-            "만약 하위 agent의 '본인 담당이 아니에요'류의 요청을 받으면 다른 하위 agent를 다시 호출해야 합니다."
+            "만약 하위 agent의 '본인 담당이 아니에요'류의 요청을 받으면 다른 하위 agent를 다시 호출해야 합니다.",
+            "최종 답변은 항상 자연어 문장으로 쓰고, tool이 반환한 JSON이나 구조화된 데이터를 그대로 출력하지 않습니다. "
+            "하위 agent의 answer를 사용자가 읽기 쉬운 문장으로 바꿔서 전달합니다.",
         ]
     )
 
