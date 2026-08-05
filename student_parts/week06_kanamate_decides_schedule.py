@@ -437,7 +437,8 @@ def find_common_available_slots_dict(
     #   - 검증 payload 생성은 find_common_available_slots_payload(...)에 넘깁니다. 이때 내 일정도 근거이므로
     #     member_names에는 "나"를 함께 포함합니다.
     norm_mem_names = normalize_external_member_names(member_names)
-    norm_date_from, norm_date_to = normalize_date_bound(date_from, date_to)
+    norm_date_from = normalize_date_bound(date_from)
+    norm_date_to = normalize_date_bound(date_to)
 
     if busy_rows is None:
         collected_str = collect_member_schedules.invoke(
