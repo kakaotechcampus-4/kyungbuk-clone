@@ -303,7 +303,14 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     #     duration_minutes, reason을 포함해야 한다는 형식을 적습니다.
     #   - 후보는 어떤 busy row와도 겹치면 안 되고, busy_rows도 앞선 tool output에서 복사해 넘기게 합니다.
     #   - 이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출하도록 유도합니다.
-    ""
+    """
+    이 tool은 수집된 멤버들의 일정(busy_rows)을 바탕으로 겹치지 않는 공통 가능 시간 후보(candidate_slots)를 찾아 검증하는 도구입니다.
+    해당 tool은 절대로 직접 후보를 계산하지 않습니다.
+    agent가 busy_rows를 읽고 겹치지 않는 시간을 찾아 candidate_slots를 직접 채워서 넘기도록 만들어야 합니다.
+    candidate_slots의 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), duration_minutes, reason을 반드시 포함하도록 합니다.
+    후보는 앞서 조회한 어떤 busy row와도 겹치면 안 되고, busy_rows도 앞선 tool output에서 복사해 넘기도록 합니다.
+    이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출해 최종 일정을 결정하도록 합니다.
+    """
 )
 
 
@@ -314,7 +321,15 @@ DECIDE_FINAL_SLOT_DESCRIPTION = (
     #   - final_slot 형식('YYYY-MM-DD HH:MM-HH:MM')과 needs_agent_selection, reason을 채우는 기준을 적습니다.
     #   - 아직 고르지 않았다면 final_slot은 null, needs_agent_selection은 true로 두게 합니다.
     #   - 근거 trace를 위해 candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘기게 합니다.
-    ""
+    """
+    이 tool은 선정된 후보 시간들 중 최종 확정 시간(final_slot)을 결정하고 결과를 시스템에 기록하는 도구입니다.
+    해당 tool은 절대로 직접 최종 시간을 자동 선택하지 않습니다.
+    agent가 selected_index 또는 selected_slot과 final_slot을 직접 골라서 넘기도록 만들어야 합니다.
+    final_slot은 ('YYYY-MM-DD HH:MM-HH:MM') 형식을 반드시 지키도록 합니다.
+    최종 시간을 확정했다면 needs_agent_selection은 false로 설정하고, 아직 확정되지 않았다면 final_slot은 null, needs_agent_selection은 true로 설정합니다.
+    reason 필드에는 최종 선택 또는 보류에 대한 이유로 채우도록 합니다.
+    근거 trace를 위해 candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘겨야 합니다.
+    """
 )
 
 
