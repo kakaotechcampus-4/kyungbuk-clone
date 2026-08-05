@@ -13,6 +13,8 @@ from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
 from fixed.schedule_decision import (
     CommonSlotCandidate,
+    busy_rows_overlap,
+    date_range,
     decide_final_slot_payload,
     find_common_available_slots_payload,
     format_time_minutes,
@@ -249,6 +251,12 @@ WEEK06_KANA_PROMPT = (
     "조율 요청은 rows를 모으는 데서 멈추지 않는다. rows를 읽고 겹치지 않는 시간을 직접 골라 "
     "find_common_available_slots에 candidate_slots로 넘겨 검증하고, 이어서 decide_final_slot으로 최종 시간을 기록한다. "
     "이 두 tool은 후보나 최종 시간을 대신 계산해 주지 않으므로, 내가 고르지 않으면 결과가 비어 있게 된다.\n"
+    "find_common_available_slots가 빈 후보를 돌려주면 결과의 rejected_candidates와 notes에 걸러진 이유가 들어 있다. "
+    "그 이유만 근거로 다른 시간대를 골라 한 번 더 시도하고, 그래도 후보를 못 찾으면 "
+    "decide_final_slot에 final_slot=null, needs_agent_selection=true와 이유를 넣어 반드시 기록한 뒤 답한다. "
+    "find_common_available_slots만 여러 번 부르고 decide_final_slot 없이 답을 끝내지 않는다. "
+    "후보가 걸러진 이유를 넘어서 '그날 업무 시간이 전부 예약됐다'처럼 rows에 없는 내용을 추측해 말하지 않는다. "
+    "겹친다고 말할 때는 어떤 사람의 어떤 일정과 겹치는지 rows에 있는 값으로 밝힌다.\n"
     "확정된 회의를 내 일정으로 저장하는 tool은 갖고 있지 않다. 저장 요청을 받으면 '확정 일정 저장은 Nana 담당'이라고 "
     "짧게 알리고, 내가 정한 최종 시간은 답변에 분명히 남겨 supervisor가 그대로 넘길 수 있게 한다.\n"
     "답변 근거는 tool 결과 rows와 payload에 실제로 있는 값만 쓴다. 없는 일정이나 없는 후보를 만들어 내지 않는다.\n"
@@ -591,6 +599,110 @@ def _busy_rows_for_overlap_check(
     return hard_rows, soft_rows
 
 
+def _candidate_rejection_reason(
+    candidate: Any,
+    *,
+    date_from: str,
+    date_to: str,
+    busy_rows: list[dict[str, Any]],
+    duration_minutes: int,
+    workday_start: str,
+    workday_end: str,
+) -> str:
+    """검증에서 걸러진 후보가 왜 걸러졌는지 한 줄로 설명합니다.
+
+    후보를 걸러내는 권한은 fixed/schedule_decision.py의 normalize_llm_candidate_slots에 있고
+    그 함수는 조건에 안 맞는 후보를 조용히 버립니다. 그래서 agent는 "후보가 0개"만 보고
+    이유를 알 수 없어, 실제로는 비어 있는 시간을 "전부 예약됨"으로 잘못 설명하는 답변이 나왔다.
+
+    판정 규칙을 여기서 다시 만들지 않고 fixed가 쓰는 같은 primitive(date_range,
+    parse_time_minutes, busy_rows_overlap)로 이유만 되짚는다. 그래서 이 함수는 걸러낼 권한이
+    없고 설명만 담당한다. 규칙이 바뀌면 fixed 한 곳만 바뀐다.
+    """
+
+    slot = candidate.model_dump() if hasattr(candidate, "model_dump") else candidate
+    if not isinstance(slot, dict):
+        return "후보 형식이 date/start_time/end_time을 가진 객체가 아닙니다."
+
+    day = normalize_date_bound(str(slot.get("date") or ""))
+    start_minutes = parse_time_minutes(slot.get("start_time"), -1)
+    end_minutes = parse_time_minutes(slot.get("end_time"), -1)
+    work_start = parse_time_minutes(workday_start, 9 * 60)
+    work_end = parse_time_minutes(workday_end, 18 * 60)
+    requested = max(30, int(duration_minutes or 60))
+
+    if day not in set(date_range(date_from, date_to)):
+        return f"{day}는 요청한 날짜 범위({date_from}~{date_to}) 밖입니다."
+    if start_minutes < 0 or end_minutes < 0:
+        return "start_time 또는 end_time이 HH:MM 형식이 아닙니다."
+    if end_minutes <= start_minutes:
+        return "종료 시간이 시작 시간보다 늦지 않습니다."
+    if start_minutes < work_start or end_minutes > work_end:
+        return f"업무 시간({workday_start}~{workday_end}) 밖입니다."
+    if end_minutes - start_minutes < requested:
+        return f"길이가 요청한 {requested}분보다 짧습니다."
+
+    blockers = busy_rows_overlap(busy_rows, day, start_minutes, end_minutes)
+    if blockers:
+        names = ", ".join(
+            f"{row.get('member_name') or '?'} {row.get('title') or ''}"
+            f"({row.get('start_time')}-{row.get('end_time')})"
+            for row in blockers[:3]
+        )
+        return f"이미 잡힌 일정과 겹칩니다: {names}"
+    return "검증에서 제외됐지만 확인된 원인이 없습니다."
+
+
+def _rejected_candidate_reports(
+    submitted: list[Any] | None,
+    accepted: list[dict[str, Any]],
+    *,
+    date_from: str,
+    date_to: str,
+    busy_rows: list[dict[str, Any]],
+    duration_minutes: int,
+    workday_start: str,
+    workday_end: str,
+) -> list[dict[str, Any]]:
+    """agent가 낸 후보 중 검증을 통과하지 못한 것만 이유와 함께 모읍니다."""
+
+    accepted_keys = {
+        (str(slot.get("date")), str(slot.get("start_time")), str(slot.get("end_time")))
+        for slot in accepted
+    }
+    reports: list[dict[str, Any]] = []
+    for candidate in submitted or []:
+        slot = candidate.model_dump() if hasattr(candidate, "model_dump") else candidate
+        if not isinstance(slot, dict):
+            reports.append({"candidate": str(candidate), "reason": "후보 형식이 올바르지 않습니다."})
+            continue
+        # 통과한 후보는 시간이 HH:MM으로 정규화돼 돌아오므로 같은 기준으로 맞춰 비교한다.
+        start_minutes = parse_time_minutes(slot.get("start_time"), -1)
+        end_minutes = parse_time_minutes(slot.get("end_time"), -1)
+        key = (
+            normalize_date_bound(str(slot.get("date") or "")),
+            format_time_minutes(start_minutes) if start_minutes >= 0 else str(slot.get("start_time")),
+            format_time_minutes(end_minutes) if end_minutes >= 0 else str(slot.get("end_time")),
+        )
+        if key in accepted_keys:
+            continue
+        reports.append(
+            {
+                "candidate": f"{slot.get('date')} {slot.get('start_time')}-{slot.get('end_time')}",
+                "reason": _candidate_rejection_reason(
+                    slot,
+                    date_from=date_from,
+                    date_to=date_to,
+                    busy_rows=busy_rows,
+                    duration_minutes=duration_minutes,
+                    workday_start=workday_start,
+                    workday_end=workday_end,
+                ),
+            }
+        )
+    return reports
+
+
 def find_common_available_slots_dict(
     member_names: list[str],
     date_from: str,
@@ -674,10 +786,37 @@ def find_common_available_slots_dict(
             f"시간이 미정인 일정 {len(soft_rows)}건은 겹침 검증에 쓸 수 없었습니다. "
             "해당 날짜 후보는 확정 전에 사용자 확인이 필요합니다."
         )
+    # 걸러진 후보와 그 이유를 남긴다. 이유 없이 "후보 0개"만 주면 agent가 원인을 추측해서
+    # 실제로는 비어 있는 시간을 "전부 예약됨"으로 설명하는 답변이 나온다(실행에서 관찰).
+    rejected = _rejected_candidate_reports(
+        candidate_slots,
+        payload.get("candidate_slots") or [],
+        date_from=normalized_date_from,
+        date_to=normalized_date_to,
+        busy_rows=hard_rows,
+        duration_minutes=duration_minutes,
+        workday_start=workday_start,
+        workday_end=workday_end,
+    )
+    payload["submitted_candidate_count"] = len(candidate_slots or [])
+    payload["rejected_candidates"] = rejected
+
     if not payload.get("candidate_slots"):
+        if not candidate_slots:
+            notes.append(
+                "candidate_slots를 넣지 않아 후보가 없습니다. busy_rows를 읽고 겹치지 않는 시간을 직접 골라 "
+                "candidate_slots에 채워 다시 호출하세요."
+            )
+        else:
+            detail = " / ".join(f"{item['candidate']} → {item['reason']}" for item in rejected[:5])
+            notes.append(
+                f"제안한 후보 {len(candidate_slots)}개가 모두 검증에서 제외됐습니다. {detail} "
+                "이 이유만 근거로 다른 시간대를 다시 고르세요. 걸러진 이유를 넘어서 "
+                "'하루 전체가 예약됐다'처럼 추측해 말하지 마세요."
+            )
         notes.append(
-            "검증을 통과한 후보가 없습니다. candidate_slots를 넣지 않았거나 후보가 업무 시간·날짜 범위를 벗어났거나 "
-            "busy row와 겹쳤습니다. 조건에 맞는 후보를 다시 골라 주세요."
+            "다시 시도해도 후보를 찾지 못하면 decide_final_slot에 final_slot=null, "
+            "needs_agent_selection=true와 이유를 넣어 반드시 기록한 뒤 답하세요."
         )
     payload["notes"] = notes
     return payload

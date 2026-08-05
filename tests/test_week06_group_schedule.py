@@ -313,6 +313,57 @@ def test_members_include_me_as_evidence() -> None:
     assert "민준" in payload["members"]
 
 
+def test_rejected_candidates_report_specific_reasons() -> None:
+    """걸러진 후보마다 원인을 구분해 남겨야 합니다.
+
+    이유 없이 "후보 0개"만 주면 agent가 원인을 추측해서, 실제로는 비어 있는 시간을
+    "그날 전부 예약됨"으로 설명하는 답변이 나왔습니다(실제 trace에서 관찰).
+    """
+
+    payload = _find_slots(
+        [
+            {"date": "2026-07-14", "start_time": "10:30", "end_time": "11:30", "duration_minutes": 60},
+            {"date": "2026-07-14", "start_time": "19:00", "end_time": "20:00", "duration_minutes": 60},
+            {"date": "2026-07-20", "start_time": "09:00", "end_time": "10:00", "duration_minutes": 60},
+            {"date": "2026-07-14", "start_time": "13:00", "end_time": "13:20", "duration_minutes": 60},
+        ]
+    )
+
+    assert payload["submitted_candidate_count"] == 4
+    reasons = {item["candidate"]: item["reason"] for item in payload["rejected_candidates"]}
+    assert "겹칩니다" in reasons["2026-07-14 10:30-11:30"]
+    # 겹치는 상대 일정을 근거로 함께 밝혀야 agent가 추측하지 않습니다.
+    assert "팀 회의" in reasons["2026-07-14 10:30-11:30"]
+    assert "업무 시간" in reasons["2026-07-14 19:00-20:00"]
+    assert "날짜 범위" in reasons["2026-07-20 09:00-10:00"]
+    assert "짧습니다" in reasons["2026-07-14 13:00-13:20"]
+
+
+def test_accepted_candidates_are_not_reported_as_rejected() -> None:
+    """통과한 후보는 rejected 목록에 들어가면 안 됩니다."""
+
+    payload = _find_slots(
+        [{"date": "2026-07-14", "start_time": "14:00", "end_time": "15:00", "duration_minutes": 60}]
+    )
+    assert len(payload["candidate_slots"]) == 1
+    assert payload["rejected_candidates"] == []
+
+
+def test_empty_and_all_rejected_notes_differ() -> None:
+    """후보를 안 넣은 경우와 전부 걸러진 경우를 다르게 안내해야 합니다."""
+
+    no_candidates = _find_slots([])
+    all_rejected = _find_slots(
+        [{"date": "2026-07-14", "start_time": "10:30", "end_time": "11:30", "duration_minutes": 60}]
+    )
+
+    assert any("넣지 않아" in note for note in no_candidates["notes"])
+    assert any("모두 검증에서 제외" in note for note in all_rejected["notes"])
+    # 두 경우 모두 결정을 기록하지 않고 끝내지 말라고 알려야 합니다.
+    for payload in (no_candidates, all_rejected):
+        assert any("needs_agent_selection=true" in note for note in payload["notes"])
+
+
 def test_members_dedupe_alias_and_real_name() -> None:
     """alias와 실제 이름이 함께 들어와도 members에 같은 사람이 두 번 남으면 안 됩니다.
 
