@@ -323,9 +323,9 @@ def _collect_member_schedules(
     external_payload_raw = call_mcp_tool_sync(
         "extract_schedules_from_history",
         {
-            "member_names": normalized_members,
-            "date_from":normalized_date_from,
-            "date_to": normalized_date_to,
+            "member_names": member_names,
+            "date_from": date_from,
+            "date_to": date_to,
         }
     )
 
@@ -473,7 +473,7 @@ def week05_tools() -> list[Any]:
         search_previous_conversations,
         load_conversation_messages,
         extract_schedules_from_history,
-        create_shared_schedule,
+        # create_shared_schedule,
         # delete_shared_schedule,
         list_shared_schedules,
         collect_member_schedules,
