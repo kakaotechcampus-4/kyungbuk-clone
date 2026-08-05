@@ -186,19 +186,23 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
 
 
-def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
+def _personal_schedules_for_current_scope(date_from: str, date_to: str) -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
     # TODO: SQLite 저장 일정과 현재 대화의 임시 일정을 합쳐 반환하세요.
     store = AppSQLiteStore(CONFIG.app_db_path)
-    sqlite_rows = store.list_schedules(limit=200, kind="personal_schedule")
+    sqlite_rows = store.list_schedules(
+        limit=200, kind="personal_schedule", date_from=date_from, date_to=date_to
+    )
     saved_ids = {row.get("schedule_id") for row in sqlite_rows}
 
     current_scope = current_session_scope()
     temp_rows = [
         schedule
         for schedule in PERSONAL_SCHEDULES
-        if _schedule_scope(schedule) == current_scope and schedule.get("id") not in saved_ids
+        if _schedule_scope(schedule) == current_scope
+        and schedule.get("id") not in saved_ids
+        and date_from <= (schedule.get("date") or "") <= date_to
     ]
 
     return [*sqlite_rows, *temp_rows]
@@ -294,17 +298,21 @@ def _collect_member_schedules(
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
     # TODO: 내 SQLite/임시 일정과 외부 MCP 일정 rows를 같은 구조로 합치세요.
-    my_rows = [
-        {
-            "member_name": "나",
-            "title": schedule.get("title"),
-            "date": schedule.get("date"),
-            "start_time": schedule.get("start_time"),
-            "end_time": schedule.get("end_time"),
-            "notes": None,
-        }
-        for schedule in personal_schedules
-    ]
+    my_rows = []
+    for schedule in personal_schedules:
+        structured = _structured_request_from_schedule_row(schedule)
+        end_time = structured.end_time
+        if (not end_time or end_time == "미정") and structured.start_time and structured.start_time != "미정":
+            hour, minute = map(int, structured.start_time.split(":"))
+            end_time = f"{(hour + 1) % 24:02d}:{minute:02d}"
+            my_rows.append({
+                "member_name": "나",
+                "title": structured.title,
+                "date": structured.date,
+                "start_time": structured.start_time,
+                "end_time": end_time,
+                "notes": None,
+            })
 
     normalized_members = normalize_external_member_names(member_names)
     normalized_from, normalized_to = normalize_external_schedule_date_bounds(member_names, date_from, date_to)
@@ -416,14 +424,19 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
     """내 일정과 다른 사람들의 일정을 MCP SQLite 기록에서 모읍니다."""
 
     # TODO: 내 일정과 외부 멤버 busy-time rows를 모아 JSON 문자열로 반환하세요.
-    personal_schedules = _personal_schedules_for_current_scope()
+    personal_schedules = _personal_schedules_for_current_scope(date_from=date_from, date_to=date_to)
     result = _collect_member_schedules(
         member_names=member_names,
         date_from=date_from,
         date_to=date_to,
         personal_schedules=personal_schedules,
     )
-    return json_payload(result)
+    return json_payload({
+        "ok": True,
+        "tool_name": "collect_member_schedules",
+        "member_names": member_names,
+        **result,
+    })
 
 
 def week05_tools() -> list[Any]:
