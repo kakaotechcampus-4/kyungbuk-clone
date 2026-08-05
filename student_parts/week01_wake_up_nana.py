@@ -196,7 +196,7 @@ def personal_list_schedules(date_from: str | None = None, date_to: str | None = 
     # TODO: 현재 대화 범위의 PERSONAL_SCHEDULES를 날짜 조건으로 조회하세요.
     schedules = []
 
-    for schedule in _current_session_schedules:
+    for schedule in _current_session_schedules():
         if date_from and schedule["date"] < date_from: continue
         if date_to and schedule["date"] > date_to: continue
 
