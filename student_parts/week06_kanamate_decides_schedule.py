@@ -197,9 +197,13 @@ def week06_prompt_parts() -> list[str]:
 
     return [
         *week05_prompt_parts(),
-        # TODO: Week 6 supervisor agent system prompt를 자유롭게 추가하세요.
-        #   - supervisor는 직접 업무를 처리하지 않고 nana_agent 또는 kana_agent로만 위임합니다.
-        #   - 어떤 요청이 Nana 담당이고 어떤 요청이 Kana 담당인지 판단 기준을 적습니다.
+        (
+            "[Week 6 Supervisor 역할]\n"
+            "이전 주차에 누적된 업무 tool 지시는 supervisor에게 적용하지 않는다. "
+            "너는 개인 일정, 저장, RAG, MCP 조회, 후보 검증, 최종 시간 결정을 직접 처리하거나 "
+            "직접 tool로 호출하지 않는다. 개인 일정·저장·개인 RAG 요청은 nana_agent에, "
+            "외부 멤버 일정·그룹 조율·공통 시간 결정 요청은 kana_agent에 위임한다."
+        ),
     ]
 
 
