@@ -317,11 +317,23 @@ def _collect_member_schedules(
             }
         )
 
-    external_payload = json.loads(
-        call_mcp_tool_sync(
-            "extract_schedules_from_history",
-            {"member_names": member_names, "date_from": date_from, "date_to": date_to},
+    # 내 일정은 앱 SQLite(personal_schedules)가 유일한 출처입니다. 앱이 저장한 내 일정은
+    # 공유 저장소에도 member_name="나" 복사본으로 동기화되므로, 외부 조회에 "나"를 그대로
+    # 넘기면 같은 일정이 앱 DB row와 외부 동기화 row로 두 번 잡힙니다. 외부 조회 대상에서는
+    # "나"를 제외해 앱 DB row만 남깁니다.
+    external_member_names = [
+        name for name in member_names if str(name).strip() != PERSONAL_SHARED_MEMBER_NAME
+    ]
+
+    external_payload = (
+        json.loads(
+            call_mcp_tool_sync(
+                "extract_schedules_from_history",
+                {"member_names": external_member_names, "date_from": date_from, "date_to": date_to},
+            )
         )
+        if external_member_names
+        else {"rows": []}
     )
     for row in external_payload.get("rows", []):
         rows.append(
@@ -411,7 +423,26 @@ def delete_shared_schedule(
     schedule_id: str | None = None,
     source_conversation_id: str | None = None,
 ) -> str:
-    """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다."""
+    """외부 MCP 공유 일정 저장소에서 일정을 삭제합니다.
+
+    schedule_id/source_conversation_id가 모두 없으면 MCP tool을 호출하지 않고
+    ok=False로 즉시 반환합니다. 식별자 없이 그대로 호출하면 MCP tool이
+    ok=True, deleted_count=0을 반환해 agent가 삭제된 것으로 착각할 수 있기 때문입니다.
+    """
+
+    if not schedule_id and not source_conversation_id:
+        return json_payload(
+            {
+                "ok": False,
+                "tool_name": "delete_shared_schedule",
+                "deleted_count": 0,
+                "deleted": [],
+                "error": (
+                    "schedule_id 또는 source_conversation_id가 필요합니다. "
+                    "list_shared_schedules로 먼저 대상을 조회한 뒤 다시 호출하세요."
+                ),
+            }
+        )
 
     return call_mcp_tool_sync(
         "delete_shared_schedule",
@@ -483,13 +514,20 @@ def week05_prompt_parts() -> list[str]:
         f"""오늘은 {current_app_date_iso()}이다.
 Week 5부터 나나는 외부 팀원들의 이전 대화와 공유 일정을 MCP SQLite tool로만 조회한다.
 DB를 직접 읽지 않고 반드시 아래 tool을 호출해 근거를 확보한다.
-- 특정 팀원의 과거 발언이나 대화 자체를 찾을 때는 search_previous_conversations를 호출하고,
-  원문 전체가 필요하면 반환된 conversation_id로 load_conversation_messages를 호출한다.
+- 사용자가 conversation_id를 이미 알려준 경우에는 search_previous_conversations 없이
+  바로 load_conversation_messages를 호출해 원문을 읽는다.
+- conversation_id 없이 특정 팀원의 과거 발언이나 대화 자체를 주제로 찾아야 할 때만
+  search_previous_conversations를 먼저 호출하고, 원문 전체가 필요하면 검색 결과의
+  conversation_id로 load_conversation_messages를 호출한다.
 - 팀원별 일정/바쁜 시간 후보만 필요할 때는 extract_schedules_from_history를 호출한다.
 - 내 일정과 여러 팀원의 바쁜 시간을 한 번에 비교해야 하는 회의 조율 질문에는
   search_previous_conversations 대신 collect_member_schedules를 바로 호출해 rows와 schedule_summary를 근거로 답한다.
-- 공유 일정 저장소에 등록된 row 자체를 확인하거나 등록/삭제를 요청받으면 list_shared_schedules,
-  create_shared_schedule, delete_shared_schedule을 사용한다.
+  "나"는 내 일정에 항상 포함되므로 member_names에 "나"를 넣을지 여부는 결과에 영향을 주지 않는다.
+- 공유 일정 저장소에 등록된 row 자체를 확인하거나 등록을 요청받으면 list_shared_schedules,
+  create_shared_schedule을 사용한다.
+- 삭제를 요청받았는데 schedule_id나 source_conversation_id를 모르면, 먼저 list_shared_schedules로
+  대상을 조회해 식별자를 확인한 뒤 delete_shared_schedule을 호출한다. 식별자 없이 호출하면
+  삭제되지 않았다는 뜻의 ok=False가 돌아오므로 이를 삭제 성공으로 보고하지 않는다.
 - 각 tool의 member_names에는 사용자가 언급한 팀원 이름을 그대로 넣는다. 정규화는 tool 내부에서 처리한다.""",
     ]
 
