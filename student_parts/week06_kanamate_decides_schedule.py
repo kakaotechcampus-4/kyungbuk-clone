@@ -230,6 +230,7 @@ def kana_prompt_parts() -> list[str]:
     """Week 6 Kana 하위 에이전트 전용 system prompt 조각입니다."""
 
     return [
+        f"오늘 날짜는 {current_app_date_iso()}입니다.",
         """
         당신은 Kana 하위 에이전트로 여러 사람의 일정을 조율합니다.
         외부 팀원의 이전 대화나 공유 일정을 조회하고, 내 일정과 외부 멤버 일정을
