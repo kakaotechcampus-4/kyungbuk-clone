@@ -306,13 +306,11 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
 
 
 DECIDE_FINAL_SLOT_DESCRIPTION = (
-    # TODO: decide_final_slot tool description을 자유롭게 작성하세요.
-    #   - 이 Python tool이 최종 시간을 자동 선택하지 않는다는 점을 분명히 알려야 합니다.
-    #     agent가 selected_index 또는 selected_slot과 final_slot을 직접 골라 넘기게 만듭니다.
-    #   - final_slot 형식('YYYY-MM-DD HH:MM-HH:MM')과 needs_agent_selection, reason을 채우는 기준을 적습니다.
-    #   - 아직 고르지 않았다면 final_slot은 null, needs_agent_selection은 true로 두게 합니다.
-    #   - 근거 trace를 위해 candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘기게 합니다.
-    ""
+    "최종 시간을 자동으로 선택하지 않고 Kana가 candidate_slots에서 selected_index 또는 selected_slot을 직접 고른다. "
+    "확정했다면 final_slot을 'YYYY-MM-DD HH:MM-HH:MM' 형식으로 채우고 needs_agent_selection은 false로, "
+    "아직 선택하지 못했다면 final_slot은 null이고 needs_agent_selection은 true로 둔다. "
+    "선택 또는 보류 이유를 reason에 쓰고, 근거를 보존하도록 candidate_slots, busy_rows, member_names, "
+    "date_from, date_to를 함께 전달한다."
 )
 
 
@@ -471,10 +469,22 @@ def decide_final_slot(
 ) -> str:
     """LLM이 직접 고른 후보/최종 시간을 course repo payload로 기록합니다."""
 
-    # TODO: Kana agent가 고른 최종 시간 정보를 course repo JSON 계약에 맞춰 기록하세요.
-    #   - 직접 최종 시간을 고르지 말고 받은 인자를 그대로 decide_final_slot_payload(...)에 넘깁니다.
-    #   - 결과를 JSON 문자열로 반환합니다.
-    ...
+    return json.dumps(
+        decide_final_slot_payload(
+            candidate_slots=candidate_slots,
+            selected_slot=selected_slot,
+            selected_index=selected_index,
+            member_names=member_names,
+            date_from=date_from,
+            date_to=date_to,
+            duration_minutes=duration_minutes,
+            final_slot=final_slot,
+            needs_agent_selection=needs_agent_selection,
+            reason=reason,
+            busy_rows=busy_rows,
+        ),
+        ensure_ascii=False,
+    )
 
 
 def kana_tools() -> list[Any]:
