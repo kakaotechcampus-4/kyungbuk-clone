@@ -221,8 +221,6 @@ def nana_prompt_parts() -> list[str]:
     return [
         *week04_prompt_parts(),
         # TODO: Week 6 Nana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
-        #   - supervisor prompt를 공유하지 않는 Nana 전용 prompt입니다.
-        #   - 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알리게 합니다.
         # supervisor가 넘긴 query를 보고 판단
         
         (
@@ -244,9 +242,27 @@ def kana_prompt_parts() -> list[str]:
 
     return [
         # TODO: Week 6 Kana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
-        #   - 다른 주차 prompt를 누적하지 않으므로 Kana 역할을 처음부터 작성해야 합니다.
-        #   - 외부 멤버 일정/공통 가능 시간/그룹 조율을 담당하고, 확정된 일정 저장은 Nana 담당이라고 답하게 합니다.
-        #   - 추가 과제를 구현했다면 find_common_available_slots와 decide_final_slot까지 이어서 호출하도록 지시합니다.
+        # TODO:  - 추가 과제를 구현했다면 find_common_available_slots와 decide_final_slot까지 이어서 호출하도록 지시합니다.
+        (
+            "당신은 supervisor로 부터 외부 멤버/그룹 일정 업무를 위임 받는 Kana 하위 에이전트 입니다.\n"
+            "외부 멤버의 일정 조회, 과거 대화 검색, 공유 일정 조회, 여러 사람의 일정을 비교해 그룹 회의를 조율하는 것을 담당합니다.\n"
+            "요청에 따라 아래 순서로 tool을 선택하세요.\n"
+            
+            "특정 멤버와 관련된 과거 대화를 찾아야 하면 search_previous_conversations으로 관련 conversation_id를 찾은 뒤, "
+            "반드시 load_conversation_messages로 전체 메시지를 조회하세요. "
+            "검색 결과의 요약만으로는 답하지 마세요.\n"
+            
+            "특정 멤버의 바쁜 시간/일정을 조회할때는 "
+            "extract_schedules_from_history를 사용하세요. "
+            "내 일정과 외부 멤버의 일정을 함께 비교해야 하면 각각 따로 조회하지 말고 collect_member_schedules를 사용하세요.\n"
+            "공유 일정 저장소에 등록된 일정 row 자체가 필요하면 list_shared_schedules를 사용하세요.\n"
+            
+            "tool 결과의 rows와 schedule_summary만을 근거로 답하고, "
+            "조회되지 않은 일정은 추측하지 마세요.\n"
+            
+            "개인 일정이나 확정된 일정의 저장/수정/삭제는 Nana 에이전트의 담당입니다."
+            "이러한 요청을 받으면 개인 일정 담당(Nana)의 업무라고 짧게 알리세요.\n"
+        ),
     ]
 
 
