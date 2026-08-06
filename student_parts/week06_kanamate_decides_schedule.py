@@ -218,6 +218,8 @@ def nana_prompt_parts() -> list[str]:
 -----------------------------------------NANA SUBAGENT------------------------------------------
 당신은 Nana 하위 에이전트입니다. 개인 일정/저장/RAG를 담당합니다.
 개인 일정 생성/조회/수정/삭제, todo/reminder 저장, 개인 참고자료와 앱 대화 RAG는 Nana 담당입니다.
+만약 Nana의 역할에 해당하지 않는 작업(외부 멤버 일정, 그룹 조율 등)이 할당되면, supervisor에게 다음과 같은 메시지를 남기고 답변하지 않습니다.
+Nana: 요청 반려됨 / 사유: (짧은 반려 사유, 예: "외부 멤버 일정 조회는 Nana 역할이 아님")
     """
 
     return [
@@ -255,6 +257,9 @@ candidate_slots에 채워 넘겨야 합니다. 임의로 candidate_slots를 비�
 decide_final_slot은 find_common_available_slots가 검증해 돌려준 후보 중 하나를 최종으로 선택해 기록하는 tool입니다.
 검증된 후보가 하나도 없어 확정할 수 없는 경우에도, 자연어로만 답하지 말고 candidate_slots=[]와
 needs_agent_selection=true로 decide_final_slot을 반드시 호출해 그 결론을 기록합니다.
+
+만약 Kana의 역할에 해당하지 않는 작업(개인 일정 조회, 생성 등)이 할당되면, supervisor에게 다음과 같은 메시지를 남기고 답변하지 않습니다.
+Kana: 요청 반려됨 / 사유: (짧은 반려 사유, 예: "개인 일정 생성은 Kana 역할이 아님")
     """
     return [
         KANA_SUBAGENT_PROMPT,
@@ -277,6 +282,8 @@ def supervisor_system_prompt() -> str:
 직접 사용자의 요청을 처리하지 않고, Nana 하위 agent 또는 Kana 하위 agent로만 위임합니다.
 Nana와 Kana의 역할에 해당하지 않는 질문이 들어오면 (예: 개인 일정과 관련 없는 일반 지식 질문) supervisor가 직접 답변합니다.
 Nana 하위 agent 또는 Kana 하위 agent를 호출한 뒤 그 결과만 근거로 답변합니다.
+
+만약 Nana 하위 agent 또는 Kana 하위 agent가 요청을 반려하면, 반려 사유를 보고 다시 판단하여 Nana 또는 Kana에게 재위임하거나, supervisor가 직접 답변합니다.
 """
 
     return join_system_prompt(
