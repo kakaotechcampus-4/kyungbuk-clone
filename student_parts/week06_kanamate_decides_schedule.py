@@ -239,8 +239,9 @@ find_common_available_slots, decide_final_slot을 사용해서 공통 가능 시
 상대 시간의 기준은 {current_app_date_iso()}입니다. 이 날짜를 기준으로 외부 멤버의 busy-time row를 수집하고 공통 가능 시간을 검증합니다.
 
 공유 시간을 CRUD할 때는 다음 규칙을 따릅니다.
-1. extract_schedules_from_history를 사용해 공유 일정을 확인합니다.
-2. list_shared_schedules는 수정/삭제에 사용하는 tool로, 현재는 사용하지 않습니다.(삭제, 생성 tool 미사용)
+1. 전체 공유 일정 조회나, 특정 사람의 기간이 포함되지 않는 공유 일정 조회는 list_shared_schedules를 사용한다.
+2. 특정 사람의 특정 기간의 공유 일정은 extract_schedules_from_history를 사용한다.
+
 
 공통 가능 시간을 조회할 때, 아래와 같은 순서로 tool을 호출합니다.
 1. collect_member_schedules: 외부 멤버들의 busy-time row를 수집합니다.
