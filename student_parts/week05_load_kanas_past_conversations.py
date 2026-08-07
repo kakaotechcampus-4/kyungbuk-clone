@@ -27,9 +27,10 @@ from fixed.runtime_clock import current_app_date_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 from student_parts.week01_wake_up_nana import PERSONAL_SCHEDULES, join_system_prompt
 from student_parts.week02_structure_natural_language_requests import StructuredRequest
-from student_parts.week04_retrieve_nanas_memory import SQLITE_STORE, week04_prompt_parts, week04_tools
+from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week04_tools
 
 
+SQLITE_STORE = AppSQLiteStore(CONFIG.app_db_path)
 _WEEK05_AGENT: Any | None = None
 
 
@@ -301,9 +302,11 @@ def _collect_member_schedules(
     for schedule in personal_schedules:
         structured = _structured_request_from_schedule_row(schedule)
         schedule_date = structured.date or ""
-        if normalized_date_from and schedule_date and schedule_date < normalized_date_from:
+        if not schedule_date:
             continue
-        if normalized_date_to and schedule_date and schedule_date > normalized_date_to:
+        if normalized_date_from and schedule_date < normalized_date_from:
+            continue
+        if normalized_date_to and schedule_date > normalized_date_to:
             continue
         my_rows.append(
             {
@@ -316,22 +319,30 @@ def _collect_member_schedules(
             }
         )
 
-    external_payload = json.loads(
-        call_mcp_tool_sync(
-            "extract_schedules_from_history",
-            {
-                "member_names": normalized_members,
-                "date_from": normalized_date_from,
-                "date_to": normalized_date_to,
-            },
+    # "나"는 로컬 my_rows에서 이미 다루므로, 외부 공유 저장소에 자동 동기화된
+    # "나" 복사본을 다시 조회해 중복되지 않도록 조회 대상에서 제외한다.
+    external_query_members = [name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME]
+
+    external_rows: list[dict[str, Any]] = []
+    if external_query_members:
+        external_payload = json.loads(
+            call_mcp_tool_sync(
+                "extract_schedules_from_history",
+                {
+                    "member_names": external_query_members,
+                    "date_from": normalized_date_from,
+                    "date_to": normalized_date_to,
+                },
+            )
         )
-    )
-    external_rows = external_payload.get("rows", [])
+        external_rows = external_payload.get("rows", [])
 
     rows = [*my_rows, *external_rows]
+    queried_members = list(dict.fromkeys([PERSONAL_SHARED_MEMBER_NAME, *external_query_members]))
 
     return {
         "rows": rows,
+        "members": queried_members,
         "schedule_summary": external_schedule_summary(rows),
     }
 
