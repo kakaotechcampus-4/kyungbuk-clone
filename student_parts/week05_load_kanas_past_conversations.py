@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from langchain.agents import create_agent
@@ -11,6 +12,7 @@ from fixed.app_store import AppSQLiteStore
 from fixed.config import CONFIG
 from fixed.external_mcp import call_external_tool_payload
 from fixed.external_people_store import (
+    JULY_PRACTICE_MEMBER_NAMES,
     PERSONAL_SHARED_MEMBER_NAME,
     external_schedule_summary,
     normalize_external_member_names,
@@ -251,6 +253,40 @@ def dedupe_preserving_order(names: list[str]) -> list[str]:
     return unique
 
 
+# 이름 뒤에 붙는 조사. 긴 것부터 확인해야 "민준이랑"에서 "랑"만 떼고 "민준이"로 끝나지 않는다.
+MEMBER_NAME_PARTICLES = ("이랑", "한테", "에게", "이가", "과", "와", "랑", "이", "가", "은", "는", "을", "를", "님", "씨", "의", "도")
+
+
+def resolve_member_names(member_names: list[str] | None) -> list[str]:
+    """멤버 이름을 외부 저장소가 아는 이름으로 확정합니다.
+
+    EXTERNAL_MEMBER_ALIAS가 비어 있어서 normalize_external_member_names는 지금 strip만 합니다.
+    그래서 "민준이랑 시간 맞춰줘"에서 LLM이 "민준이"를 그대로 넘기면 외부 저장소에서 못 찾아
+    일정이 0건으로 돌아오고, 그 payload는 "일정이 없어 한가함"과 모양이 같아 이미 바쁜 시간에
+    회의를 잡게 됩니다. 프롬프트로만 막으면 모델이 흔들릴 때 그대로 뚫리므로 tool 경계에서
+    결정적으로 확정합니다.
+
+    조사를 무조건 떼지는 않습니다. 실제로 존재하는 멤버 이름과 일치할 때만 바꿉니다.
+    이름 자체가 조사로 끝나는 사람("가은")을 잘못 자르지 않기 위해서입니다.
+    """
+
+    known_names = set(JULY_PRACTICE_MEMBER_NAMES) | {PERSONAL_SHARED_MEMBER_NAME}
+    resolved: list[str] = []
+    for name in normalize_external_member_names(member_names):
+        if name in known_names:
+            resolved.append(name)
+            continue
+        for particle in MEMBER_NAME_PARTICLES:
+            if name.endswith(particle) and name[: -len(particle)] in known_names:
+                resolved.append(name[: -len(particle)])
+                break
+        else:
+            # 아는 이름으로 못 바꾸면 추측하지 않고 원래 값을 그대로 둔다. 그러면 rows가 0건이 되고
+            # Week 6에서 external_members_without_rows로 드러나 사용자가 확인할 수 있다.
+            resolved.append(name)
+    return dedupe_preserving_order(resolved)
+
+
 def _personal_schedules_for_current_scope(
     date_from: str | None = None,
     date_to: str | None = None,
@@ -433,6 +469,23 @@ def _my_schedule_notes(request: StructuredRequest) -> str:
     return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
 
 
+def _canonical_schedule_id(row: dict[str, Any]) -> str:
+    """row의 일정 식별자를 두 저장소가 같은 값으로 읽히도록 정규화합니다.
+
+    앱 일정을 공유 저장소로 동기화할 때 id에 접두사와 참석자 번호가 붙습니다
+    (`sch_x` → 개인 `shared_sch_x`, 그룹 참석자별 `shared_sch_x_0`, `shared_sch_x_1`).
+    같은 일정을 같은 식별자로 보려면 그 장식을 떼야 합니다. 참석자별 row는 member_name이
+    서로 달라 fuzzy key 단계에서 이미 갈라지므로 번호를 떼도 섞이지 않습니다.
+    """
+
+    raw = str(row.get("schedule_id") or row.get("id") or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("shared_"):
+        raw = raw[len("shared_") :]
+    return re.sub(r"_\d+$", "", raw)
+
+
 def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """같은 일정이 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다.
 
@@ -444,18 +497,35 @@ def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
       - 앱 DB 경로만 end_time "미정"을 "18:00"으로 바꿉니다. 그래서 end_time은 키에서 뺍니다.
         같은 사람이 같은 날 같은 시각에 시작하는 같은 제목의 일정은 하나로 봅니다.
       - start_time이 비어 있으면 공유 저장소는 "미정"으로 저장하므로 같은 값으로 맞춥니다.
+
+    다만 이 fuzzy key만으로는 서로 다른 정상 일정도 합쳐집니다. 같은 사람에게 같은 시각의
+    "회의 (A팀)", "회의 (B팀)"이 있으면 소괄호를 지운 뒤 제목이 같아져 하나가 사라집니다.
+    그래서 안정적인 식별자(schedule_id)를 먼저 봅니다.
+      - 두 row가 모두 schedule_id를 갖고 그 값이 다르면 서로 다른 일정이므로 둘 다 남깁니다.
+      - 한쪽에 식별자가 없으면(외부 busy row는 schedule_id를 주지 않습니다) 같은 일정이
+        두 경로로 들어온 것으로 보고 앞에 오는 앱 DB row를 남깁니다.
     """
 
-    deduped: dict[tuple[str, ...], dict[str, Any]] = {}
+    deduped: dict[tuple[str, ...], list[dict[str, Any]]] = {}
     for row in rows:
-        key = (
+        fuzzy_key = (
             str(row.get("member_name") or "").strip(),
             str(row.get("date") or "").strip(),
             str(row.get("start_time") or "").strip() or "미정",
             strip_parenthetical_text(str(row.get("title") or "")),
         )
-        deduped.setdefault(key, row)
-    return list(deduped.values())
+        schedule_id = _canonical_schedule_id(row)
+        kept = deduped.setdefault(fuzzy_key, [])
+        # 이미 남긴 row 중 하나라도 "같은 일정"으로 보이면 이 row는 중복이다.
+        # 식별자가 둘 다 있고 서로 다를 때만 다른 일정이라고 단정할 수 있다.
+        is_duplicate = any(
+            not (schedule_id and _canonical_schedule_id(existing) and schedule_id != _canonical_schedule_id(existing))
+            for existing in kept
+        )
+        if kept and is_duplicate:
+            continue
+        kept.append(row)
+    return [row for group in deduped.values() for row in group]
 
 
 def _external_busy_rows(
@@ -519,7 +589,9 @@ def _collect_member_schedules(
     # alias와 실제 이름이 함께 들어오면(["A", "철수"] → ["철수", "철수"]) 정규화 결과가 겹친다.
     # SQL IN 조회 결과는 중복되지 않으므로, 반환 payload의 member_names도 같은 계약을 갖도록
     # 입력 순서를 유지하면서 중복을 제거한다.
-    normalized_members = dedupe_preserving_order(normalize_external_member_names(member_names))
+    # 조사가 붙은 이름("민준이")을 tool 경계에서 실제 멤버 이름으로 확정하고, alias 정규화 뒤
+    # 겹치는 이름은 입력 순서를 유지하며 한 번만 남긴다. 두 처리가 resolve_member_names 한 곳에 있다.
+    normalized_members = resolve_member_names(member_names)
     # "나"는 앱 SQLite에서 직접 읽는다. 개인 일정은 공유 저장소에도 복사되므로,
     # 외부 조회 대상에 "나"를 남겨 두면 같은 일정이 두 번 rows에 들어간다.
     external_member_names = [name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME]
@@ -544,6 +616,9 @@ def _collect_member_schedules(
         personal_rows.append(
             {
                 "member_name": PERSONAL_SHARED_MEMBER_NAME,
+                # 같은 시각·같은 제목의 다른 일정("회의 (A팀)"/"회의 (B팀)")을 dedupe가 합치지
+                # 않도록 안정적인 식별자를 row에 싣는다. 외부 busy row에는 이 값이 없다.
+                "schedule_id": str(schedule.get("schedule_id") or schedule.get("id") or ""),
                 "title": request.title or "제목 없음",
                 "date": date,
                 "start_time": start_time or "미정",

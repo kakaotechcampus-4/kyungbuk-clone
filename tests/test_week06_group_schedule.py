@@ -92,6 +92,78 @@ def test_dedupe_keeps_app_db_row_despite_different_shaping() -> None:
     assert rows[0]["title"] == "팀 회의 (온라인)"
 
 
+def test_dedupe_keeps_different_ids_with_similar_titles() -> None:
+    """소괄호를 지우면 제목이 같아지는 서로 다른 일정은 둘 다 남아야 합니다.
+
+    fuzzy key만 쓰면 같은 사람의 같은 시각 "회의 (A팀)"과 "회의 (B팀)"이 하나로 합쳐집니다.
+    안정적인 schedule_id가 서로 다르면 다른 일정으로 봐야 합니다.
+    """
+
+    rows = w5._dedupe_schedule_rows(
+        [
+            {
+                "member_name": "나",
+                "title": "회의 (A팀)",
+                "date": "2026-07-14",
+                "start_time": "15:00",
+                "end_time": "16:00",
+                "schedule_id": "sch_a",
+            },
+            {
+                "member_name": "나",
+                "title": "회의 (B팀)",
+                "date": "2026-07-14",
+                "start_time": "15:00",
+                "end_time": "16:00",
+                "schedule_id": "sch_b",
+            },
+        ]
+    )
+    assert len(rows) == 2
+    assert {row["title"] for row in rows} == {"회의 (A팀)", "회의 (B팀)"}
+
+
+def test_dedupe_merges_when_sync_prefix_differs() -> None:
+    """동기화로 접두사가 붙은 같은 일정은 하나로 봐야 합니다."""
+
+    rows = w5._dedupe_schedule_rows(
+        [
+            {
+                "member_name": "나",
+                "title": "팀 회의 (온라인)",
+                "date": "2026-07-15",
+                "start_time": "11:00",
+                "end_time": "18:00",
+                "schedule_id": "sch_x",
+                "notes": "Nana 개인 일정",
+            },
+            {
+                "member_name": "나",
+                "title": "팀 회의",
+                "date": "2026-07-15",
+                "start_time": "11:00",
+                "end_time": "미정",
+                "schedule_id": "shared_sch_x",
+                "notes": "앱 개인 일정 자동 동기화",
+            },
+        ]
+    )
+    assert len(rows) == 1
+    assert rows[0]["notes"] == "Nana 개인 일정"
+
+
+def test_dedupe_group_sync_rows_stay_per_attendee() -> None:
+    """참석자별로 동기화된 그룹 row는 사람마다 남아야 합니다."""
+
+    rows = w5._dedupe_schedule_rows(
+        [
+            {"member_name": "하린", "title": "회의", "date": "2026-07-14", "start_time": "15:00", "schedule_id": "shared_sch_y_0"},
+            {"member_name": "민준", "title": "회의", "date": "2026-07-14", "start_time": "15:00", "schedule_id": "shared_sch_y_1"},
+        ]
+    )
+    assert len(rows) == 2
+
+
 def test_dedupe_keeps_distinct_schedules() -> None:
     """사람·날짜·시작시간·제목이 다르면 별개 일정으로 남겨야 합니다."""
 
@@ -179,8 +251,9 @@ def test_overlap_rows_split_by_time_status() -> None:
     start_only = {"date": "2026-07-15", "start_time": "14:00", "end_time": "미정", "time_status": "start_only"}
     date_only = {"date": "2026-07-16", "start_time": "미정", "end_time": "미정", "time_status": "date_only"}
 
-    hard_rows, soft_rows = w6._busy_rows_for_overlap_check([complete, start_only, date_only], 60)
+    hard_rows, soft_rows, warnings = w6._busy_rows_for_overlap_check([complete, start_only, date_only], 60)
 
+    assert warnings == []
     assert hard_rows[0] == complete
     assert hard_rows[1]["end_time"] == "15:00"
     assert hard_rows[1]["overlap_end_assumed"] is True
@@ -192,7 +265,7 @@ def test_overlap_rows_split_by_time_status() -> None:
 def test_overlap_rows_infer_status_when_missing() -> None:
     """time_status가 없는 외부 row도 값으로 종류를 판정해야 합니다."""
 
-    hard_rows, soft_rows = w6._busy_rows_for_overlap_check(
+    hard_rows, soft_rows, warnings = w6._busy_rows_for_overlap_check(
         [
             {"date": "2026-07-14", "start_time": "10:00", "end_time": "11:00"},
             {"date": "2026-07-15", "start_time": "미정", "end_time": "미정"},
@@ -201,12 +274,74 @@ def test_overlap_rows_infer_status_when_missing() -> None:
     )
     assert len(hard_rows) == 1
     assert len(soft_rows) == 1
+    # time_status가 애초에 없던 row는 모순이 아니므로 경고를 남기지 않습니다.
+    assert warnings == []
+
+
+def test_time_status_contradicting_actual_times_is_reclassified() -> None:
+    """time_status가 실제 시간값과 어긋나면 시간값 기준으로 재분류하고 경고를 남겨야 합니다.
+
+    complete인데 종료 시각이 없으면 하위 겹침 계산이 자정까지 바쁜 것으로 보고
+    그날 오후를 통째로 지웁니다. 반대로 시간이 멀쩡한데 모르는 time_status가 들어오면
+    검증에서 빠져 겹치는 후보가 통과합니다.
+    """
+
+    lying_complete = {
+        "member_name": "나",
+        "title": "출장",
+        "date": "2026-07-14",
+        "start_time": "14:00",
+        "end_time": "미정",
+        "time_status": "complete",
+    }
+    lying_date_only = {
+        "member_name": "민준",
+        "title": "회의",
+        "date": "2026-07-15",
+        "start_time": "10:00",
+        "end_time": "11:00",
+        "time_status": "date_only",
+    }
+
+    hard_rows, soft_rows, warnings = w6._busy_rows_for_overlap_check([lying_complete, lying_date_only], 60)
+
+    # complete를 주장했지만 종료가 없으므로 start_only로 보정돼 회의 길이만큼만 막습니다.
+    assert hard_rows[0]["end_time"] == "15:00"
+    assert hard_rows[0]["overlap_end_assumed"] is True
+    # date_only를 주장했지만 시간이 온전하므로 겹침 검증에 씁니다.
+    assert lying_date_only in hard_rows
+    assert soft_rows == []
+    assert len(warnings) == 2
+    assert all("time_status" in warning for warning in warnings)
+
+
+def test_time_status_warnings_surface_in_payload() -> None:
+    """모순된 time_status는 payload와 notes로도 드러나야 합니다."""
+
+    payload = w6.find_common_available_slots_dict(
+        member_names=["민준"],
+        date_from="2026-07-14",
+        date_to="2026-07-14",
+        busy_rows=[
+            {
+                "member_name": "민준",
+                "title": "출장",
+                "date": "2026-07-14",
+                "start_time": "14:00",
+                "end_time": "미정",
+                "time_status": "complete",
+            }
+        ],
+        candidate_slots=[],
+    )
+    assert len(payload["time_status_warnings"]) == 1
+    assert any("time_status" in note for note in payload["notes"])
 
 
 def test_start_only_row_does_not_block_rest_of_day() -> None:
     """start_only row가 시작 시각부터 자정까지를 막아 오후를 통째로 지우면 안 됩니다."""
 
-    hard_rows, _ = w6._busy_rows_for_overlap_check(
+    hard_rows, _, _ = w6._busy_rows_for_overlap_check(
         [{"date": "2026-07-14", "start_time": "14:00", "end_time": "미정", "time_status": "start_only"}], 60
     )
     from fixed.schedule_decision import busy_rows_overlap
@@ -373,13 +508,13 @@ def test_member_with_no_rows_is_flagged_not_assumed_free() -> None:
     """
 
     payload = w6.find_common_available_slots_dict(
-        member_names=["민준이"],
+        member_names=["지훈"],
         date_from="2026-07-16",
         date_to="2026-07-16",
         busy_rows=[],
         candidate_slots=[],
     )
-    assert "민준이" in payload["members_without_rows"]
+    assert "지훈" in payload["external_members_without_rows"]
     assert any("조사가 붙어" in note for note in payload["notes"])
 
 
@@ -387,7 +522,232 @@ def test_member_with_rows_is_not_flagged() -> None:
     """rows가 있는 멤버는 짚지 않아야 합니다."""
 
     payload = _find_slots([])
-    assert "민준" not in payload["members_without_rows"]
+    assert "민준" not in payload["external_members_without_rows"]
+
+
+def test_me_is_never_reported_as_name_error() -> None:
+    """내 일정이 0건인 것은 이름 오류가 아니므로 조사 확인 안내에 들어가면 안 됩니다.
+
+    evidence_members에는 항상 "나"가 들어가서, 예전 구현은 내 일정이 없을 때
+    "'나'의 이름에 조사가 붙었는지 확인하라"는 이상한 안내를 냈습니다.
+    """
+
+    payload = w6.find_common_available_slots_dict(
+        member_names=["민준"],
+        date_from="2026-07-16",
+        date_to="2026-07-16",
+        busy_rows=[
+            {
+                "member_name": "민준",
+                "title": "외부 미팅",
+                "date": "2026-07-16",
+                "start_time": "14:00",
+                "end_time": "15:00",
+                "time_status": "complete",
+            }
+        ],
+        candidate_slots=[],
+    )
+    assert payload["external_members_without_rows"] == []
+    assert payload["personal_schedule_count"] == 0
+    assert not any("조사가 붙어" in note for note in payload["notes"])
+
+
+def test_personal_schedule_count_is_reported() -> None:
+    """내 일정 건수는 이름 오류와 별개로 숫자로 남겨야 합니다."""
+
+    payload = _find_slots([])
+    # BUSY_ROWS에는 "나" row가 2건 있습니다.
+    assert payload["personal_schedule_count"] == 2
+
+
+# --- 이름 확정 (tool 경계 정규화) ------------------------------------------------------
+
+
+def test_resolve_member_names_strips_particles_to_known_names() -> None:
+    """조사가 붙은 이름을 실제 멤버 이름으로 확정해야 합니다."""
+
+    assert w5.resolve_member_names(["민준이"]) == ["민준"]
+    assert w5.resolve_member_names(["민준이랑"]) == ["민준"]
+    assert w5.resolve_member_names(["하린과"]) == ["하린"]
+    assert w5.resolve_member_names(["철수랑"]) == ["철수"]
+
+
+def test_resolve_member_names_keeps_unknown_names_untouched() -> None:
+    """아는 이름으로 못 바꾸면 추측하지 않고 그대로 둬야 합니다.
+
+    이름 자체가 조사로 끝나는 사람을 잘못 자르지 않기 위한 계약입니다.
+    """
+
+    assert w5.resolve_member_names(["가은"]) == ["가은"]
+    assert w5.resolve_member_names(["없는사람이"]) == ["없는사람이"]
+    assert w5.resolve_member_names(["나"]) == ["나"]
+
+
+def test_resolve_member_names_dedupes_after_resolving() -> None:
+    """확정 후 같아진 이름은 순서를 유지하며 한 번만 남아야 합니다."""
+
+    assert w5.resolve_member_names(["민준이", "민준"]) == ["민준"]
+    assert w5.resolve_member_names(["하린", "민준이"]) == ["하린", "민준"]
+
+
+def test_collect_member_schedules_resolves_particle_names() -> None:
+    """collect_member_schedules도 같은 규칙으로 이름을 확정해야 합니다."""
+
+    result = w5._collect_member_schedules(
+        member_names=["민준이"],
+        date_from="2026-07-14",
+        date_to="2026-07-14",
+        personal_schedules=[],
+    )
+    assert result["member_names"] == ["나", "민준"]
+
+
+def test_limit_truncated_candidates_are_not_called_failures() -> None:
+    """limit 때문에 빠진 정상 후보를 "검증 실패"로 보고하면 안 됩니다.
+
+    fixed helper는 limit을 채우면 이후 후보를 아예 보지 않고 멈춥니다. 그 후보는
+    잘못된 후보가 아니므로 "확인된 원인이 없습니다"로 표시되면 agent가 오해합니다.
+    """
+
+    payload = w6.find_common_available_slots_dict(
+        member_names=["민준"],
+        date_from="2026-07-14",
+        date_to="2026-07-14",
+        duration_minutes=60,
+        limit=1,
+        busy_rows=[],
+        candidate_slots=[
+            {"date": "2026-07-14", "start_time": "13:00", "end_time": "14:00", "duration_minutes": 60},
+            {"date": "2026-07-14", "start_time": "15:00", "end_time": "16:00", "duration_minutes": 60},
+        ],
+    )
+
+    assert len(payload["candidate_slots"]) == 1
+    assert len(payload["rejected_candidates"]) == 1
+    reason = payload["rejected_candidates"][0]["reason"]
+    assert "limit" in reason
+    assert "확인된 원인이 없습니다" not in reason
+
+
+def test_duplicate_candidates_are_reported_as_duplicates() -> None:
+    """같은 후보를 두 번 제출하면 중복으로 제외됐다고 알려야 합니다.
+
+    accepted를 집합으로만 비교하면 두 제출 건 모두 "통과"로 판단돼
+    중복 제출 사실이 사라집니다.
+    """
+
+    payload = w6.find_common_available_slots_dict(
+        member_names=["민준"],
+        date_from="2026-07-14",
+        date_to="2026-07-14",
+        duration_minutes=60,
+        limit=5,
+        busy_rows=[],
+        candidate_slots=[
+            {"date": "2026-07-14", "start_time": "13:00", "end_time": "14:00", "duration_minutes": 60},
+            {"date": "2026-07-14", "start_time": "13:00", "end_time": "14:00", "duration_minutes": 60},
+        ],
+    )
+
+    assert payload["submitted_candidate_count"] == 2
+    assert len(payload["candidate_slots"]) == 1
+    assert len(payload["rejected_candidates"]) == 1
+    assert "중복" in payload["rejected_candidates"][0]["reason"]
+
+
+# --- 수집 상태가 최종 결정까지 이어지는가 -------------------------------------------------
+
+
+def test_invalid_rows_downgrade_collection_to_partial() -> None:
+    """dict가 아닌 row를 조용히 버리지 않고 부분 성공으로 알려야 합니다."""
+
+    original = w6.collect_member_schedules
+
+    class _MixedTool:
+        def invoke(self, _payload: dict[str, object]) -> str:
+            import json
+
+            return json.dumps(
+                {"ok": True, "rows": [BUSY_ROWS[0], "깨진 row", None], "external_status": "ok"},
+                ensure_ascii=False,
+            )
+
+    w6.collect_member_schedules = _MixedTool()
+    try:
+        payload = w6.find_common_available_slots_dict(
+            member_names=["민준"],
+            date_from="2026-07-14",
+            date_to="2026-07-14",
+            busy_rows=None,
+            candidate_slots=[],
+        )
+    finally:
+        w6.collect_member_schedules = original
+
+    assert payload["collection_status"] == "partial"
+    assert payload["invalid_row_count"] == 2
+    # 정상 row는 계속 근거로 쓰여야 합니다.
+    assert len(payload["busy_rows_all"]) == 1
+    assert any("형식이 올바르지 않은" in note for note in payload["notes"])
+
+
+def test_copied_rows_carry_external_failure_forward() -> None:
+    """rows만 복사돼 와도 외부 조회 실패가 최종 결정까지 이어져야 합니다.
+
+    collect_member_schedules가 external_status=failed와 내 일정만 반환한 뒤
+    agent가 rows만 복사하면, 이 단계에서 실패 사실이 사라져 "모두의 일정을 확인했다"로
+    읽히게 됩니다.
+    """
+
+    payload = w6.find_common_available_slots_dict(
+        member_names=["민준"],
+        date_from="2026-07-14",
+        date_to="2026-07-14",
+        busy_rows=[BUSY_ROWS[0]],
+        candidate_slots=[],
+        external_status="failed",
+        external_error="외부 DB 없음",
+    )
+
+    assert payload["collection_status"] == "partial"
+    assert "외부 DB 없음" in str(payload["collection_error"])
+    assert any("외부 멤버 일정을 가져오지 못했" in note for note in payload["notes"])
+
+
+def test_copied_rows_without_status_stay_provided() -> None:
+    """상태를 안 넘기면 성공으로 단정하지 않고 provided로 남아야 합니다."""
+
+    payload = _find_slots([])
+    assert payload["collection_status"] == "provided"
+
+
+def test_empty_busy_rows_list_is_not_recollected() -> None:
+    """[]는 "조회를 마쳤고 0건"이라는 뜻이라 다시 모으지 않아야 합니다."""
+
+    original = w6.collect_member_schedules
+    called = []
+
+    class _SpyTool:
+        def invoke(self, payload: dict[str, object]) -> str:
+            called.append(payload)
+            return "{}"
+
+    w6.collect_member_schedules = _SpyTool()
+    try:
+        payload = w6.find_common_available_slots_dict(
+            member_names=["민준"],
+            date_from="2026-07-14",
+            date_to="2026-07-14",
+            busy_rows=[],
+            candidate_slots=[],
+        )
+    finally:
+        w6.collect_member_schedules = original
+
+    assert called == []
+    assert payload["collection_status"] == "provided"
+    assert payload["busy_rows_all"] == []
 
 
 def test_members_dedupe_alias_and_real_name() -> None:
@@ -518,6 +878,77 @@ def test_decide_final_slot_resolves_selected_index() -> None:
     assert payload["final_slot"] == "2026-07-16 15:00-16:00"
     assert payload["needs_agent_selection"] is False
     assert payload["reason"].startswith("민준")
+
+
+def _decide(**kwargs: object) -> dict:
+    import json
+
+    return json.loads(w6.decide_final_slot.invoke(kwargs))
+
+
+CANDIDATES = [
+    {"date": "2026-07-14", "start_time": "14:00", "end_time": "15:00", "duration_minutes": 60},
+    {"date": "2026-07-16", "start_time": "15:00", "end_time": "16:00", "duration_minutes": 60},
+]
+
+
+def test_decide_rejects_index_and_final_slot_mismatch() -> None:
+    """selected_index와 final_slot이 다른 시간을 가리키면 확정하지 않아야 합니다."""
+
+    payload = _decide(
+        candidate_slots=CANDIDATES,
+        selected_index=0,
+        final_slot="2026-07-16 15:00-16:00",
+        needs_agent_selection=False,
+    )
+    assert payload["final_slot"] is None
+    assert payload["needs_agent_selection"] is True
+    assert payload["selection_conflicts"]
+    assert "14:00-15:00" in payload["reason"]
+
+
+def test_decide_rejects_selected_slot_outside_candidates() -> None:
+    """후보 목록에 없는 시간을 최종으로 확정하면 안 됩니다.
+
+    겹침 검증을 거치지 않은 시간이 최종 결정이 되는 경로입니다.
+    """
+
+    payload = _decide(
+        candidate_slots=CANDIDATES,
+        selected_slot={"date": "2026-07-14", "start_time": "09:00", "end_time": "10:00"},
+        needs_agent_selection=False,
+    )
+    assert payload["final_slot"] is None
+    assert payload["needs_agent_selection"] is True
+    assert any("후보 목록에 없" in conflict for conflict in payload["selection_conflicts"])
+
+
+def test_decide_rejects_final_slot_with_needs_selection_true() -> None:
+    """final_slot이 있는데 needs_agent_selection=true는 모순입니다."""
+
+    payload = _decide(
+        candidate_slots=CANDIDATES,
+        selected_index=1,
+        final_slot="2026-07-16 15:00-16:00",
+        needs_agent_selection=True,
+    )
+    assert payload["final_slot"] is None
+    assert any("needs_agent_selection" in conflict for conflict in payload["selection_conflicts"])
+
+
+def test_decide_accepts_consistent_selection() -> None:
+    """일치하는 조합은 그대로 확정돼야 합니다."""
+
+    payload = _decide(
+        candidate_slots=CANDIDATES,
+        selected_index=1,
+        final_slot="2026-07-16 15:00-16:00",
+        needs_agent_selection=False,
+        reason="민준의 외부 미팅 뒤라 이동 여유가 있습니다.",
+    )
+    assert payload["final_slot"] == "2026-07-16 15:00-16:00"
+    assert payload["needs_agent_selection"] is False
+    assert "selection_conflicts" not in payload
 
 
 def test_decide_final_slot_reports_out_of_range_index() -> None:

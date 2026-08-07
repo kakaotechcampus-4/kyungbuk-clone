@@ -20,6 +20,7 @@ from fixed.schedule_decision import (
     format_time_minutes,
     normalize_date_bound,
     parse_time_minutes,
+    slot_to_text,
 )
 from student_parts.week01_wake_up_nana import join_system_prompt
 from student_parts.week02_structure_natural_language_requests import extract_schedule_request
@@ -28,11 +29,11 @@ from student_parts.week05_load_kanas_past_conversations import (
     collect_member_schedules,
     # alias 중복 제거 규칙은 Week 5에 이미 한 벌 있다. 같은 판정을 여기서 다시 쓰면 두 payload의
     # member 목록 계약이 갈라질 수 있어 helper를 그대로 가져와 재사용한다.
-    dedupe_preserving_order,
     extract_schedules_from_history,
     json_payload,
     list_shared_schedules,
     load_conversation_messages,
+    resolve_member_names,
     search_previous_conversations,
     week05_prompt_parts,
 )
@@ -215,8 +216,13 @@ WEEK06_SUPERVISOR_PROMPT = (
     "개인 참고자료 검색, 이 앱에서 나와 나눈 대화 검색(RAG), 조율이 끝난 회의를 내 일정으로 저장하는 일.\n"
     "Kana 담당(kana_agent): 나 이외의 사람이 끼는 일 전부다. 외부 멤버의 지난 대화 검색과 원문 확인, "
     "외부 멤버 일정 추출, 공유 일정 저장소 row 조회, 여러 사람의 공통 가능 시간 후보 검증과 최종 회의 시간 결정.\n"
-    "판단 기준은 '요청에 나 말고 다른 사람이 등장하는가'다. 사람 이름이나 '같이', '다들', '회의', '조율'처럼 "
-    "여러 사람을 전제하는 표현이 있으면 kana_agent, 내 일정과 내 기록만 다루면 nana_agent다.\n"
+    "판단 기준은 사람 이름이 나오는지가 아니라 '외부 멤버 데이터를 새로 조회하거나 새로 시간을 맞춰야 하는가'다. "
+    "이름이 나와도 이미 내 일정에 저장된 것을 다루는 일이면 Nana 담당이다.\n"
+    "  · '민준과 잡힌 내 일정을 삭제해줘' → nana_agent. 민준이 등장하지만 필요한 일은 내 일정 삭제이고, "
+    "외부 멤버 일정을 조회할 필요가 없다. 조회·수정·삭제 모두 마찬가지다.\n"
+    "  · '민준의 일정과 내 일정을 맞춰줘' → kana_agent. 민준의 일정을 외부에서 가져와야 하고 새로 시간을 맞춰야 한다.\n"
+    "  · '민준이 지난주에 뭐라고 했어?' → kana_agent. 외부 멤버의 대화를 조회해야 한다.\n"
+    "  · '내일 회의 몇 시였지?' → nana_agent. 내 일정 조회만 하면 된다.\n"
     "한 요청이 두 담당에 걸치면 순서대로 위임한다. 예를 들어 '민준이랑 시간 맞춰서 내 일정에 넣어줘'는 "
     "먼저 kana_agent로 회의 시간을 정하고, 그 결과의 final_slot을 kana_agent 답변에서 읽어 "
     "nana_agent에 넘겨 저장한다. 시간이 확정되지 않았으면(needs_agent_selection이 true) 저장을 위임하지 않고 "
@@ -382,8 +388,13 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "후보는 date_from~date_to 범위 안에 있어야 하고, workday_start~workday_end 업무 시간 안에 들어야 하며, "
     "duration_minutes 이상 길어야 하고, 어떤 busy row와도 시간이 겹치면 안 됩니다. "
     "이 조건을 어긴 후보는 검증 단계에서 조용히 버려지므로, 겹치는 시간을 넣지 말고 후보를 2개 이상 여유 있게 제안합니다.\n"
-    "busy_rows에는 collect_member_schedules 결과의 rows를 그대로 복사해 넘깁니다. busy_rows를 비우면 "
-    "이 tool이 collect_member_schedules를 대신 호출해 다시 모으므로, 이미 모아 둔 rows가 있으면 복사해 넘기는 편이 정확합니다.\n"
+    "busy_rows는 세 가지 값이 각각 다른 뜻이라 구분해서 넘겨야 합니다.\n"
+    "  · 생략하거나 null: 아직 일정을 모으지 않았다는 뜻입니다. 이 tool이 collect_member_schedules를 대신 호출해 다시 모읍니다.\n"
+    "  · []: 조회를 마쳤고 바쁜 일정이 0건이라는 뜻입니다. 다시 모으지 않고 '그 기간은 모두 비어 있다'로 검증합니다.\n"
+    "  · row 배열: 앞선 collect_member_schedules 결과의 rows를 그대로 복사한 것입니다. 그 rows로 검증합니다.\n"
+    "이미 collect_member_schedules를 호출했다면 rows를 복사해 넘기는 편이 정확합니다. 이때 결과의 "
+    "external_status와 external_error도 함께 복사해 넘기세요. 그 값이 빠지면 외부 조회가 실패했다는 사실이 "
+    "여기서 끊겨, 내 일정만으로 검증된 후보가 모두의 일정을 확인한 것처럼 최종 결정까지 넘어갑니다.\n"
     "busy row의 time_status에 따라 후보를 고르는 방법이 다릅니다. complete는 그 시간대를 피하고, "
     "start_only는 시작 시각부터 회의 길이만큼 피하고, date_only는 시간을 모르므로 그날을 통째로 버리지 말고 "
     "후보를 제안한 뒤 확인이 필요하다고 답변에 밝힙니다.\n"
@@ -415,7 +426,21 @@ class FindCommonAvailableSlotsInput(BaseModel):
     limit: int = Field(default=5, ge=1, le=20, description="최대 후보 수")
     busy_rows: list[dict[str, Any]] | None = Field(
         default=None,
-        description="앞선 일정 조회 tool output에서 복사한 busy_rows. 후보는 이 row들과 overlap/겹치면 안 됩니다.",
+        description=(
+            "앞선 일정 조회 tool output에서 복사한 busy_rows. 후보는 이 row들과 overlap/겹치면 안 됩니다. "
+            "생략하거나 null이면 이 tool이 일정을 다시 수집하고, []는 '조회를 마쳤고 바쁜 일정이 0건'이라는 뜻입니다."
+        ),
+    )
+    external_status: str | None = Field(
+        default=None,
+        description=(
+            "busy_rows를 복사해 넘길 때 collect_member_schedules 결과의 external_status를 그대로 복사합니다. "
+            "이 값이 없으면 외부 조회 실패 사실이 최종 결정까지 이어지지 않습니다."
+        ),
+    )
+    external_error: str | None = Field(
+        default=None,
+        description="collect_member_schedules 결과의 external_error를 그대로 복사합니다.",
     )
     candidate_slots: list[CommonSlotCandidate] = Field(
         default_factory=list,
@@ -535,21 +560,31 @@ def _collected_busy_rows(
         }
 
     collected = [row for row in rows if isinstance(row, dict)]
+    # dict가 아닌 row를 조용히 버리면 형식이 깨진 바쁜 일정이 사라진 채 후보 검증이 이어진다.
+    # 그러면 그 시간이 비어 있는 것으로 취급되므로 몇 건을 못 썼는지 남기고 부분 성공으로 본다.
+    invalid_row_count = len(rows) - len(collected)
     # 외부 MCP 조회만 실패한 부분 성공도 있다. 이때 rows에는 내 일정만 들어 있으므로
     # "외부 멤버 근거가 빠졌다"를 그대로 올려 보내 agent가 한가하다고 단정하지 않게 한다.
     external_status = payload.get("external_status")
+    reasons: list[str] = []
     if external_status not in (None, "ok", "skipped"):
+        reasons.append(str(payload.get("external_error") or "외부 멤버 일정 조회에 실패했습니다."))
+    if invalid_row_count:
+        reasons.append(f"형식이 올바르지 않은 일정 {invalid_row_count}건을 근거로 쓰지 못했습니다.")
+
+    if reasons:
         return collected, {
             "collection_status": "partial",
-            "collection_error": str(payload.get("external_error") or "외부 멤버 일정 조회에 실패했습니다."),
+            "collection_error": " / ".join(reasons),
+            "invalid_row_count": invalid_row_count,
         }
-    return collected, {"collection_status": "ok", "collection_error": None}
+    return collected, {"collection_status": "ok", "collection_error": None, "invalid_row_count": 0}
 
 
 def _busy_rows_for_overlap_check(
     rows: list[dict[str, Any]],
     duration_minutes: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     """겹침 검증에 쓸 row와 시간을 몰라 검증에 못 쓰는 row를 나눕니다.
 
     Week 5에서 붙인 time_status 계약을 Week 6 시간 계산에서 실제로 적용하는 자리다.
@@ -567,21 +602,37 @@ def _busy_rows_for_overlap_check(
 
     hard_rows: list[dict[str, Any]] = []
     soft_rows: list[dict[str, Any]] = []
+    warnings: list[str] = []
     assumed_minutes = max(30, int(duration_minutes or 60))
 
     for row in rows:
-        time_status = str(row.get("time_status") or "").strip()
+        declared_status = str(row.get("time_status") or "").strip()
         start_minutes = parse_time_minutes(row.get("start_time"), -1)
+        end_minutes = parse_time_minutes(row.get("end_time"), -1)
 
-        # time_status가 없는 row(외부 store가 직접 만든 row 등)는 값으로 직접 판정한다.
-        if not time_status:
-            end_minutes = parse_time_minutes(row.get("end_time"), -1)
-            if start_minutes < 0:
-                time_status = "date_only"
-            elif end_minutes < 0:
-                time_status = "start_only"
-            else:
-                time_status = "complete"
+        # 실제 시간값으로 본 종류. time_status가 없는 row(외부 store가 직접 만든 row 등)뿐 아니라
+        # time_status가 있어도 이 값과 어긋나는지 확인하는 기준으로 쓴다.
+        if start_minutes < 0:
+            actual_status = "date_only"
+        elif end_minutes < 0:
+            actual_status = "start_only"
+        else:
+            actual_status = "complete"
+
+        # time_status를 그대로 믿지 않는다. 예를 들어 complete인데 종료 시각이 없으면
+        # 하위 겹침 계산이 자정까지 바쁜 것으로 보고 그날 오후를 통째로 지운다. 반대로 시간이
+        # 멀쩡한데 모르는 time_status가 들어오면 검증에서 빠져 겹치는 후보가 통과한다.
+        # 둘 다 조용히 넘어가면 원인을 찾기 어려우므로 시간값 기준으로 재분류하고 경고를 남긴다.
+        time_status = declared_status
+        if declared_status and declared_status != actual_status:
+            warnings.append(
+                f"{row.get('member_name') or '?'} {row.get('title') or ''}"
+                f"({row.get('date')} {row.get('start_time')}-{row.get('end_time')}): "
+                f"time_status={declared_status}이지만 실제 시간값은 {actual_status}라서 시간값 기준으로 처리했습니다."
+            )
+            time_status = actual_status
+        elif not declared_status:
+            time_status = actual_status
 
         if time_status == "complete":
             hard_rows.append(row)
@@ -599,7 +650,7 @@ def _busy_rows_for_overlap_check(
             continue
         soft_rows.append(row)
 
-    return hard_rows, soft_rows
+    return hard_rows, soft_rows, warnings
 
 
 def _candidate_rejection_reason(
@@ -656,6 +707,53 @@ def _candidate_rejection_reason(
     return "검증에서 제외됐지만 확인된 원인이 없습니다."
 
 
+def _dedupe_submitted_candidates(
+    submitted: list[Any] | None,
+) -> tuple[list[Any], list[dict[str, Any]]]:
+    """검증 전에 같은 시간 후보를 하나로 줄이고, 줄인 건은 이유와 함께 보고합니다.
+
+    fixed helper는 중복 후보를 걸러 주지 않아서 같은 시간이 candidate_slots에 두 번 남습니다.
+    그러면 decide_final_slot의 candidates에도 같은 시간이 두 번 들어가고, agent가 고른
+    selected_index가 어느 쪽을 가리키는지 모호해집니다. 그래서 검증 전에 한 번만 남깁니다.
+    """
+
+    seen: set[tuple[str, str, str]] = set()
+    unique: list[Any] = []
+    duplicates: list[dict[str, Any]] = []
+    for candidate in submitted or []:
+        slot = candidate.model_dump() if hasattr(candidate, "model_dump") else candidate
+        if not isinstance(slot, dict):
+            unique.append(candidate)
+            continue
+        key = _candidate_key(slot)
+        if key in seen:
+            duplicates.append(
+                {
+                    "candidate": f"{slot.get('date')} {slot.get('start_time')}-{slot.get('end_time')}",
+                    "reason": "같은 시간을 여러 번 제출해 중복으로 제외했습니다. 결과에는 한 번만 남습니다.",
+                }
+            )
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique, duplicates
+
+
+def _candidate_key(slot: dict[str, Any]) -> tuple[str, str, str]:
+    """후보를 비교할 때 쓰는 정규화된 키입니다.
+
+    통과한 후보는 시간이 HH:MM으로 정규화돼 돌아오므로 제출값도 같은 기준으로 맞춥니다.
+    """
+
+    start_minutes = parse_time_minutes(slot.get("start_time"), -1)
+    end_minutes = parse_time_minutes(slot.get("end_time"), -1)
+    return (
+        normalize_date_bound(str(slot.get("date") or "")),
+        format_time_minutes(start_minutes) if start_minutes >= 0 else str(slot.get("start_time")),
+        format_time_minutes(end_minutes) if end_minutes >= 0 else str(slot.get("end_time")),
+    )
+
+
 def _rejected_candidate_reports(
     submitted: list[Any] | None,
     accepted: list[dict[str, Any]],
@@ -666,43 +764,55 @@ def _rejected_candidate_reports(
     duration_minutes: int,
     workday_start: str,
     workday_end: str,
+    limit: int,
 ) -> list[dict[str, Any]]:
-    """agent가 낸 후보 중 검증을 통과하지 못한 것만 이유와 함께 모읍니다."""
+    """agent가 낸 후보 중 결과에 남지 않은 것을 이유와 함께 모읍니다.
 
-    accepted_keys = {
-        (str(slot.get("date")), str(slot.get("start_time")), str(slot.get("end_time")))
-        for slot in accepted
-    }
+    "accepted에 없다"가 곧 "검증 실패"는 아닙니다. 결과에서 빠지는 경로가 세 가지라
+    구분하지 않으면 멀쩡한 후보가 "확인된 원인이 없습니다"로 보고됩니다.
+      - limit 초과 : fixed helper는 limit을 채우면 뒤 후보를 아예 보지 않고 멈춥니다.
+      - 중복 제출  : 같은 시간을 두 번 내면 결과에는 하나만 남습니다.
+      - 검증 실패  : 날짜 범위·업무 시간·길이·겹침 조건에 걸린 경우.
+
+    중복 제출은 _dedupe_submitted_candidates가 검증 전에 걸러 따로 보고하므로, 여기 들어오는
+    submitted에는 같은 후보가 한 번씩만 있습니다. 그래도 accepted를 집합이 아니라 key별 개수로
+    세어 제출 건과 하나씩 대응시킵니다. 집합으로 보면 개수 차이를 놓칩니다.
+    """
+
+    remaining_accepted: dict[tuple[str, str, str], int] = {}
+    for slot in accepted:
+        remaining_accepted[_candidate_key(slot)] = remaining_accepted.get(_candidate_key(slot), 0) + 1
+
     reports: list[dict[str, Any]] = []
+    # fixed helper가 limit을 채운 뒤로는 남은 후보를 검증조차 하지 않는다. 몇 번째 제출부터
+    # 그 상태가 되는지 세어 두어야 "검증 실패"와 "자리 없음"을 섞지 않는다.
+    accepted_so_far = 0
     for candidate in submitted or []:
         slot = candidate.model_dump() if hasattr(candidate, "model_dump") else candidate
         if not isinstance(slot, dict):
             reports.append({"candidate": str(candidate), "reason": "후보 형식이 올바르지 않습니다."})
             continue
-        # 통과한 후보는 시간이 HH:MM으로 정규화돼 돌아오므로 같은 기준으로 맞춰 비교한다.
-        start_minutes = parse_time_minutes(slot.get("start_time"), -1)
-        end_minutes = parse_time_minutes(slot.get("end_time"), -1)
-        key = (
-            normalize_date_bound(str(slot.get("date") or "")),
-            format_time_minutes(start_minutes) if start_minutes >= 0 else str(slot.get("start_time")),
-            format_time_minutes(end_minutes) if end_minutes >= 0 else str(slot.get("end_time")),
-        )
-        if key in accepted_keys:
+
+        key = _candidate_key(slot)
+        if remaining_accepted.get(key, 0) > 0:
+            remaining_accepted[key] -= 1
+            accepted_so_far += 1
             continue
-        reports.append(
-            {
-                "candidate": f"{slot.get('date')} {slot.get('start_time')}-{slot.get('end_time')}",
-                "reason": _candidate_rejection_reason(
-                    slot,
-                    date_from=date_from,
-                    date_to=date_to,
-                    busy_rows=busy_rows,
-                    duration_minutes=duration_minutes,
-                    workday_start=workday_start,
-                    workday_end=workday_end,
-                ),
-            }
-        )
+
+        label = f"{slot.get('date')} {slot.get('start_time')}-{slot.get('end_time')}"
+        if accepted_so_far >= limit:
+            reason = f"앞선 후보로 limit({limit})이 이미 채워져 검증 대상에서 제외됐습니다. 잘못된 후보는 아닙니다."
+        else:
+            reason = _candidate_rejection_reason(
+                slot,
+                date_from=date_from,
+                date_to=date_to,
+                busy_rows=busy_rows,
+                duration_minutes=duration_minutes,
+                workday_start=workday_start,
+                workday_end=workday_end,
+            )
+        reports.append({"candidate": label, "reason": reason})
     return reports
 
 
@@ -717,14 +827,16 @@ def find_common_available_slots_dict(
     busy_rows: list[dict[str, Any]] | None = None,
     candidate_slots: list[dict[str, Any]] | None = None,
     llm_reason: str | None = None,
+    external_status: str | None = None,
+    external_error: str | None = None,
 ) -> dict[str, Any]:
     """멤버별 busy-time rows와 LLM이 고른 후보 payload를 검증 결과로 바꿉니다."""
 
     # 이름/날짜 정규화는 여기서 한 번만 하고, 같은 값을 일정 수집과 후보 검증에 함께 쓴다.
     # 두 단계가 서로 다른 범위를 보면 "범위 안에서 겹치지 않는다"는 검증 결과를 믿을 수 없다.
-    # alias와 실제 이름이 함께 들어오면(["A", "철수"] → ["철수", "철수"]) 정규화 결과가 겹친다.
-    # 그대로 두면 payload의 members에 같은 사람이 두 번 남아 "누구 일정을 봤는지"가 부정확해진다.
-    normalized_members = dedupe_preserving_order(normalize_external_member_names(member_names))
+    # 이름 확정(조사 제거)과 alias 중복 제거는 Week 5 resolve_member_names 한 곳에 있다.
+    # collect_member_schedules와 여기가 다른 규칙을 쓰면 같은 요청에서 조회 대상이 갈라진다.
+    normalized_members = resolve_member_names(member_names)
     normalized_date_from = normalize_date_bound(date_from)
     normalized_date_to = normalize_date_bound(date_to)
 
@@ -736,11 +848,25 @@ def find_common_available_slots_dict(
         )
     else:
         collected_rows = [row for row in busy_rows if isinstance(row, dict)]
+        invalid_row_count = len(busy_rows) - len(collected_rows)
         # agent가 앞선 tool output에서 복사해 넘긴 rows다. 다시 모으지 않으므로 조회 상태를 알 수 없고,
         # 여기서 ok로 단정하면 실패한 조회 결과를 성공으로 덮어쓸 수 있어 provided로 구분해 둔다.
-        collection_state = {"collection_status": "provided", "collection_error": None}
+        #
+        # 다만 rows만 복사해 오면 collect_member_schedules가 알려 준 외부 조회 실패가 여기서 끊긴다.
+        # 그러면 "내 일정만으로 검증했다"는 경고가 최종 결정까지 이어지지 않으므로,
+        # agent가 external_status/external_error도 함께 복사해 넘기면 그 상태를 이어받는다.
+        carried_reasons: list[str] = []
+        if external_status not in (None, "", "ok", "skipped"):
+            carried_reasons.append(str(external_error or "외부 멤버 일정 조회에 실패했습니다."))
+        if invalid_row_count:
+            carried_reasons.append(f"형식이 올바르지 않은 일정 {invalid_row_count}건을 근거로 쓰지 못했습니다.")
+        collection_state = {
+            "collection_status": "partial" if carried_reasons else "provided",
+            "collection_error": " / ".join(carried_reasons) or None,
+            "invalid_row_count": invalid_row_count,
+        }
 
-    hard_rows, soft_rows = _busy_rows_for_overlap_check(collected_rows, duration_minutes)
+    hard_rows, soft_rows, time_status_warnings = _busy_rows_for_overlap_check(collected_rows, duration_minutes)
 
     # 내 일정도 겹침 판정의 근거라서 조회 대상에 "나"를 함께 남긴다. 이 값은 검증 payload의
     # members로 그대로 들어가 "누구 일정을 보고 고른 후보인지"를 설명한다. alias 정규화 결과에
@@ -749,6 +875,10 @@ def find_common_available_slots_dict(
         PERSONAL_SHARED_MEMBER_NAME,
         *[name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME],
     ]
+
+    # 검증 전에 중복 후보를 한 번만 남긴다. fixed helper는 중복을 걸러 주지 않아서 그대로 두면
+    # 같은 시간이 candidate_slots에 두 번 들어가고 decide_final_slot의 selected_index가 모호해진다.
+    unique_candidates, duplicate_reports = _dedupe_submitted_candidates(candidate_slots)
 
     payload = find_common_available_slots_payload(
         member_names=evidence_members,
@@ -760,7 +890,7 @@ def find_common_available_slots_dict(
         workday_start=workday_start,
         workday_end=workday_end,
         limit=limit,
-        candidate_slots=candidate_slots,
+        candidate_slots=unique_candidates,
         llm_reason=llm_reason,
     )
 
@@ -792,21 +922,38 @@ def find_common_available_slots_dict(
 
     # rows가 하나도 없는 멤버를 짚어 준다. 이름에 조사가 붙어 있으면("민준이") 외부 저장소에서
     # 못 찾아 0건이 돌아오는데, 그 상태는 "일정이 없어 한가함"과 payload 모양이 같다.
-    # EXTERNAL_MEMBER_ALIAS가 비어 있어 정규화가 이름을 고쳐 주지 않으므로 여기서 드러내 준다.
-    # 정말 일정이 없을 수도 있으니 오류로 막지 않고 확인만 요청한다.
+    #
+    # "나"는 이름을 잘못 쓸 수 있는 대상이 아니라 성격이 다르다. 내 일정이 0건인 것은 흔한
+    # 정상 상태인데 같은 목록에 넣으면 "'나'의 이름에 조사가 붙었는지 확인하라"는 이상한 안내가
+    # 나간다. 그래서 이름 확인이 필요한 외부 멤버와 내 일정 건수를 나눠서 남긴다.
     members_with_rows = {str(row.get("member_name") or "").strip() for row in collected_rows}
-    members_without_rows = [name for name in evidence_members if name not in members_with_rows]
-    payload["members_without_rows"] = members_without_rows
-    if members_without_rows and collection_state["collection_status"] in ("ok", "provided"):
+    external_members_without_rows = [
+        name
+        for name in evidence_members
+        if name != PERSONAL_SHARED_MEMBER_NAME and name not in members_with_rows
+    ]
+    personal_schedule_count = sum(
+        1 for row in collected_rows if str(row.get("member_name") or "").strip() == PERSONAL_SHARED_MEMBER_NAME
+    )
+    payload["external_members_without_rows"] = external_members_without_rows
+    payload["personal_schedule_count"] = personal_schedule_count
+
+    if external_members_without_rows and collection_state["collection_status"] in ("ok", "provided"):
         notes.append(
-            f"{', '.join(members_without_rows)}의 일정이 rows에 하나도 없습니다. "
+            f"{', '.join(external_members_without_rows)}의 일정이 rows에 하나도 없습니다. "
             "이름에 조사가 붙어 있지 않은지(예: '민준이' → '민준') 확인하고, "
             "정말 일정이 없는 것이라면 그대로 진행하세요. 확인 없이 한가하다고 단정하지 마세요."
         )
+    if time_status_warnings:
+        notes.append(
+            "일부 일정의 time_status가 실제 시간값과 달라 시간값 기준으로 처리했습니다: "
+            + " / ".join(time_status_warnings[:3])
+        )
+    payload["time_status_warnings"] = time_status_warnings
     # 걸러진 후보와 그 이유를 남긴다. 이유 없이 "후보 0개"만 주면 agent가 원인을 추측해서
     # 실제로는 비어 있는 시간을 "전부 예약됨"으로 설명하는 답변이 나온다(실행에서 관찰).
-    rejected = _rejected_candidate_reports(
-        candidate_slots,
+    rejected = duplicate_reports + _rejected_candidate_reports(
+        unique_candidates,
         payload.get("candidate_slots") or [],
         date_from=normalized_date_from,
         date_to=normalized_date_to,
@@ -814,6 +961,7 @@ def find_common_available_slots_dict(
         duration_minutes=duration_minutes,
         workday_start=workday_start,
         workday_end=workday_end,
+        limit=limit,
     )
     payload["submitted_candidate_count"] = len(candidate_slots or [])
     payload["rejected_candidates"] = rejected
@@ -851,6 +999,8 @@ def find_common_available_slots(
     busy_rows: list[dict[str, Any]] | None = None,
     candidate_slots: list[Any] | None = None,
     llm_reason: str | None = None,
+    external_status: str | None = None,
+    external_error: str | None = None,
 ) -> str:
     """수집된 멤버 일정에서 LLM이 직접 고른 공통 가능 후보 시간을 검증합니다."""
 
@@ -868,8 +1018,48 @@ def find_common_available_slots(
             busy_rows=busy_rows,
             candidate_slots=candidate_slots,
             llm_reason=llm_reason,
+            external_status=external_status,
+            external_error=external_error,
         )
     )
+
+
+def _final_slot_conflicts(
+    payload: dict[str, Any],
+    *,
+    final_slot: str | None,
+    needs_agent_selection: bool | None,
+) -> list[str]:
+    """선택 관련 인자들이 서로 모순되는지 확인합니다.
+
+    최종 시간의 source of truth는 "agent가 고른 후보"입니다. selected_index/selected_slot과
+    final_slot이 다른 시간을 가리키면 어느 쪽이 진짜 결정인지 알 수 없고, 그대로 기록하면
+    후보 근거와 최종 시간의 연결이 끊깁니다. 그래서 기록 전에 세 가지를 확인합니다.
+    """
+
+    conflicts: list[str] = []
+    selected = payload.get("selected_slot")
+    candidates = payload.get("candidates") or []
+
+    if selected is not None and final_slot:
+        selected_text = slot_to_text(selected)
+        if selected_text != final_slot:
+            conflicts.append(
+                f"선택한 후보는 '{selected_text}'인데 final_slot은 '{final_slot}'입니다."
+            )
+
+    # selected_slot을 직접 넘긴 경우 그 값이 후보 목록에 실제로 있는지 확인한다.
+    # 목록에 없는 시간을 확정하면 겹침 검증을 거치지 않은 시간이 최종 결정이 된다.
+    if payload.get("selected_index") is None and selected is not None and candidates:
+        if slot_to_text(selected) not in candidates:
+            conflicts.append(
+                f"선택한 후보 '{slot_to_text(selected)}'가 후보 목록에 없습니다."
+            )
+
+    if final_slot and needs_agent_selection is True:
+        conflicts.append("final_slot이 있는데 needs_agent_selection이 true입니다.")
+
+    return conflicts
 
 
 @tool(description=DECIDE_FINAL_SLOT_DESCRIPTION, args_schema=DecideFinalSlotInput)
@@ -904,6 +1094,19 @@ def decide_final_slot(
         reason=reason,
         busy_rows=busy_rows,
     )
+    conflicts = _final_slot_conflicts(payload, final_slot=final_slot, needs_agent_selection=needs_agent_selection)
+    if conflicts:
+        # 모순된 조합을 성공 payload로 기록하면 "무엇이 진짜 확정 시간인지"를 나중에 알 수 없다.
+        # 여기서 코드가 한쪽을 골라 덮으면 그게 agent의 결정인 것처럼 남으므로, 고르지 않고
+        # 미확정으로 되돌린 뒤 무엇이 어긋났는지 알려 agent가 다시 정하게 한다.
+        payload["needs_agent_selection"] = True
+        payload["final_slot"] = None
+        payload["selection_conflicts"] = conflicts
+        payload["reason"] = (
+            "선택한 후보와 최종 시간이 서로 맞지 않아 확정하지 않았습니다: "
+            + " / ".join(conflicts)
+            + " 후보 목록에서 하나를 고르고 selected_index와 final_slot을 같은 후보로 맞춰 다시 호출하세요."
+        )
     # course repo 계약은 top-level final_slot/reason/candidates다. ok/tool_name을 함께 실어
     # 다른 wrapper tool과 같은 모양으로 읽히게 하되, 계약 키를 감싸지 않고 그대로 남긴다.
     return json_payload({"ok": True, "tool_name": "decide_final_slot", **payload})
