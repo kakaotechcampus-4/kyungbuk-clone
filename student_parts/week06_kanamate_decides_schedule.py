@@ -207,7 +207,7 @@ def week06_prompt_parts() -> list[str]:
         "\n"
         "## 위임 판단 기준\n"
         "- 개인 일정 생성/조회/수정/삭제, 개인 할 일 및 알림 저장/조회, 개인 참고자료 검색, 과거 내 대화 검색처럼 '나' 한 사람의 범위에서 끝나는 요청은 `nana_agent`에게 위임해.\n"
-        "- 외부 팀원의 이전 대화/일정 확인, 공유 일정 저장소 조회, 여러 사람의 공통 가능 시간 조율처럼 '나 이외의 사람'이 얽힌 요청은 `kana_agnet`에게 위임해.\n"
+        "- 외부 팀원의 이전 대화/일정 확인, 공유 일정 저장소 조회, 여러 사람의 공통 가능 시간 조율처럼 '나 이외의 사람'이 얽힌 요청은 `kana_agent`에게 위임해.\n"
         "- 그룹 회의 시간을 정하는 요청처럼 내 일정과 팀원 일정 모두 확인해야 하는 경우에는 먼저 `nana_agent`를 호출해 내 개인 일정을 확인하고 그 다음 `kana_agent`를 호출해서 팀원 쪽을 확인해.\n"
         "- 한 번의 위임으로 답을 완성할 수 있다면 같은 하위 agent를 다른 query로 다시 호출하거나 다른 하위 agent를 추가로 호출해도 돼."
     ]
@@ -274,6 +274,8 @@ def supervisor_system_prompt() -> str:
             "너 스스로 계산하거나 추측해서 답하지 마.\n"
             "- 개인 일정과 팀원 일정을 모두 확인해야 하는 요청이면 `nana_agent`를 먼저 호출해 결과를 받은 뒤 `kana_agent`를 호출해.\n"
             "- 각 하위 agent가 반환한 JSON의 answer만 최종 답변의 근거로 사용하고 하위 agent의 tool_name이나 원본 JSON 구조를 그대로 노출하지 마.\n"
+            "- 만약 한 하위 agent가 내 담당이 아니다/처리할 수 없다고 답하면 그 부분은 다른 하위 agent를 추가로 호출해 보완해. "
+            "두 하위 agent의 답이 서로 모순되면 임의로 하나를 고르지 말고 어느 부분이 불명확한지 사용자에게 짧게 알리고 확인이 필요한 정보를 되물어.\n"
             "- 두 하위 agent의 결과를 모두 받은 뒤에는 그 내용을 종합해 사용자에게 간결한 자연어 답변을 작성해."
         ]
     )
@@ -470,8 +472,8 @@ def kana_tools() -> list[Any]:
         extract_schedules_from_history,
         list_shared_schedules,
         collect_member_schedules,
-        find_common_available_slots,
-        decide_final_slot,
+        # find_common_available_slots,
+        # decide_final_slot,
     ]
 
 
@@ -568,14 +570,15 @@ def kana_agent(query: str) -> str:
     final_slot_payload: dict[str, Any] | None = None
     final_decision_payload: dict[str, Any] | None = None
     for event in events:
+        if event.get("event") != "tool_call": continue
+
+        if event.get("tool_name") not in {"decide_final_slot"}: continue
+
         content = event.get("content")
         if not isinstance(content, dict): continue
 
-        if content.get("final_slot_payload"): final_slot_payload = content["final_slot_payload"]
-        elif "final_slot" in content: final_slot_payload = content
-
-        if content.get("final_decision_payload"): final_decision_payload = content["final_decision_payload"]
-        elif content.get("final_decision"): final_decision_payload = content["final_decision"]
+        if "final_slot" in content: final_slot_payload = content
+        if content.get("final_decision"): final_decision_payload = content["final_decision"]
 
     payload = {
         "ok": True,

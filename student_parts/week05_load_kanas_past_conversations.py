@@ -299,9 +299,9 @@ def _my_schedule_notes(request: StructuredRequest) -> str:
     """내 일정 row가 개인 일정인지, 참석자가 있는 그룹 일정인지 설명합니다."""
 
     if request.kind != "group_schedule":
-        return "Nana 개인 일정"
+        return "개인 일정"
     members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
-    return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
+    return f"그룹 일정/참석자: {', '.join(members)}" if members else "그룹 일정"
 
 
 def _collect_member_schedules(
@@ -394,6 +394,7 @@ def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
       - 앱 DB 경로만 end_time "미정"을 "18:00"으로 바꿉니다. 그래서 end_time은 키에서 뺍니다.
         같은 사람이 같은 날 같은 시각에 시작하는 같은 제목의 일정은 하나로 봅니다.
       - start_time이 비어 있으면 공유 저장소는 "미정"으로 저장하므로 같은 값으로 맞춥니다.
+      - 같은 사람이 같은 날 같은 시각에 같은 제목의 별개 일정을 갖는 경우가 있다면 하나로 합쳐져 뒤에 들어온 일정이 유실될 수 있습니다.
     """
 
     deduped: dict[tuple[str, ...], dict[str, Any]] = {}
