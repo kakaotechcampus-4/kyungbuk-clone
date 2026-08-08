@@ -214,6 +214,8 @@ def week06_prompt_parts() -> list[str]:
         "위임은 한 번에 하나의 하위 agent만 호출하고, 결과를 읽은 뒤에 필요할 때만 다음 위임을 한다. "
         "두 agent를 동시에 호출하지 않는다. "
         "하위 agent가 담당이 아니라고 답하면 같은 query를 반복하지 말고 다른 agent에 위임한다. "
+        "저장/삭제 확인 질문에 사용자가 아니라고 거절하면 그 작업을 위임하지 않고 취소됐음을 알린다. "
+        "확인 질문에 사용자가 승인하면 위임 query에 '사용자가 확인했다'는 사실과 대상을 명시해 다시 위임한다. "
         "하위 agent 결과가 실패(ok=false)면 user_message만 사용자에게 전하고, "
         "error_type이나 debug_reason 같은 내부 오류 정보는 답변에 옮기지 않는다. "
         "일정 저장/수정/삭제 같은 상태 변경은 사용자가 이번 메시지에서 명시적으로 요청했을 때만 위임한다. "
@@ -252,8 +254,10 @@ def nana_prompt_parts() -> list[str]:
         "단, 사용자가 시간을 미정으로 두고 저장하겠다고 명시한 경우는 저장 요청이므로 그대로 저장한다. "
         "일정을 저장하기 전 같은 날짜의 기존 일정과 시간이 겹치면 바로 저장하지 말고, "
         "겹치는 일정을 알리고 그래도 저장할지 확인을 구한다. "
-        "저장 결과에 duplicate_warning이 있으면 저장된 것이 아니다 — 기존 일정을 알리고 "
-        "실수가 아니라 별개 일정이 맞는지 확인 질문으로 답한다."
+        "저장 결과에 duplicate_warning/overlap_warning이 있으면 저장된 것이 아니다 — 기존/겹치는 "
+        "일정을 알리고 별개 일정이 맞는지(겹쳐도 되는지) 확인 질문으로 답한다. "
+        "삭제 결과에 pending_confirmation이 있으면 삭제된 것이 아니다 — 대상 목록을 보여주고 "
+        "모두 삭제할지 확인 질문으로 답한다. 확인 질문에 사용자가 거절하면 실행하지 않는다."
     )
     return [
         *week04_prompt_parts(),
@@ -704,6 +708,44 @@ _WRITE_EVIDENCE_KEYS = ("saved_rows", "deleted_count", "updated_schedule", "crea
 # operation_id는 사용자 턴마다 runner(코드)가 발급한다 — LLM에게 ID 발급을 맡기면
 # 다시 프롬프트 의존이 되므로, 멘토 리뷰의 operation 단위 구분을 코드 발급으로 구현했다.
 _EXECUTED_WRITE_QUERIES: dict[str, dict[str, str]] = {}
+_LEDGER_LOADED = False
+
+
+def _ledger_path() -> Any:
+    from fixed.config import CONFIG
+
+    return CONFIG.app_db_path.parent / "week06_write_ledger.json"
+
+
+def _load_ledger() -> None:
+    """앱 재시작 후에도 replay 차단이 유지되도록 장부를 파일에서 되살립니다.
+
+    메모리 장부만 있으면 재시작 뒤 '저장 후 삭제된 내용'의 replay(부활)를 내용
+    검사가 못 잡는다(DB에 없으니 새 저장으로 보임). 성공한 쓰기 query를
+    write-through로 영속시켜 이 구멍을 막는다.
+    """
+
+    global _LEDGER_LOADED
+    if _LEDGER_LOADED:
+        return
+    _LEDGER_LOADED = True
+    try:
+        stored = json.loads(_ledger_path().read_text(encoding="utf-8"))
+        if isinstance(stored, dict):
+            for conversation, queries in stored.items():
+                if isinstance(queries, dict):
+                    _EXECUTED_WRITE_QUERIES.setdefault(conversation, {}).update(queries)
+    except (OSError, ValueError):
+        pass
+
+
+def _persist_ledger() -> None:
+    try:
+        _ledger_path().write_text(
+            json.dumps(_EXECUTED_WRITE_QUERIES, ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError:
+        pass
 _CURRENT_USER_MESSAGE: ContextVar[str] = ContextVar("week06_current_user_message", default="")
 _CURRENT_OPERATION_ID: ContextVar[str] = ContextVar("week06_current_operation_id", default="")
 
@@ -735,6 +777,7 @@ def _replayed_write_query(query: str) -> bool:
 
     from fixed.session_scope import current_session_scope
 
+    _load_ledger()
     executed_op = _EXECUTED_WRITE_QUERIES.get(current_session_scope(), {}).get(query.strip())
     if executed_op is None:
         return False
@@ -762,7 +805,9 @@ def _remember_write_query(query: str, events: list[dict[str, Any]]) -> None:
             continue
         content = event.get("content")
         if isinstance(content, dict) and _write_succeeded(content):
+            _load_ledger()
             _EXECUTED_WRITE_QUERIES.setdefault(current_session_scope(), {})[query.strip()] = _CURRENT_OPERATION_ID.get()
+            _persist_ledger()
             return
 
 
@@ -896,7 +941,9 @@ class _SupervisorRunner:
 
     def __init__(self, agent: Any) -> None:
         self._agent = agent
-        self._turn_index = 0
+        # 턴 순번은 대화별로 센다. 러너 전역이면 다른 대화가 한 턴 끼기만 해도
+        # 확인 창(경고 바로 다음 턴)이 소모되는 오탐이 난다.
+        self._turn_index_by_conversation: dict[str, int] = {}
 
     @staticmethod
     def _next_operation_id() -> str:
@@ -913,11 +960,14 @@ class _SupervisorRunner:
 
     def invoke(self, payload: Any, **kwargs: Any) -> Any:
         operation_id = self._next_operation_id()
-        self._turn_index += 1
+        from fixed.session_scope import current_session_scope
+        conversation = current_session_scope()
+        turn = self._turn_index_by_conversation.get(conversation, 0) + 1
+        self._turn_index_by_conversation[conversation] = turn
         message_token = _CURRENT_USER_MESSAGE.set(self._last_user_content(payload))
         op_token = _CURRENT_OPERATION_ID.set(operation_id)
         write_token = WRITE_OPERATION_ID.set(operation_id)
-        turn_token = WRITE_TURN_INDEX.set(self._turn_index)
+        turn_token = WRITE_TURN_INDEX.set(turn)
         try:
             return self._agent.invoke(payload, **kwargs)
         finally:
@@ -928,11 +978,14 @@ class _SupervisorRunner:
 
     def stream(self, payload: Any, **kwargs: Any) -> Any:
         operation_id = self._next_operation_id()
-        self._turn_index += 1
+        from fixed.session_scope import current_session_scope
+        conversation = current_session_scope()
+        turn = self._turn_index_by_conversation.get(conversation, 0) + 1
+        self._turn_index_by_conversation[conversation] = turn
         message_token = _CURRENT_USER_MESSAGE.set(self._last_user_content(payload))
         op_token = _CURRENT_OPERATION_ID.set(operation_id)
         write_token = WRITE_OPERATION_ID.set(operation_id)
-        turn_token = WRITE_TURN_INDEX.set(self._turn_index)
+        turn_token = WRITE_TURN_INDEX.set(turn)
         try:
             yield from self._agent.stream(payload, **kwargs)
         finally:

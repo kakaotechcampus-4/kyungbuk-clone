@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 from fixed.config import CONFIG
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
+from fixed.schedule_decision import parse_time_minutes
 from fixed.session_scope import current_session_scope
 from fixed.app_store import AppSQLiteStore
 from student_parts.week01_wake_up_nana import (
@@ -41,19 +42,41 @@ WRITE_TURN_INDEX: ContextVar[int] = ContextVar("kanana_write_turn_index", defaul
 # 대화별로 "중복 내용 저장을 경고한 기록"(content_key → 경고한 op_id)을 남긴다.
 # 같은 내용의 일정이 이미 있으면 바로 저장하지 않고 사용자 확인을 유도하고,
 # 사용자가 답한 다음 턴(다른 op)에서 같은 내용이 다시 오면 확인된 것으로 보고 저장한다.
-# content_key → (경고한 op_id, 경고한 턴 순번)
-_DUPLICATE_WARNED: dict[str, dict[tuple[Any, ...], tuple[str, int]]] = {}
+# 확인 대기 장부: content/작업 key → (경고한 op_id, 경고한 턴 순번).
+# 저장 중복·시간 겹침·복수 삭제·공유 등록 중복이 모두 이 창구를 쓴다 —
+# "바로 다음 턴에 같은 요청이 다시 오면 사용자가 확인한 것"이라는 단일 규칙.
+_SAVE_WARNED: dict[str, dict[tuple[Any, ...], tuple[str, int]]] = {}
 
 
 def has_fresh_duplicate_confirmation(session_id: str, current_turn: int) -> bool:
-    """이 대화에 '바로 이전 턴에 발행된 중복 확인 경고'가 있는지 알려줍니다.
+    """이 대화에 '바로 이전 턴에 발행된 확인 경고'가 있는지 알려줍니다.
 
     Week 6 wrapper의 재실행 게이트가 확인 턴의 재위임을 통과시킬지 판단할 때 쓴다.
     유효 기간을 다음 턴 하나로 한정해, 사용자가 확인을 거절한 뒤 한참 지나
     발생하는 재전송까지 통과되는 일을 막는다.
     """
 
-    return any(turn == current_turn - 1 for _, turn in _DUPLICATE_WARNED.get(session_id, {}).values())
+    return any(turn == current_turn - 1 for _, turn in _SAVE_WARNED.get(session_id, {}).values())
+
+
+def consume_write_confirmation(key: tuple[Any, ...]) -> bool:
+    """경고했던 작업이 '바로 다음 턴(다른 op)'에 다시 요청됐는지 확인하고 소비합니다."""
+
+    warned = _SAVE_WARNED.get(current_session_scope(), {})
+    entry = warned.get(key)
+    if entry and entry[0] != WRITE_OPERATION_ID.get() and WRITE_TURN_INDEX.get() == entry[1] + 1:
+        warned.pop(key, None)
+        return True
+    return False
+
+
+def mark_write_warning(key: tuple[Any, ...]) -> None:
+    """확인이 필요한 작업을 현재 op·턴과 함께 경고 장부에 기록합니다."""
+
+    _SAVE_WARNED.setdefault(current_session_scope(), {})[key] = (
+        WRITE_OPERATION_ID.get(),
+        WRITE_TURN_INDEX.get(),
+    )
 
 # Week 1의 임시 메모리와 달리, Week 3부터 일정은 앱 SQLite DB에 남는다는 점을 모델에게 알려준다.
 SQLITE_MEMORY_PROMPT = (
@@ -328,31 +351,21 @@ def save_structured_request_payload(
                     request_id=row.get("request_id"),
                     note="같은 요청(operation)에서 이미 저장된 내용이라 다시 저장하지 않았습니다.",
                 )
-        # 다른 턴에서 온 동일 내용 저장: 실수(중복)일 수 있으므로 바로 저장하지 않고
-        # 한 번 경고해 사용자 확인을 유도한다. 경고를 받은 뒤 사용자가 답한 새 턴(다른
-        # op)에서 같은 내용이 다시 오면 의도된 별개 일정로 보고 저장한다.
-        if payload.get("kind") in ("personal_schedule", "group_schedule") and payload.get("date") and payload.get("title"):
-            same_content = [
-                schedule
-                for schedule in (store or _store()).list_schedules(
-                    date_from=payload["date"], date_to=payload["date"]
-                )
-                if schedule.get("title") == payload.get("title")
-                and (schedule.get("start_time") or None) == (payload.get("start_time") or None)
-            ]
-            if same_content:
-                content_key = (payload.get("kind"), payload.get("title"), payload.get("date"), payload.get("start_time"))
-                warned = _DUPLICATE_WARNED.setdefault(current_session_scope(), {})
-                warned_entry = warned.get(content_key)
-                current_turn = WRITE_TURN_INDEX.get()
-                # 확인은 경고 바로 다음 턴에서만 유효하다. 처음이거나, 같은 턴의 재시도거나,
-                # 다음 턴을 지나쳐 한참 뒤에 온 동일 내용이면 다시 경고한다.
-                if (
-                    warned_entry is None
-                    or warned_entry[0] == operation_id
-                    or current_turn != warned_entry[1] + 1
-                ):
-                    warned[content_key] = (operation_id, current_turn)
+        # 다른 턴에서 온 동일/겹침 내용 저장: 실수일 수 있으므로 바로 저장하지 않고
+        # 한 번 경고해 사용자 확인을 유도한다. 확인(경고 바로 다음 턴의 같은 내용 재요청)이
+        # 소비되면 검사 없이 저장한다.
+        content_key = ("save", payload.get("kind"), payload.get("title"), payload.get("date"), payload.get("start_time"))
+        if not consume_write_confirmation(content_key):
+            active_store = store or _store()
+            if payload.get("kind") in ("personal_schedule", "group_schedule") and payload.get("date") and payload.get("title"):
+                rows = active_store.list_schedules(date_from=payload["date"], date_to=payload["date"])
+                same_content = [
+                    row for row in rows
+                    if row.get("title") == payload.get("title")
+                    and (row.get("start_time") or None) == (payload.get("start_time") or None)
+                ]
+                if same_content:
+                    mark_write_warning(content_key)
                     return tool_result(
                         "save_structured_request",
                         duplicate_warning=True,
@@ -363,7 +376,53 @@ def save_structured_request_payload(
                             "사용자가 맞다고 확인하면 같은 내용으로 다시 저장을 요청하세요."
                         ),
                     )
-                warned.pop(content_key, None)
+                # 같은 날짜에서 시간 구간이 겹치는 다른 일정(리뷰 질문 2의 겹침 케이스).
+                # 시작·종료가 양쪽 모두 있을 때만 판정하고, 겹침은 금지가 아니라 확인 대상이다
+                # (연속 회의·더블부킹처럼 의도적 겹침이 있을 수 있다).
+                new_start, new_end = payload.get("start_time"), payload.get("end_time")
+                if new_start and new_end and str(new_end).strip() not in ("", "미정"):
+                    start_a = parse_time_minutes(new_start, -1)
+                    end_a = parse_time_minutes(new_end, -1)
+                    conflicts = []
+                    for row in rows:
+                        row_start, row_end = row.get("start_time"), row.get("end_time")
+                        if not row_start or not row_end or str(row_end).strip() in ("", "미정"):
+                            continue
+                        start_b = parse_time_minutes(row_start, -2)
+                        end_b = parse_time_minutes(row_end, -2)
+                        if start_a < end_b and start_b < end_a:
+                            conflicts.append(row)
+                    if conflicts:
+                        mark_write_warning(content_key)
+                        return tool_result(
+                            "save_structured_request",
+                            overlap_warning=True,
+                            conflicting_schedules=conflicts,
+                            note=(
+                                "같은 시간대에 이미 다른 일정이 있어 저장하지 않았습니다. "
+                                "사용자에게 겹치는 일정을 알리고 그래도 저장할지 확인 질문으로 답하세요. "
+                                "사용자가 확인하면 같은 내용으로 다시 저장을 요청하세요."
+                            ),
+                        )
+            elif payload.get("kind") in ("todo", "reminder") and payload.get("title"):
+                same_requests = [
+                    row for row in active_store.list_saved_requests(
+                        kind=payload["kind"], date_from=payload.get("date"), date_to=payload.get("date")
+                    )
+                    if row.get("title") == payload.get("title")
+                ]
+                if same_requests:
+                    mark_write_warning(content_key)
+                    return tool_result(
+                        "save_structured_request",
+                        duplicate_warning=True,
+                        existing_request=same_requests[0],
+                        note=(
+                            "같은 제목의 기록이 이미 저장되어 있어 저장하지 않았습니다. "
+                            "사용자에게 알리고 별개의 항목이 맞는지 확인 질문으로 답하세요. "
+                            "맞다고 확인하면 같은 내용으로 다시 저장을 요청하세요."
+                        ),
+                    )
     # original_text의 빈 문자열도 시간 필드의 "미정"처럼 "모르는 값" sentinel이므로 같이 뺀다.
     # (LLM이 extract를 건너뛰고 save를 직접 불러도 ""가 원문 자리에 저장되지 않게 한다.
     #  Week 4부터 raw_json이 검색 대상이라 빈 원문이 저장 품질 문제가 된다.)
@@ -438,6 +497,25 @@ def _delete_saved_schedules(
         "time_unspecified": time_unspecified,
         "delete_all": delete_all,
     }
+    # 복수 건 삭제는 바로 지우지 않고 한 번 확인을 구한다(앱 검증에서 '방금 거 삭제'가
+    # 유사 일정 2건을 한 번에 지운 관측). 확인(다음 턴 같은 대상 재요청) 후 삭제한다.
+    # op 미설정(Week 3~5 단독)이면 기존 동작 그대로다.
+    if WRITE_OPERATION_ID.get() and schedule_ids and len(schedule_ids) >= 2 and not delete_all:
+        delete_key = ("delete", tuple(sorted(schedule_ids)))
+        if not consume_write_confirmation(delete_key):
+            mark_write_warning(delete_key)
+            return tool_result(
+                "personal_delete_saved_schedules",
+                pending_confirmation=True,
+                target_schedule_ids=sorted(schedule_ids),
+                deleted_count=0,
+                deleted=[],
+                note=(
+                    f"삭제 대상이 {len(schedule_ids)}건이라 바로 삭제하지 않았습니다. "
+                    "사용자에게 대상 목록을 보여주고 모두 삭제할지 확인 질문으로 답하세요. "
+                    "확인되면 같은 대상으로 다시 삭제를 요청하세요."
+                ),
+            )
     # 조건이 하나도 없으면 실수로 전체 일정이 지워지는 것을 막는다.
     has_filter = bool(schedule_ids) or bool(date) or bool(title) or bool(start_time) or time_unspecified
     if not delete_all and not has_filter:

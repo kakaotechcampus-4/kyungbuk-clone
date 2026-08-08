@@ -30,6 +30,11 @@ from fixed.runtime_clock import current_app_date_iso
 from fixed.session_scope import DEFAULT_SESSION_SCOPE, current_session_scope
 from student_parts.week01_wake_up_nana import PERSONAL_SCHEDULES, join_system_prompt
 from student_parts.week02_structure_natural_language_requests import StructuredRequest
+from student_parts.week03_build_nanas_logbook import (
+    WRITE_OPERATION_ID,
+    consume_write_confirmation,
+    mark_write_warning,
+)
 from student_parts.week04_retrieve_nanas_memory import (
     WEEK04_SEARCH_SOURCES,
     week04_prompt_parts,
@@ -650,6 +655,38 @@ def create_shared_schedule(
     schedule_id: str | None = None,
 ) -> str:
     """외부 MCP 공유 일정 저장소에 일정을 등록하거나 갱신합니다."""
+
+    # 같은 내용의 공유 일정 직접 등록도 저장과 같은 확인 창을 쓴다(중복 등록 방지).
+    # op 미설정(Week 5 단독)이면 기존 동작 그대로다.
+    if WRITE_OPERATION_ID.get():
+        shared_key = ("shared", member_name, title, date, start_time)
+        if not consume_write_confirmation(shared_key):
+            listed = _parse_mcp_payload(
+                "list_shared_schedules",
+                _call_mcp_or_soft_fail(
+                    "list_shared_schedules",
+                    {"member_names": [member_name], "date_from": date, "date_to": date, "limit": 50},
+                ),
+            )
+            same_shared = [
+                row for row in (listed.get("rows") or [])
+                if row.get("title") == title and (row.get("start_time") or "미정") == (start_time or "미정")
+            ]
+            if same_shared:
+                mark_write_warning(shared_key)
+                return json_payload(
+                    {
+                        "ok": True,
+                        "tool_name": "create_shared_schedule",
+                        "duplicate_warning": True,
+                        "existing_shared_schedule": same_shared[0],
+                        "note": (
+                            "같은 내용의 공유 일정이 이미 등록되어 있어 등록하지 않았습니다. "
+                            "사용자에게 알리고 별개로 또 등록할지 확인 질문으로 답하세요. "
+                            "확인되면 같은 내용으로 다시 등록을 요청하세요."
+                        ),
+                    }
+                )
 
     # schedule_id/source_conversation_id를 보존해 넘겨야 나중에 같은 복사본을 수정/삭제할 수 있다.
     return _call_mcp_or_soft_fail(
