@@ -1,8 +1,3 @@
-from chromadb.utils import sparse_embedding_utils
-from chromadb.utils import sparse_embedding_utils
-from chromadb.utils import sparse_embedding_utils
-from chromadb.utils import sparse_embedding_utils
-from chromadb.utils import sparse_embedding_utils
 from __future__ import annotations
 
 import json
@@ -271,6 +266,7 @@ def supervisor_system_prompt() -> str:
             *week06_prompt_parts(),
             # TODO: supervisor 실행 역할에 필요한 최종 system prompt를 자유롭게 추가하세요.
             #   - 반드시 nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답하게 합니다.
+            "Supervisor의 최종 답변은 반드시 아래 규칙을 따른다.\n\n"
             "3. 최종 답변 작성 및 규칙\n"
             "- 반드시 `nana_agent` 또는 `kana_agent` 위임 도구를 호출하고, 수신한 결과만을 근거로 답변하라.\n"
             "- 위임 도구 호출 없이 임의로 결과를 추측하거나 지어내어 답변하지 마라.\n"
@@ -295,15 +291,27 @@ def extract_langchain_trace(result: dict[str, Any]) -> dict[str, Any]:
     for event in events:
         if event.get("event") == "tool_call" and event.get("tool_name") in {"nana_agent", "kana_agent"}:
             selected_agent = event["tool_name"]
+
         content = event.get("content")
+        parsed_content: dict[str, Any] | None = None
         if isinstance(content, dict):
-            inner_tool_names.extend(content.get("inner_tool_names") or [])
-            if content.get("final_slot_payload"):
-                final_slot_payload = content["final_slot_payload"]
-            elif "final_slot" in content:
-                final_slot_payload = content
-            if content.get("final_decision_payload"):
-                final_decision_payload = content["final_decision_payload"]
+            parsed_content = content
+        elif isinstance(content, str):
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, dict):
+                    parsed_content = parsed
+            except (json.JSONDecodeError, TypeError):
+                parsed_content = None
+
+        if parsed_content:
+            inner_tool_names.extend(parsed_content.get("inner_tool_names") or [])
+            if parsed_content.get("final_slot_payload"):
+                final_slot_payload = parsed_content["final_slot_payload"]
+            elif "final_slot" in parsed_content:
+                final_slot_payload = parsed_content
+            if parsed_content.get("final_decision_payload"):
+                final_decision_payload = parsed_content["final_decision_payload"]
 
     return {
         "events": events,
@@ -470,8 +478,6 @@ def kana_tools() -> list[Any]:
         extract_schedules_from_history,
         list_shared_schedules,
         collect_member_schedules,
-        find_common_available_slots,
-        decide_final_slot,
     ]
 
 
@@ -577,16 +583,17 @@ def kana_agent(query: str) -> str:
     for event in events:
         content = event.get("content")
         parsed_content: dict[str, Any] | None = None
-
-        if isinstance(content, str):
-            try:
-                parsed_content = json.loads(content)
-            except Exception:
-                parsed_content = None
-        elif isinstance(content, dict):
+        if isinstance(content, dict):
             parsed_content = content
-        
-        if isinstance(parsed_content, dict):
+        elif isinstance(content, str):
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, dict):
+                    parsed_content = parsed
+            except (json.JSONDecodeError, TypeError):
+                parsed_content = None
+
+        if parsed_content:
             if "final_slot_payload" in parsed_content:
                 final_slot_payload = parsed_content["final_slot_payload"]
             elif "final_slot" in parsed_content:
