@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextvars import ContextVar
 from typing import Any
 
 from langchain.agents import create_agent
@@ -26,6 +27,13 @@ from student_parts.week02_structure_natural_language_requests import (
 
 
 _WEEK03_AGENT: Any | None = None
+
+# 현재 사용자 요청(operation)의 ID. Week 6 supervisor runner가 턴마다 코드로 발급해
+# 설정한다 — LLM이 인자로 넘기게 하면 프롬프트 의존이 되므로 tool 스키마에는 넣지 않고,
+# 저장 helper가 이 값을 payload에 찍어 raw_json으로 영속시킨다(6주차 리뷰 반영:
+# "최종 쓰기 Tool이 그 ID를 저장해 중복 여부를 판단"). 값이 비어 있으면(Week 3~5 단독
+# 실행) 아무 동작도 바뀌지 않는다.
+WRITE_OPERATION_ID: ContextVar[str] = ContextVar("kanana_write_operation_id", default="")
 
 # Week 1의 임시 메모리와 달리, Week 3부터 일정은 앱 SQLite DB에 남는다는 점을 모델에게 알려준다.
 SQLITE_MEMORY_PROMPT = (
@@ -282,6 +290,24 @@ def save_structured_request_payload(
     save_input = _save_input_from(request)
     # 모르는 값(None)은 raw_json에 null로 남기지 않고 아예 뺀다.
     payload = save_input.model_dump(exclude_none=True)
+    # 같은 operation(사용자 요청 1건)이 같은 내용을 두 번 저장하는 것을 tool 계층에서 막는다.
+    # raw_json에 남은 operation_id를 LIKE로 되찾아(op는 uuid라 오검색 없음) 내용까지 같으면
+    # 새로 저장하지 않고 already_executed로 답한다 — 재시작해도 유지되는 영속 멱등성이다.
+    operation_id = WRITE_OPERATION_ID.get().strip()
+    if operation_id:
+        payload["operation_id"] = operation_id
+        for row in (store or _store()).search_saved_requests(operation_id, limit=10):
+            try:
+                existing = json.loads(row.get("raw_json") or "{}")
+            except json.JSONDecodeError:
+                continue
+            if all(existing.get(key) == payload.get(key) for key in ("kind", "title", "date", "start_time")):
+                return tool_result(
+                    "save_structured_request",
+                    already_executed=True,
+                    request_id=row.get("request_id"),
+                    note="같은 요청(operation)에서 이미 저장된 내용이라 다시 저장하지 않았습니다.",
+                )
     # original_text의 빈 문자열도 시간 필드의 "미정"처럼 "모르는 값" sentinel이므로 같이 뺀다.
     # (LLM이 extract를 건너뛰고 save를 직접 불러도 ""가 원문 자리에 저장되지 않게 한다.
     #  Week 4부터 raw_json이 검색 대상이라 빈 원문이 저장 품질 문제가 된다.)

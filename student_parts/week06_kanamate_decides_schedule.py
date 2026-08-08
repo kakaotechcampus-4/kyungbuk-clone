@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from contextvars import ContextVar
 from typing import Any
 
@@ -19,6 +20,7 @@ from fixed.schedule_decision import (
     normalize_date_bound,
 )
 from student_parts.week01_wake_up_nana import join_system_prompt
+from student_parts.week03_build_nanas_logbook import WRITE_OPERATION_ID
 from student_parts.week02_structure_natural_language_requests import extract_schedule_request
 from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week04_tools
 from student_parts.week05_load_kanas_past_conversations import (
@@ -882,11 +884,11 @@ class _SupervisorRunner:
 
     def __init__(self, agent: Any) -> None:
         self._agent = agent
-        self._operation_seq = 0
 
-    def _next_operation_id(self) -> str:
-        self._operation_seq += 1
-        return f"op_{self._operation_seq}"
+    @staticmethod
+    def _next_operation_id() -> str:
+        # 재시작 후에도 과거 영속 기록과 충돌하지 않도록 전역 고유 ID를 쓴다.
+        return f"op_{uuid.uuid4().hex[:12]}"
 
     @staticmethod
     def _last_user_content(payload: Any) -> str:
@@ -897,20 +899,26 @@ class _SupervisorRunner:
         return str(getattr(last, "content", "") or "")
 
     def invoke(self, payload: Any, **kwargs: Any) -> Any:
+        operation_id = self._next_operation_id()
         message_token = _CURRENT_USER_MESSAGE.set(self._last_user_content(payload))
-        op_token = _CURRENT_OPERATION_ID.set(self._next_operation_id())
+        op_token = _CURRENT_OPERATION_ID.set(operation_id)
+        write_token = WRITE_OPERATION_ID.set(operation_id)
         try:
             return self._agent.invoke(payload, **kwargs)
         finally:
+            WRITE_OPERATION_ID.reset(write_token)
             _CURRENT_OPERATION_ID.reset(op_token)
             _CURRENT_USER_MESSAGE.reset(message_token)
 
     def stream(self, payload: Any, **kwargs: Any) -> Any:
+        operation_id = self._next_operation_id()
         message_token = _CURRENT_USER_MESSAGE.set(self._last_user_content(payload))
-        op_token = _CURRENT_OPERATION_ID.set(self._next_operation_id())
+        op_token = _CURRENT_OPERATION_ID.set(operation_id)
+        write_token = WRITE_OPERATION_ID.set(operation_id)
         try:
             yield from self._agent.stream(payload, **kwargs)
         finally:
+            WRITE_OPERATION_ID.reset(write_token)
             _CURRENT_OPERATION_ID.reset(op_token)
             _CURRENT_USER_MESSAGE.reset(message_token)
 
