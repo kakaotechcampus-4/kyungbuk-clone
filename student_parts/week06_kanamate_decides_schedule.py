@@ -200,10 +200,13 @@ def week06_prompt_parts() -> list[str]:
         f"""Week 6 supervisor 위임 규칙:
 - 오늘 날짜: {current_app_date_iso()}
 - 당신은 직접 일정을 만들거나 검색하지 않습니다. 반드시 nana_agent 또는 kana_agent 중 하나에게 위임합니다.
-- 개인 일정 생성/조회/수정/삭제, 할 일·알림 저장, 개인 참고자료·앱 대화 RAG 요청은 nana_agent에게 위임합니다.
-- 외부 멤버와의 일정 조율, 그룹 회의 시간 찾기, 공유 일정 저장소 조회 요청은 kana_agent에게 위임합니다.
+- 위임 기준은 "개인/그룹"이 아니라 "시간이 이미 정해졌는지"입니다.
+  - 시간이 이미 확정된 일정 생성/조회/수정/삭제(참석자가 여러 명이어도), 할 일·알림 저장, 개인 참고자료·앱 대화 RAG 요청은 nana_agent에게 위임합니다.
+  - 시간을 아직 못 정해서 조율이 필요하거나, 외부 멤버의 일정·이전 대화·공유 일정 저장소를 조회해야 하면 kana_agent에게 위임합니다.
 - 요청이 둘 다 걸쳐 있으면 필요한 하위 agent를 순서대로 여러 번 호출합니다.
-- 하위 agent가 돌려준 answer만 근거로 최종 답변을 작성하고, 직접 새로운 사실을 추가하지 않습니다.""",
+- "그 시간", "아까 그 일정"처럼 대화 맥락에 의존하는 표현을 하위 agent에게 그대로 넘기지 마세요. 하위 agent는 매 호출마다 이번 query 한 줄만 보고 이전 대화나 이전 호출 결과를 기억하지 못합니다. 위임하기 전에 날짜·시간·이름 등 구체적인 값을 채워 자기완결적인 문장으로 만들어 전달하세요.
+- kana_agent의 answer(자유 텍스트)와 final_slot_payload(구조화된 결과)가 서로 다르게 말하면 final_slot_payload를 기준으로 판단하세요. answer는 hallucination이 섞일 수 있지만 final_slot_payload는 실제로 검증·기록된 값입니다.
+- 하위 agent가 돌려준 결과만 근거로 최종 답변을 작성하고, 직접 새로운 사실을 추가하지 않습니다.""",
     ]
 
 
@@ -387,16 +390,20 @@ def find_common_available_slots_dict(
     normalized_date_from = normalize_date_bound(date_from)
     normalized_date_to = normalize_date_bound(date_to)
 
+    # busy_rows 수집과 최종 payload의 members는 항상 같은 대상("나" 포함)을 가리켜야 한다.
+    # member_names가 비어 있어(내 일정만 조회) 있어도 결과에 "나"가 조회 대상으로 남아야 한다.
+    members_with_me = ["나", *normalized_members]
+
     if busy_rows is None:
         collected = json.loads(collect_member_schedules.invoke({
-            "member_names": ["나", *normalized_members],
+            "member_names": members_with_me,
             "date_from": normalized_date_from,
             "date_to": normalized_date_to,
         }))
         busy_rows = collected.get("rows", [])
 
     return find_common_available_slots_payload(
-        member_names=normalized_members,
+        member_names=members_with_me,
         date_from=normalized_date_from,
         date_to=normalized_date_to,
         busy_rows=busy_rows,
@@ -558,15 +565,21 @@ def kana_agent(query: str) -> str:
             system_prompt=kana_system_prompt(),
         )
     result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    events = extract_agent_events(result)
     trace = extract_langchain_trace(result)
     answer = extract_final_text(result)
+    # extract_langchain_trace의 inner_tool_names는 nana_agent/kana_agent처럼 자기 결과 JSON에
+    # inner_tool_names를 이미 담아 반환하는 tool을 위한 것이라, Kana 자신이 직접 호출한
+    # collect_member_schedules/find_common_available_slots 같은 tool은 잡히지 않는다.
+    # Kana 자신의 tool 사용 목록은 events에서 직접 뽑는다.
+    inner_tool_names = _tool_call_names(events)
     return json.dumps({
         "ok": True,
         "tool_name": "kana_agent",
         "selected_agent": "kana_agent",
         "answer": answer,
         "trace": trace,
-        "inner_tool_names": trace["inner_tool_names"],
+        "inner_tool_names": inner_tool_names,
         "final_slot_payload": trace["final_slot_payload"],
         "final_decision_payload": trace["final_decision_payload"],
     }, ensure_ascii=False)

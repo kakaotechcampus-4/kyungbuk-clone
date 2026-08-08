@@ -296,20 +296,36 @@ def _my_schedule_notes(request: StructuredRequest) -> str:
     return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
 
 
+def _end_times_compatible(a: str | None, b: str | None) -> bool:
+    """두 end_time이 "같은 일정"으로 봐도 되는지 비교합니다.
+
+    앱 DB 경로와 공유 저장소 경로가 "미정"/빈 값을 서로 다르게 다듬기 때문에, 둘 중
+    하나라도 불명확하면(비어 있거나 "미정") 값이 달라도 같은 일정으로 봐줍니다. 둘 다
+    명확한 값이면 정확히 같아야만 같은 일정으로 봅니다 — 그래야 같은 시각에 시작하지만
+    실제로 길이가 다른 별개의 일정(예: 10:00 시작 1시간 회의 vs 2시간 회의)을 하나로
+    합쳐버리지 않습니다.
+    """
+
+    a, b = str(a or "").strip(), str(b or "").strip()
+    if not a or not b or a == "미정" or b == "미정":
+        return True
+    return a == b
+
+
 def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """같은 일정이 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다.
 
     앱 DB에 저장된 내 일정은 공유 저장소에도 자동 동기화되므로, member_names에 "나"가
-    들어온 호출에서는 같은 일정이 두 경로로 들어옵니다. 앞에 오는 앱 DB row를 남깁니다.
+    들어온 호출에서는 같은 일정이 두 경로로 들어옵니다. 먼저 들어온(앱 DB) row를 남깁니다.
 
     두 경로가 같은 일정을 서로 다르게 다듬기 때문에 값을 그대로 비교하면 안 됩니다.
       - 공유 저장소는 제목에서 소괄호를 지우고 공백을 하나로 줄입니다. 앱 DB는 원문을 둡니다.
-      - 앱 DB 경로만 end_time "미정"을 "18:00"으로 바꿉니다. 그래서 end_time은 키에서 뺍니다.
-        같은 사람이 같은 날 같은 시각에 시작하는 같은 제목의 일정은 하나로 봅니다.
       - start_time이 비어 있으면 공유 저장소는 "미정"으로 저장하므로 같은 값으로 맞춥니다.
+      - end_time은 그대로 키에 넣지 않고 _end_times_compatible(...)로 호환 여부만 비교합니다.
+        (member_name, date, start_time, title)까지 같은 그룹 안에서만 end_time 호환성을 봅니다.
     """
 
-    deduped: dict[tuple[str, ...], dict[str, Any]] = {}
+    groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
     for row in rows:
         key = (
             str(row.get("member_name") or "").strip(),
@@ -317,8 +333,19 @@ def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             str(row.get("start_time") or "").strip() or "미정",
             strip_parenthetical_text(str(row.get("title") or "")),
         )
-        deduped.setdefault(key, row)
-    return list(deduped.values())
+        groups.setdefault(key, []).append(row)
+
+    deduped: list[dict[str, Any]] = []
+    for group_rows in groups.values():
+        kept: list[dict[str, Any]] = []
+        for row in group_rows:
+            is_duplicate = any(
+                _end_times_compatible(row.get("end_time"), existing.get("end_time")) for existing in kept
+            )
+            if not is_duplicate:
+                kept.append(row)
+        deduped.extend(kept)
+    return deduped
 
 
 def _collect_member_schedules(
