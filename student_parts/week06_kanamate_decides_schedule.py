@@ -257,6 +257,10 @@ def kana_prompt_parts() -> list[str]:
         decide_final_slot을 반드시 호출하되, final_slot과 selected_index는 비워두고
         needs_agent_selection을 true로, reason에는 공통 가능 시간이 없었던 이유를
         사용자에게 설명할 문구를 담아 호출하세요.
+
+        list_shared_schedules를 필터 없이 호출하면 실습용 기본 공유 일정이
+        반환되니, 내가 등록한 공유 일정을 확인할 때는 member_names에 "나"를
+        포함하고 date_from/date_to도 함께 지정하세요.
         """,
     ]
 
