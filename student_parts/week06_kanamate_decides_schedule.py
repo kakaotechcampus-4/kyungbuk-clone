@@ -251,6 +251,12 @@ def kana_prompt_parts() -> list[str]:
         decide_final_slot까지 이어서 호출해야 최종 확정이 끝납니다.
         두 tool은 후보나 최종 시간을 대신 계산해주지 않으니, busy_rows를
         읽고 겹치지 않는 시간을 당신이 골라야 합니다.
+
+        공통 가능 시간을 하나도 찾지 못했다면(find_common_available_slots 결과의
+        candidate_slots가 비어있다면) 자연어 답변만으로 끝내지 마세요. 이 경우에도
+        decide_final_slot을 반드시 호출하되, final_slot과 selected_index는 비워두고
+        needs_agent_selection을 true로, reason에는 공통 가능 시간이 없었던 이유를
+        사용자에게 설명할 문구를 담아 호출하세요.
         """,
     ]
 
