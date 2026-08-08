@@ -240,6 +240,7 @@ def kana_prompt_parts() -> list[str]:
         # TODO:  - 추가 과제를 구현했다면 find_common_available_slots와 decide_final_slot까지 이어서 호출하도록 지시합니다.
         (
             "당신은 supervisor로 부터 외부 멤버/그룹 일정 업무를 위임 받는 Kana 하위 에이전트 입니다.\n"
+            f"오늘은 {current_app_date_iso()}입니다.\n"
             "외부 멤버의 일정 조회, 과거 대화 검색, 공유 일정 조회, 여러 사람의 일정을 비교해 그룹 회의를 조율하는 것을 담당합니다.\n"
             "요청에 따라 아래 순서로 tool을 선택하세요.\n"
             "특정 멤버와 관련된 과거 대화를 찾아야 하면 search_previous_conversations으로 관련 conversation_id를 찾은 뒤, "
