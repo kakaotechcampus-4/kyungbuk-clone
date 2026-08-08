@@ -292,8 +292,9 @@ def supervisor_system_prompt() -> str:
             답변하기 전에 반드시 nana_agent 또는 kana_agent 중 하나를 먼저 호출하세요.
             위임 없이 스스로 추측해 답하지 않습니다. 최종 답변은 호출한 하위 agent가
             돌려준 결과만 근거로 작성하고, 하위 agent가 답하지 않은 내용을 임의로
-            덧붙이지 않습니다. 한 요청에 개인 업무와 그룹 조율이 모두 필요하면 두
-            agent를 순서대로 호출한 뒤 각각의 결과를 종합해 답합니다.
+            덧붙이지 않습니다. "한 요청에 그룹 조율과 개인 업무가 모두 필요하면, 
+            kana_agent로 그룹 일정을 먼저 조율하고, 그 결과를 바탕으로 개인 업무 위임이 
+            추가로 필요한지 판단해 필요한 경우에만 nana_agent를 호출하세요.
             """,
         ]
     )
@@ -456,7 +457,7 @@ def find_common_available_slots_dict(
         busy_rows = collected.get("rows")
 
     return find_common_available_slots_payload(
-        member_names=["나",*normalized_members],
+        member_names=list(dict.fromkeys(["나",*normalized_members])),
         date_from=normalized_date_from,
         date_to=normalized_date_to,
         busy_rows=busy_rows,
@@ -631,15 +632,18 @@ def kana_agent(query: str) -> str:
     events = extract_agent_events(result)
     inner_tool_names = _tool_call_names(events)
 
-    final_slot_paylod = None
+    final_slot_payload = None
     final_decision_payload = None
     for event in events:
-        if event.get("event") == "tool_result" :
-            content = event.get("content")
-            if isinstance(content,dict) and "final_slot" in content:
-                final_slot_paylod = content
-            if isinstance(content, dict) and "final_decision" in content:
-                final_decision_payload = content.get("final_decision")
+        if event.get("event") != "tool_result":
+            continue
+        content = event.get("content")
+        if not isinstance(content, dict):
+            continue
+        if "final_slot" in content:
+            final_slot_payload = content
+        elif "final_decision" in content:
+            final_decision_payload = content.get("final_decision")
 
     return json.dumps({
         "ok" : True,
@@ -647,7 +651,7 @@ def kana_agent(query: str) -> str:
         "answer" : answer,
         "trace" : {"events" : events},
         "inner_tool_names" : inner_tool_names,
-        "final_slot_payload" : final_slot_paylod,
+        "final_slot_payload" : final_slot_payload,
         "final_decision_payload" : final_decision_payload
     }, ensure_ascii=False)
 
