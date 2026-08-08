@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Any
 
@@ -386,27 +387,51 @@ def _my_schedule_notes(request: StructuredRequest) -> str:
     return f"Nana 그룹 일정 - 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
 
 
+def _row_request_identity(row: dict[str, Any]) -> str:
+    """row가 어느 앱 요청(request)에서 왔는지 안정적 식별자를 뽑습니다.
+
+    앱 DB row는 request_id를 직접 갖고, 공유 저장소 동기화 row는
+    source_conversation_id("app:req_x" / "group:req_x:이름") 안에 같은 request_id를
+    담는다. 이 값이 같으면 두 경로로 들어온 같은 일정이다.
+    """
+
+    request_id = str(row.get("request_id") or "").strip()
+    if request_id:
+        return request_id
+    match = re.search(r"(req_[0-9a-f]+)", str(row.get("source_conversation_id") or ""))
+    return match.group(1) if match else ""
+
+
 def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """같은 일정이 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다.
 
     앱 DB에 저장된 내 일정은 공유 저장소에도 자동 동기화되므로, member_names에 "나"가
     들어온 호출에서는 같은 일정이 두 경로로 들어옵니다. 앞에 오는 앱 DB row를 남깁니다.
 
-    두 경로가 같은 일정을 서로 다르게 다듬기 때문에 값을 그대로 비교하면 안 됩니다.
+    리뷰 반영: 값 비교(fuzzy key)만 쓰면 같은 사람의 같은 시각에 잡힌 "회의 (A팀)"과
+    "회의 (B팀)"처럼 별개의 정상 일정까지 괄호 제거 후 하나로 합쳐질 수 있다.
+    그래서 안정적 식별자(request_id — 앱 row의 컬럼, 공유 row의 source_conversation_id
+    안에 동일 값)가 있으면 그것으로만 중복을 판정하고, 식별자를 연결할 수 없는
+    row들 사이에서만 fuzzy key(제목 정리·시작 시각)를 fallback으로 쓴다.
       - 공유 저장소는 제목에서 소괄호를 지우고 공백을 하나로 줄입니다. 앱 DB는 원문을 둡니다.
-      - 앱 DB 경로만 end_time "미정"을 "18:00"으로 바꿉니다. 그래서 end_time은 키에서 뺍니다.
-        같은 사람이 같은 날 같은 시각에 시작하는 같은 제목의 일정은 하나로 봅니다.
+      - 앱 DB 경로만 end_time "미정"을 "18:00"으로 바꾸므로 end_time은 fuzzy key에서 뺍니다.
       - start_time이 비어 있으면 공유 저장소는 "미정"으로 저장하므로 같은 값으로 맞춥니다.
     """
 
     deduped: dict[tuple[str, ...], dict[str, Any]] = {}
     for row in rows:
-        key = (
-            str(row.get("member_name") or "").strip(),
-            str(row.get("date") or "").strip(),
-            str(row.get("start_time") or "").strip() or "미정",
-            strip_parenthetical_text(str(row.get("title") or "")),
-        )
+        member = str(row.get("member_name") or "").strip()
+        identity = _row_request_identity(row)
+        if identity:
+            key = (member, "req", identity)
+        else:
+            key = (
+                member,
+                "fuzzy",
+                str(row.get("date") or "").strip(),
+                str(row.get("start_time") or "").strip() or "미정",
+                strip_parenthetical_text(str(row.get("title") or "")),
+            )
         deduped.setdefault(key, row)
     return list(deduped.values())
 
@@ -457,17 +482,21 @@ def _collect_member_schedules(
             normalized_to and request.date > normalized_to
         ):
             continue
-        rows.append(
-            {
-                "member_name": PERSONAL_SHARED_MEMBER_NAME,
-                "title": request.title or "제목 없음",
-                "date": request.date,
-                "start_time": request.start_time,
-                "end_time": request.end_time,
-                # 그룹 일정이면 참석자까지 설명해, LLM이 조율 근거로 읽을 수 있게 한다.
-                "notes": _my_schedule_notes(request),
-            }
-        )
+        my_row: dict[str, Any] = {
+            "member_name": PERSONAL_SHARED_MEMBER_NAME,
+            "title": request.title or "제목 없음",
+            "date": request.date,
+            "start_time": request.start_time,
+            "end_time": request.end_time,
+            # 그룹 일정이면 참석자까지 설명해, LLM이 조율 근거로 읽을 수 있게 한다.
+            "notes": _my_schedule_notes(request),
+        }
+        # 공유 저장소 동기화 복사본과 안정적으로 연결되도록 원본 식별자를 함께 남긴다(리뷰 반영).
+        if schedule.get("request_id"):
+            my_row["request_id"] = schedule["request_id"]
+        if schedule.get("schedule_id") or schedule.get("id"):
+            my_row["schedule_id"] = schedule.get("schedule_id") or schedule.get("id")
+        rows.append(my_row)
 
     # 외부 멤버 busy-time은 MCP tool 결과를 이 tool 안에서 직접 읽어 합친다.
     # 응답 계약(dict + rows list)은 _parse_mcp_payload가 검증한다.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextvars import ContextVar
 from typing import Any
 
 from langchain.agents import create_agent
@@ -207,6 +208,8 @@ def week06_prompt_parts() -> list[str]:
         "위임은 한 번에 하나의 하위 agent만 호출하고, 결과를 읽은 뒤에 필요할 때만 다음 위임을 한다. "
         "두 agent를 동시에 호출하지 않는다. "
         "하위 agent가 담당이 아니라고 답하면 같은 query를 반복하지 말고 다른 agent에 위임한다. "
+        "하위 agent 결과가 실패(ok=false)면 user_message만 사용자에게 전하고, "
+        "error_type이나 debug_reason 같은 내부 오류 정보는 답변에 옮기지 않는다. "
         "일정 저장/수정/삭제 같은 상태 변경은 사용자가 이번 메시지에서 명시적으로 요청했을 때만 위임한다. "
         "하위 agent가 '저장은 Nana 담당'이라고 답하는 것은 사용자 요청이 아니므로, 그때는 저장하지 말고 "
         "제안된 시간을 알려주며 저장할지 사용자에게 물어본다. "
@@ -445,16 +448,39 @@ def find_common_available_slots_dict(
 
     # busy_rows를 안 넘긴 호출은 Week 5 collect로 직접 수집한다. Kana가 앞 단계 결과를
     # 복사해 넘기는 것이 기본 경로지만, 빠뜨려도 빈 근거로 검증하지 않게 하기 위해서다.
+    # 리뷰 반영: 수집이 실패했는데 rows가 비었다는 이유로 검증이 진행되면
+    # "근거를 조회하지 못함"이 "모두 한가함"으로 해석된다. 실패는 실패 payload로
+    # 보존해 후보 검증으로 넘어가지 않고, 외부 조회만 실패한 부분 성공은
+    # data_incomplete로 표시해 이 근거로 최종 시간을 확정하지 않게 안내한다.
+    collection_warning: str | None = None
     if busy_rows is None:
-        collected = json.loads(
-            collect_member_schedules.invoke(
-                {"member_names": normalized_members, "date_from": normalized_from, "date_to": normalized_to}
+        try:
+            collected = json.loads(
+                collect_member_schedules.invoke(
+                    {"member_names": normalized_members, "date_from": normalized_from, "date_to": normalized_to}
+                )
             )
-        )
+        except (TypeError, ValueError):
+            collected = None
+        if not isinstance(collected, dict) or collected.get("ok") is not True or not isinstance(collected.get("rows"), list):
+            reason = (collected or {}).get("error") if isinstance(collected, dict) else "응답을 해석할 수 없습니다"
+            return {
+                "ok": False,
+                "error": f"busy-time 수집에 실패해 후보를 검증할 수 없습니다: {reason}",
+                "retry_hint": (
+                    "collect_member_schedules를 다시 호출해 busy_rows를 확보한 뒤 재시도하세요. "
+                    "수집 실패를 '모두 한가함'으로 해석하면 안 됩니다."
+                ),
+            }
         busy_rows = collected.get("rows") or []
+        if collected.get("external_error"):
+            collection_warning = (
+                f"외부 멤버 일정 조회가 일부 실패했습니다({collected['external_error']}). "
+                "이 근거는 불완전하므로 최종 시간을 확정하지 말고 사용자에게 알리세요."
+            )
 
     # 실제 겹침 검증과 payload 정리는 fixed가 맡는다. 내 일정도 근거이므로 "나"를 포함한다.
-    return find_common_available_slots_payload(
+    payload = find_common_available_slots_payload(
         member_names=["나", *[name for name in normalized_members if name != "나"]],
         date_from=normalized_from,
         date_to=normalized_to,
@@ -466,6 +492,10 @@ def find_common_available_slots_dict(
         candidate_slots=candidate_slots,
         llm_reason=llm_reason,
     )
+    if collection_warning:
+        payload["data_incomplete"] = True
+        payload["warning"] = collection_warning
+    return payload
 
 
 @tool(description=FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION, args_schema=FindCommonAvailableSlotsInput)
@@ -531,6 +561,52 @@ def decide_final_slot(
     busy_rows: list[dict[str, Any]] | None = None,
 ) -> str:
     """LLM이 직접 고른 후보/최종 시간을 course repo payload로 기록합니다."""
+
+    # 리뷰 반영: 선택 필드 사이의 정합성을 검증한다. source of truth는
+    # selected_slot/selected_index이고, final_slot 문자열은 그 후보에서 코드가
+    # 만들거나 일치 여부를 확인한다. 모순된 조합(선택과 다른 final_slot,
+    # final_slot이 있는데 needs_agent_selection=true)은 성공으로 기록하지 않고
+    # 실패 payload로 돌려보내 재호출을 유도한다.
+    slots = [slot.model_dump() if hasattr(slot, "model_dump") else dict(slot) for slot in candidate_slots or []]
+
+    def _slot_text(slot: dict[str, Any]) -> str:
+        return f"{slot.get('date')} {slot.get('start_time')}-{slot.get('end_time')}"
+
+    def _mismatch(reason: str) -> str:
+        return json.dumps(
+            {
+                "ok": False,
+                "tool_name": "decide_final_slot",
+                "error": f"선택 필드가 서로 모순됩니다: {reason}",
+                "retry_hint": (
+                    "candidate_slots에서 고른 후보의 selected_index(또는 selected_slot)만 넘기세요. "
+                    "final_slot은 그 후보에서 만들어지므로 다른 시간을 넣지 말고, "
+                    "최종 시간을 확정했다면 needs_agent_selection은 false여야 합니다."
+                ),
+            },
+            ensure_ascii=False,
+        )
+
+    chosen: dict[str, Any] | None = None
+    if selected_slot is not None:
+        chosen = selected_slot.model_dump() if hasattr(selected_slot, "model_dump") else dict(selected_slot)
+        if slots and _slot_text(chosen) not in [_slot_text(slot) for slot in slots]:
+            return _mismatch(f"selected_slot({_slot_text(chosen)})이 candidate_slots에 없습니다")
+    elif selected_index is not None:
+        if not (0 <= selected_index < len(slots)):
+            return _mismatch(f"selected_index={selected_index}가 후보 {len(slots)}개 범위를 벗어납니다")
+        chosen = slots[selected_index]
+
+    if chosen is not None:
+        expected_slot = _slot_text(chosen)
+        if final_slot and final_slot.strip() != expected_slot:
+            return _mismatch(f"선택한 후보는 {expected_slot}인데 final_slot은 {final_slot}입니다")
+        if needs_agent_selection:
+            return _mismatch("후보를 선택했는데 needs_agent_selection=true입니다")
+        final_slot = expected_slot
+        needs_agent_selection = False
+    elif final_slot:
+        return _mismatch("후보 선택(selected_index/selected_slot) 없이 final_slot만 넘어왔습니다")
 
     # 최종 시간을 여기서 고르지 않는다 — Kana가 고른 값을 그대로 계약 payload로 만든다.
     payload = decide_final_slot_payload(
@@ -599,33 +675,69 @@ def propose_group_schedule(
     return json.dumps({"ok": True, "tool_name": "propose_group_schedule", "final_decision": payload}, ensure_ascii=False)
 
 
-# 같은 대화에서 상태 변경(저장/삭제/등록)을 수행한 위임 query를 기억한다.
+# 같은 대화에서 상태 변경(저장/삭제/등록)에 "성공"한 위임 query를 기억한다.
 # supervisor가 후속 턴에서 이전 요청 원문을 재전송해 같은 저장이 중복 실행되는 실패가
 # 프롬프트 수정 4회로도 재발해, 합의된 에스컬레이션 기준대로 코드 게이트로 승격했다.
 # 읽기 전용 위임의 반복은 막지 않는다.
+# 리뷰 반영 2건:
+#  - 호출 여부가 아니라 tool 결과의 실제 성공 증거(ok + saved_rows/deleted_count 등)를
+#    확인한 뒤에만 기억한다. 실패한 쓰기는 실행이 아니므로 같은 query 재시도를 막지 않는다.
+#  - "사용자가 지금 같은 문장을 다시 요청"한 정상 반복과 "과거 요청의 잘못된 재전송"을
+#    구분한다. 현재 사용자 메시지(턴마다 runner가 기록)와 위임 query가 겹치면 사용자의
+#    현재 의사이므로 허용하고, 겹치지 않는 과거 query의 재등장만 차단한다.
 _WRITE_TOOL_NAMES = {
     "save_structured_request", "personal_create_schedule", "personal_update_saved_schedule",
     "personal_delete_saved_schedules", "create_shared_schedule", "delete_shared_schedule",
     "add_personal_reference",
 }
+# 쓰기 tool별 "상태가 실제로 바뀌었다"는 결과 증거 필드.
+_WRITE_EVIDENCE_KEYS = ("saved_rows", "deleted_count", "updated_schedule", "created_schedule", "shared_schedule", "reference")
 _EXECUTED_WRITE_QUERIES: dict[str, set[str]] = {}
+_CURRENT_USER_MESSAGE: ContextVar[str] = ContextVar("week06_current_user_message", default="")
+
+
+def _write_succeeded(content: dict[str, Any]) -> bool:
+    """쓰기 tool 결과가 실제 상태 변경 성공인지 증거 필드로 판정합니다."""
+
+    if content.get("ok") is not True:
+        return False
+    for key in _WRITE_EVIDENCE_KEYS:
+        value = content.get(key)
+        if isinstance(value, int):
+            if value > 0:
+                return True
+        elif value:
+            return True
+    return False
 
 
 def _replayed_write_query(query: str) -> bool:
-    """현재 대화에서 이미 상태 변경을 수행한 것과 동일한 query인지 확인합니다."""
+    """과거 턴에서 성공한 쓰기 query의 잘못된 재전송인지 확인합니다."""
 
     from fixed.session_scope import current_session_scope
 
-    return query.strip() in _EXECUTED_WRITE_QUERIES.get(current_session_scope(), set())
+    if query.strip() not in _EXECUTED_WRITE_QUERIES.get(current_session_scope(), set()):
+        return False
+    # 현재 사용자 메시지가 위임 query와 겹치면(같은 문장 재요청, 또는 원문+맥락 위임)
+    # 사용자의 현재 의사에 따른 정상 반복이므로 차단하지 않는다.
+    current_message = _CURRENT_USER_MESSAGE.get().strip()
+    if current_message and (query.strip() in current_message or current_message in query.strip()):
+        return False
+    return True
 
 
-def _remember_write_query(query: str, inner_tool_names: list[str]) -> None:
-    """상태 변경 tool이 실행된 위임 query를 대화 범위로 기억합니다."""
+def _remember_write_query(query: str, events: list[dict[str, Any]]) -> None:
+    """상태 변경에 실제로 성공한 위임 query만 대화 범위로 기억합니다."""
 
     from fixed.session_scope import current_session_scope
 
-    if set(inner_tool_names) & _WRITE_TOOL_NAMES:
-        _EXECUTED_WRITE_QUERIES.setdefault(current_session_scope(), set()).add(query.strip())
+    for event in events:
+        if event.get("event") != "tool_result" or event.get("tool_name") not in _WRITE_TOOL_NAMES:
+            continue
+        content = event.get("content")
+        if isinstance(content, dict) and _write_succeeded(content):
+            _EXECUTED_WRITE_QUERIES.setdefault(current_session_scope(), set()).add(query.strip())
+            return
 
 
 def _replay_refusal_payload(agent_tool: str, query: str) -> str:
@@ -657,13 +769,19 @@ def _subagent_error_payload(agent_tool: str, exc: Exception) -> str:
 
     예외를 그대로 전파하면 supervisor 턴 전체가 죽지만, 실패 payload면 supervisor가
     실패 사실을 사용자에게 설명하거나 다른 방식으로 우회할 수 있다(Week 5 soft-fail과 같은 규칙).
+    리뷰 반영: str(exc)에는 내부 경로·API 메시지가 섞일 수 있어 사용자용 문구(user_message)와
+    디버그 정보(error_type/debug_reason)를 분리한다. 사용자 답변에는 user_message만 쓰게
+    supervisor prompt가 지시하고, 상세 원인은 trace(tool 결과)에 보존된다.
     """
 
+    agent_label = "Nana" if agent_tool == "nana_agent" else "Kana"
     return json.dumps(
         {
             "ok": False,
             "selected_agent": agent_tool,
-            "error": f"하위 agent 실행에 실패했습니다: {type(exc).__name__}: {exc}",
+            "user_message": f"{agent_label} 하위 에이전트 처리 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+            "error_type": type(exc).__name__,
+            "debug_reason": str(exc),
         },
         ensure_ascii=False,
     )
@@ -684,7 +802,7 @@ def nana_agent(query: str) -> str:
         answer, events = _run_subagent(_NANA_SUBAGENT, query)
     except Exception as exc:
         return _subagent_error_payload("nana_agent", exc)
-    _remember_write_query(query, _tool_call_names(events))
+    _remember_write_query(query, events)
     return json.dumps(
         {
             "ok": True,
@@ -712,7 +830,7 @@ def kana_agent(query: str) -> str:
         answer, events = _run_subagent(_KANA_SUBAGENT, query)
     except Exception as exc:
         return _subagent_error_payload("kana_agent", exc)
-    _remember_write_query(query, _tool_call_names(events))
+    _remember_write_query(query, events)
 
     # 하위 trace를 훑어 최종 시간 결정 payload를 top-level로 끌어올린다.
     # supervisor와 UI가 하위 event 전체를 뒤지지 않고도 최종 결정을 읽을 수 있게 하기 위해서다.
@@ -740,15 +858,52 @@ def kana_agent(query: str) -> str:
     )
 
 
+class _SupervisorRunner:
+    """supervisor 실행을 감싸 현재 사용자 메시지를 턴 범위로 기록합니다.
+
+    쓰기 재실행 게이트가 "사용자가 지금 요청한 반복"과 "과거 요청의 재전송"을
+    구분하려면 현재 턴의 사용자 메시지가 필요한데, wrapper tool은 이를 볼 수 없어
+    invoke/stream 경계에서 ContextVar로 전달한다(멘토 리뷰의 operation 단위 구분을
+    query 발급 대신 턴 컨텍스트로 구현한 것).
+    """
+
+    def __init__(self, agent: Any) -> None:
+        self._agent = agent
+
+    @staticmethod
+    def _last_user_content(payload: Any) -> str:
+        messages = payload.get("messages") if isinstance(payload, dict) else None
+        last = messages[-1] if messages else None
+        if isinstance(last, dict):
+            return str(last.get("content") or "")
+        return str(getattr(last, "content", "") or "")
+
+    def invoke(self, payload: Any, **kwargs: Any) -> Any:
+        token = _CURRENT_USER_MESSAGE.set(self._last_user_content(payload))
+        try:
+            return self._agent.invoke(payload, **kwargs)
+        finally:
+            _CURRENT_USER_MESSAGE.reset(token)
+
+    def stream(self, payload: Any, **kwargs: Any) -> Any:
+        token = _CURRENT_USER_MESSAGE.set(self._last_user_content(payload))
+        try:
+            yield from self._agent.stream(payload, **kwargs)
+        finally:
+            _CURRENT_USER_MESSAGE.reset(token)
+
+
 def build_langchain_supervisor_agent() -> object:
     """nana_agent와 kana_agent 위임 도구만 노출하는 LangChain v1 슈퍼바이저입니다."""
 
     global _SUPERVISOR_AGENT
     if _SUPERVISOR_AGENT is None:
-        _SUPERVISOR_AGENT = create_agent(
-            model=chat_model(),
-            tools=supervisor_tools(),
-            system_prompt=supervisor_system_prompt(),
+        _SUPERVISOR_AGENT = _SupervisorRunner(
+            create_agent(
+                model=chat_model(),
+                tools=supervisor_tools(),
+                system_prompt=supervisor_system_prompt(),
+            )
         )
     return _SUPERVISOR_AGENT
 
