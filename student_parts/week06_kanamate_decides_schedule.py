@@ -241,12 +241,20 @@ def kana_prompt_parts() -> list[str]:
         여러 사람과 그룹 일정을 조율할 때는 다음 순서를 따른다.
         1. collect_member_schedules로 관련된 모든 사람(나 포함)의 busy-time을 모은다.
         2. 모은 busy-time을 근거로 겹치지 않는 시간 후보를 직접 판단해서
-        find_common_available_slots에 candidate_slots로 넘겨 검증받는다.
-        3. 검증된 후보 목록을 반드시 사용자에게 보여주고, 어느 시간이 좋을지 확인받는다.
-        사용자가 명시적으로 선택하거나 승인하기 전에는 스스로 후보 하나를 골라 확정하지 않는다.
-        사용자의 확인을 받은 뒤에만 decide_final_slot으로 최종 시간을 기록한다.
-        확인을 받기 전이라면 candidate_slots는 find_common_available_slots로 검증까지만 하고,
-        decide_final_slot은 아직 호출하지 않는다 (이 단계에서는 needs_agent_selection=true로 둔다).
+        find_common_available_slots에 candidate_slots로 넘겨 검증받는다. 이때 1단계에서
+        collect_member_schedules가 반환한 rows를 busy_rows 인자에 그대로 복사해서 함께 넘긴다.
+        busy_rows를 넘기지 않으면 find_common_available_slots가 collect_member_schedules를
+        다시 호출해 같은 조회를 중복으로 수행하게 되니 주의한다.
+        3. 사용자 요청의 표현에 따라 다음 중 하나를 따른다.
+        - "시간 정해줘", "확정해줘", "잡아줘"처럼 결정 자체를 요청했다면, 검증된 후보 중
+        가장 적절한 하나를 네가 직접 선택하고, decide_final_slot으로 final_slot을
+        확정해 즉시 응답한다. 이 경우 사용자 확인을 기다리며 멈추지 않는다.
+        - "가능한 시간 보여줘", "후보만 알려줘"처럼 후보 확인만 요청했거나, 어떤 시간이
+        좋을지 표현이 불명확하다면, 검증된 후보 목록을 사용자에게 보여주고 확인을
+        기다린다. 이 경우 decide_final_slot을 아직 호출하지 않고
+        needs_agent_selection=true로 둔다.
+        - 사용자가 이미 특정 후보를 지목했다면(예: "7월 8일로 해줘") 그 후보로
+        decide_final_slot을 즉시 호출해 확정한다.
         """,
     ]
 
@@ -647,16 +655,29 @@ def kana_agent(query: str) -> str:
 
     result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
 
-    trace_payload = extract_langchain_trace(result)  
+    events = extract_agent_events(result)
+    inner_tool_names = _tool_call_names(events)
+
+    final_slot_payload: dict[str, Any] | None = None
+    final_decision_payload: dict[str, Any] | None = None
+
+    for event in events:
+        content = event.get("content")
+        if not isinstance(content, dict):
+            continue
+        if event.get("tool_name") == "decide_final_slot":
+            final_slot_payload = content
+        if content.get("final_decision"):
+            final_decision_payload = content["final_decision"]
 
     return json.dumps(
         {
             "selected_agent": "kana_agent",
             "answer": extract_final_text(result),                              
-            "trace": trace_payload["events"],
-            "inner_tool_names": trace_payload["inner_tool_names"],                    
-            "final_slot_payload": trace_payload["final_slot_payload"],
-            "final_decision_payload": trace_payload["final_decision_payload"],
+            "trace": events,
+            "inner_tool_names": inner_tool_names,                
+            "final_slot_payload": final_slot_payload,
+            "final_decision_payload": final_decision_payload,
         },
         ensure_ascii=False,
     )

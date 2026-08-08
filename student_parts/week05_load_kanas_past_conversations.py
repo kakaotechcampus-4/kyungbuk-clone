@@ -373,8 +373,10 @@ def _collect_member_schedules(
     # my_rows를 먼저 둬야 앱 DB의 notes("Nana 개인/그룹 일정")가 살아남습니다.
     rows = _dedupe_schedule_rows([*my_rows, *external_rows])
     schedule_summary = external_schedule_summary(rows)
+    members = ["나", *[name for name in normalized_members if name != "나"]] 
 
     return {
+        "members": members,
         "rows": rows,
         "schedule_summary": schedule_summary,
     }
