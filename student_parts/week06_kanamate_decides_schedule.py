@@ -203,7 +203,8 @@ def week06_prompt_parts() -> list[str]:
 
         개인 일정 CRUD, todo/reminder 저장, 개인 참고자료와 앱 대화 RAG, 이미 날짜와 시간이
         확정된 개인·그룹 일정 저장은 nana_agent 담당이다. 외부 멤버의 과거 대화·일정 조회,
-        공유 일정 조회, 내 일정과 외부 멤버 busy-time 비교는 kana_agent 담당이다.
+        공유 일정 조회, 내 일정과 외부 멤버 busy-time 비교, 공통 가능 시간 후보 검증과
+        최종 회의 시간 결정은 kana_agent 담당이다.
         다른 사람 이름이 있더라도 이미 확정된 일정을 저장하는 요청이면 nana_agent에 위임하고,
         그 사람의 기록을 조회하거나 함께 가능한 시간을 알아보는 요청이면 kana_agent에 위임한다.
         한 요청에 두 역할이 섞였으면 필요한 순서대로 각각 위임한다.
@@ -220,6 +221,21 @@ def nana_prompt_parts() -> list[str]:
         너는 오늘 날짜가 {current_app_date_iso()}인 Nana 하위 에이전트다. 개인 일정 CRUD,
         todo/reminder 저장, 개인 참고자료와 앱 대화 RAG를 담당한다. 날짜와 시간이 이미 확정된
         그룹 일정을 저장하는 요청도 담당하며, 저장에 필요한 정보가 부족하면 추측하지 않고 묻는다.
+
+        요청 유형별로 아래 tool 경로를 따른다. 앞선 주차 조각과 어긋나면 이 규칙을 우선한다.
+        - 새 일정·할 일·알림 저장: extract_schedule_request(query=사용자 원문)로 먼저 구조화하고,
+          그 결과의 kind/title/date/start_time/end_time/members/priority/reason/original_text를
+          save_structured_request 인자로 넘긴다. 두 단계를 모두 거치며, 구조화 없이 저장하거나
+          personal_create_schedule로 대신 처리하지 않는다.
+        - 저장된 일정 목록이나 특정 날짜 범위 조회: personal_list_saved_schedules를 사용한다.
+        - 제목·이유·핵심어로 특정 기록을 찾을 때: search_saved_requests를 사용한다.
+        - 수정: personal_list_saved_schedules로 schedule_id를 먼저 확인한 뒤
+          personal_update_saved_schedule을 호출한다.
+        - 삭제: personal_list_saved_schedules로 후보를 확인한 뒤 personal_delete_saved_schedules에
+          schedule_ids 또는 명시 필터를 넘긴다. 조건 없이 삭제하지 않는다.
+        - 개인 취향·반복 규칙·배경지식 저장과 조회: add_personal_reference와
+          search_personal_references를 사용한다.
+        - 예전 앱 대화에서 오간 내용 확인: search_conversation_messages를 사용한다.
 
         외부 멤버의 과거 대화·일정 조회나 여러 사람의 busy-time 비교는 담당하지 않는다.
         그런 요청이면 개인 자료를 잘못 검색하지 말고 Kana 담당이라고 짧게 알린다.
@@ -241,8 +257,19 @@ def kana_prompt_parts() -> list[str]:
         extract_schedules_from_history, 내 일정과 함께 비교할 때는 collect_member_schedules,
         공유 저장소 row를 확인할 때는 list_shared_schedules를 사용한다.
 
-        Week 6 메인 과제 범위에서는 공통 후보 시간을 검증하거나 최종 회의 시간을 확정하지 않는다.
-        조회한 rows와 schedule_summary만 근거로 busy-time을 설명한다. 일정 저장은 Nana 담당이다.
+        여러 사람이 함께 가능한 시간을 찾아야 하면 collect_member_schedules를 정확히 한 번 호출한다.
+        member_names에는 "나"를 넣지 말고 외부 멤버만 넣는다. 이 tool이 내 일정을 자동으로 합친다.
+        반환된 busy-time rows를 직접 읽고 어디와도 겹치지 않는 후보를 골라 find_common_available_slots의
+        candidate_slots에 넘겨 검증한다. 두 tool 모두 후보나 최종 시간을 대신 계산해주지 않으므로
+        빈 시간을 찾는 판단은 네가 한다. busy_rows는 앞선 tool 결과에서 그대로 복사해 넘긴다.
+
+        검증된 후보가 나오면 거기서 멈추지 말고 decide_final_slot을 이어서 호출한다. 확정할 근거가
+        있으면 selected_index와 final_slot을 채우고, 사용자 확인이 더 필요하면 final_slot을 비운 채
+        needs_agent_selection=true로 후보만 기록한다. member_names에는 find_common_available_slots
+        결과의 members를 그대로 복사해 "나"도 최종 근거에 남긴다. 최종 답변에는 나를 포함한 모든
+        참여자의 후보 시간과 고른 이유를 함께 보여준다.
+
+        조회한 rows와 schedule_summary에 없는 내용은 추측하지 않는다. 일정 저장은 Nana 담당이다.
         """,
     ]
 
@@ -308,25 +335,33 @@ def tool_name(tool_object: Any) -> str:
 
 
 FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
-    # TODO: find_common_available_slots tool description을 자유롭게 작성하세요.
-    #   - 이 Python tool이 후보를 계산하지 않는다는 점을 Kana agent에게 분명히 알려야 합니다.
-    #     agent가 busy_rows를 읽고 candidate_slots를 직접 채워 넘기게 만드는 것이 핵심입니다.
-    #   - candidate_slots 각 항목이 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM),
-    #     duration_minutes, reason을 포함해야 한다는 형식을 적습니다.
-    #   - 후보는 어떤 busy row와도 겹치면 안 되고, busy_rows도 앞선 tool output에서 복사해 넘기게 합니다.
-    #   - 이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출하도록 유도합니다.
-    ""
+    "공통 가능 시간 후보를 검증하고 기록하는 tool이다. 후보를 대신 찾아주지 않는다. "
+    "빈 시간을 고르는 일은 이 tool을 호출하는 네가 직접 해야 하고, tool은 네가 고른 후보가 "
+    "busy_rows와 겹치는지만 확인한다. candidate_slots를 비워 호출하면 검증할 대상이 없어 "
+    "빈 결과가 돌아온다.\n"
+    "먼저 collect_member_schedules로 busy-time을 모으고, 그 결과의 rows를 busy_rows 인자에 "
+    "그대로 복사해 넘긴다. busy_rows를 생략하면 이 tool이 같은 조회를 다시 수행한다.\n"
+    "candidate_slots에는 busy_rows를 읽고 네가 직접 고른 후보를 담는다. 각 항목은 "
+    "date('YYYY-MM-DD'), start_time('HH:MM'), end_time('HH:MM'), duration_minutes, "
+    "reason을 모두 포함해야 한다. 어떤 busy row와도 시간이 겹치면 안 되고, "
+    "date_from~date_to 범위와 workday_start~workday_end 업무 시간 안에 있어야 한다.\n"
+    "이 tool 결과만으로 답변을 끝내지 말고, 이어서 decide_final_slot을 호출해 최종 시간을 "
+    "확정하거나 후보를 기록한다."
 )
 
 
 DECIDE_FINAL_SLOT_DESCRIPTION = (
-    # TODO: decide_final_slot tool description을 자유롭게 작성하세요.
-    #   - 이 Python tool이 최종 시간을 자동 선택하지 않는다는 점을 분명히 알려야 합니다.
-    #     agent가 selected_index 또는 selected_slot과 final_slot을 직접 골라 넘기게 만듭니다.
-    #   - final_slot 형식('YYYY-MM-DD HH:MM-HH:MM')과 needs_agent_selection, reason을 채우는 기준을 적습니다.
-    #   - 아직 고르지 않았다면 final_slot은 null, needs_agent_selection은 true로 두게 합니다.
-    #   - 근거 trace를 위해 candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘기게 합니다.
-    ""
+    "최종 회의 시간 결정을 기록하는 tool이다. 후보 중 무엇을 고를지 대신 정해주지 않는다. "
+    "선택은 이 tool을 호출하는 네가 직접 하고, tool은 그 결정을 정해진 형식으로 남긴다.\n"
+    "확정할 후보가 있으면 selected_index(candidate_slots 안 순서, 0부터) 또는 selected_slot을 "
+    "채우고, final_slot을 'YYYY-MM-DD HH:MM-HH:MM' 형식 문자열로 함께 넘긴다. "
+    "이때 needs_agent_selection은 false로 둔다.\n"
+    "후보는 있지만 사용자 확인이 더 필요해 아직 고를 수 없다면 final_slot과 "
+    "selected_index/selected_slot을 비운 채 needs_agent_selection=true로 호출해 후보만 남긴다. "
+    "임의로 아무 후보나 확정하지 않는다.\n"
+    "reason에는 그 시간을 고른 이유 또는 보류한 이유를 사용자에게 그대로 보여줄 문장으로 쓴다. "
+    "판단 근거를 남길 수 있게 candidate_slots, busy_rows, member_names, date_from, date_to도 "
+    "앞선 tool 결과에서 복사해 함께 넘긴다."
 )
 
 
@@ -402,12 +437,39 @@ def find_common_available_slots_dict(
 ) -> dict[str, Any]:
     """멤버별 busy-time rows와 LLM이 고른 후보 payload를 검증 결과로 바꿉니다."""
 
-    # TODO: 멤버 이름/날짜 범위를 정규화하고, busy_rows를 수집한 뒤 후보 검증 payload를 만드세요.
-    #   - normalize_external_member_names(...)로 멤버 이름을, normalize_date_bound(...)로 날짜를 정규화합니다.
-    #   - busy_rows가 None이면 collect_member_schedules.invoke({...})를 호출해 rows를 채웁니다.
-    #   - 검증 payload 생성은 find_common_available_slots_payload(...)에 넘깁니다. 이때 내 일정도 근거이므로
-    #     member_names에는 "나"를 함께 포함합니다.
-    ...
+    # "나"는 외부 저장소의 멤버가 아니므로 외부 조회 대상에서 뺍니다.
+    # collect_member_schedules가 내 일정을 별도로 붙여 주므로 여기서 넘길 필요가 없습니다.
+    external_members = [
+        name for name in normalize_external_member_names(member_names) if name != "나"
+    ]
+    normalized_date_from = normalize_date_bound(date_from)
+    normalized_date_to = normalize_date_bound(date_to)
+
+    if busy_rows is None:
+        collected = json.loads(
+            collect_member_schedules.invoke(
+                {
+                    "member_names": external_members,
+                    "date_from": normalized_date_from,
+                    "date_to": normalized_date_to,
+                }
+            )
+        )
+        busy_rows = collected.get("rows") or []
+
+    # 내 일정도 후보 판단 근거이므로 검증 payload의 멤버 목록에는 "나"를 함께 남깁니다.
+    return find_common_available_slots_payload(
+        member_names=["나", *external_members],
+        date_from=normalized_date_from,
+        date_to=normalized_date_to,
+        busy_rows=busy_rows,
+        duration_minutes=duration_minutes,
+        workday_start=workday_start,
+        workday_end=workday_end,
+        limit=limit,
+        candidate_slots=candidate_slots,
+        llm_reason=llm_reason,
+    )
 
 
 @tool(description=FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION, args_schema=FindCommonAvailableSlotsInput)
@@ -425,8 +487,19 @@ def find_common_available_slots(
 ) -> str:
     """수집된 멤버 일정에서 LLM이 직접 고른 공통 가능 후보 시간을 검증합니다."""
 
-    # TODO: find_common_available_slots_dict(...) 결과를 JSON 문자열로 반환하세요.
-    ...
+    payload = find_common_available_slots_dict(
+        member_names=member_names,
+        date_from=date_from,
+        date_to=date_to,
+        duration_minutes=duration_minutes,
+        workday_start=workday_start,
+        workday_end=workday_end,
+        limit=limit,
+        busy_rows=busy_rows,
+        candidate_slots=candidate_slots,
+        llm_reason=llm_reason,
+    )
+    return json.dumps(payload, ensure_ascii=False)
 
 
 @tool(description=DECIDE_FINAL_SLOT_DESCRIPTION, args_schema=DecideFinalSlotInput)
@@ -445,10 +518,25 @@ def decide_final_slot(
 ) -> str:
     """LLM이 직접 고른 후보/최종 시간을 course repo payload로 기록합니다."""
 
-    # TODO: Kana agent가 고른 최종 시간 정보를 course repo JSON 계약에 맞춰 기록하세요.
-    #   - 직접 최종 시간을 고르지 말고 받은 인자를 그대로 decide_final_slot_payload(...)에 넘깁니다.
-    #   - 결과를 JSON 문자열로 반환합니다.
-    ...
+    # 이 tool은 최종 시간을 고르지 않습니다. Kana agent가 넘긴 선택을 그대로 payload에 기록합니다.
+    payload = decide_final_slot_payload(
+        candidate_slots=candidate_slots,
+        selected_slot=selected_slot,
+        selected_index=selected_index,
+        final_slot=final_slot,
+        needs_agent_selection=needs_agent_selection,
+        member_names=member_names,
+        date_from=date_from,
+        date_to=date_to,
+        duration_minutes=duration_minutes,
+        reason=reason,
+        busy_rows=busy_rows,
+    )
+    # final_slot / reason / candidates는 course repo 계약대로 top-level에 그대로 둡니다.
+    return json.dumps(
+        {"ok": True, "tool_name": "decide_final_slot", **payload},
+        ensure_ascii=False,
+    )
 
 
 def kana_tools() -> list[Any]:
@@ -459,6 +547,8 @@ def kana_tools() -> list[Any]:
         extract_schedules_from_history,
         list_shared_schedules,
         collect_member_schedules,
+        find_common_available_slots,
+        decide_final_slot,
     ]
 
 
