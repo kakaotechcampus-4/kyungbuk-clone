@@ -495,7 +495,20 @@ def decide_final_slot(
     # TODO: Kana agent가 고른 최종 시간 정보를 course repo JSON 계약에 맞춰 기록하세요.
     #   - 직접 최종 시간을 고르지 말고 받은 인자를 그대로 decide_final_slot_payload(...)에 넘깁니다.
     #   - 결과를 JSON 문자열로 반환합니다.
-    ...
+    payload = decide_final_slot_payload(
+        candidate_slots=candidate_slots or [],
+        selected_slot=selected_slot,
+        selected_index=selected_index,
+        final_slot=final_slot,
+        needs_agent_selection=needs_agent_selection,
+        member_names=member_names,
+        date_from=date_from,
+        date_to=date_to,
+        duration_minutes=duration_minutes,
+        reason=reason,
+        busy_rows=busy_rows,
+    )
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def kana_tools() -> list[Any]:
