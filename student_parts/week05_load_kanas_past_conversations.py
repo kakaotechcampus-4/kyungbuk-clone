@@ -303,28 +303,38 @@ def _my_schedule_notes(request: StructuredRequest) -> str:
 
 
 def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """같은 일정이 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다.
+    """"나" row가 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다.
 
-    앱 DB에 저장된 내 일정은 공유 저장소에도 자동 동기화되므로, member_names에 "나"가
-    들어온 호출에서는 같은 일정이 두 경로로 들어옵니다. 앞에 오는 앱 DB row를 남깁니다.
+    앱 DB에 저장된 내 일정은 공유 저장소에도 "나" 이름으로 자동 동기화되므로, member_names에
+    "나"가 들어온 호출에서는 내 일정만 두 경로로 들어옵니다. 이 dedup은 그 "나" 중복 문제를
+    풀려고 만든 것이라 member_name이 "나"인 row에만 적용하고, 외부 멤버 row는 원래 순서 그대로
+    손대지 않고 통과시킵니다 — 외부 멤버 일정까지 같은 기준으로 뭉치면, 서로 다른 실제 일정이
+    우연히 날짜/시간/제목이 겹칠 때 잘못 하나로 합쳐질 위험이 있기 때문입니다.
 
-    두 경로가 같은 일정을 서로 다르게 다듬기 때문에 값을 그대로 비교하면 안 됩니다.
+    "나" row 사이에서는 두 경로가 같은 일정을 서로 다르게 다듬기 때문에 값을 그대로 비교하면
+    안 됩니다.
       - 공유 저장소는 제목에서 소괄호를 지우고 공백을 하나로 줄입니다. 앱 DB는 원문을 둡니다.
       - 앱 DB 경로만 end_time "미정"을 "18:00"으로 바꿉니다. 그래서 end_time은 키에서 뺍니다.
-        같은 사람이 같은 날 같은 시각에 시작하는 같은 제목의 일정은 하나로 봅니다.
+        같은 날 같은 시각에 시작하는 같은 제목의 일정은 하나로 봅니다.
       - start_time이 비어 있으면 공유 저장소는 "미정"으로 저장하므로 같은 값으로 맞춥니다.
     """
 
-    deduped: dict[tuple[str, ...], dict[str, Any]] = {}
+    seen_my_keys: set[tuple[str, ...]] = set()
+    deduped_rows: list[dict[str, Any]] = []
     for row in rows:
+        if str(row.get("member_name") or "").strip() != "나":
+            deduped_rows.append(row)
+            continue
         key = (
-            str(row.get("member_name") or "").strip(),
             str(row.get("date") or "").strip(),
             str(row.get("start_time") or "").strip() or "미정",
             strip_parenthetical_text(str(row.get("title") or "")),
         )
-        deduped.setdefault(key, row)
-    return list(deduped.values())
+        if key in seen_my_keys:
+            continue
+        seen_my_keys.add(key)
+        deduped_rows.append(row)
+    return deduped_rows
 
 
 def _collect_member_schedules(
