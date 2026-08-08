@@ -198,8 +198,10 @@ def week06_prompt_parts() -> list[str]:
         "5. 작업 분배 규칙 (Supervisor):",
         "   - 당신은 직접 업무를 처리하지 않고, nana_agent와 kana_agent 두 하위 에이전트에게 위임하는 관리자입니다.",
         "   - 어떤 요청이든 판단하여 반드시 하위 에이전트 도구 하나를 호출하여 그 결과를 기반으로 최종 답변하세요.",
-        "   - [개인 일정] 내 일정 저장, 조회, 삭제, 할일 기록 및 RAG는 nana_agent에게 위임합니다.",
-        "   - [그룹 일정] 외부 멤버 일정 조회, 대화 검색, 공유 일정 결정은 kana_agent에게 위임합니다.",
+        "   - [개인 일정 및 확정된 일정 저장] 내 일정 저장, 조회, 삭제, 할일 기록 및 RAG는 모두 nana_agent에게 위임합니다.",
+        "     (주의: 다른 참석자가 있더라도 이미 날짜와 시간이 확정되어 '저장해줘'라고 하는 요청은 nana_agent 담당입니다.)",
+        "   - [그룹 일정 조율] 외부 멤버 일정을 조회하고, 서로의 빈 시간을 찾아 새로운 약속 시간을 조율/결정하는 작업은 kana_agent에게 위임합니다.",
+        "   - 하위 에이전트가 '제 담당이 아닙니다' 혹은 '다른 에이전트가 처리해야 합니다'라고 응답한 경우, 즉시 다른 에이전트 도구를 호출하여 다시 위임하세요.",
     ]
 
 
@@ -537,11 +539,11 @@ def kana_agent(query: str) -> str:
             content = event.get("content", {})
             tool_name = event.get("tool_name")
             if isinstance(content, dict):
-                if tool_name == "find_common_available_slots":
+                if tool_name == "decide_final_slot":
                     final_slot_payload = content
-                elif tool_name == "decide_final_slot":
                     final_decision_payload = content
                 elif tool_name == "propose_group_schedule" and "final_decision" in content:
+                    final_slot_payload = content["final_decision"]
                     final_decision_payload = content["final_decision"]
 
     return json.dumps({
