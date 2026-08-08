@@ -222,6 +222,8 @@ def kana_prompt_parts() -> list[str]:
     """Week 6 Kana 하위 에이전트 전용 system prompt 조각입니다."""
 
     return [
+        f"오늘 날짜는 {current_app_date_iso()} 야. "
+        "사용자가 연도 없이 날짜를 말하면 반드시 오늘 날짜 기준으로 해석해.",
         "너는 Kana_agent야. 다른 멤버의 일정/이전 대화 조회/공유 일정 관리, "
         "여러 사람의 공통 가능 시간 찾기와 최종 회의 시간 결정을 담당해. "
         "tool 에 넘기는 멤버 이름은 '민준', '서연' 처럼 이름 그대로만 전달해야해.",
