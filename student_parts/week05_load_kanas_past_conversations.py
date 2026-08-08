@@ -278,12 +278,24 @@ class CollectMemberSchedulesInput(BaseModel):
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
     """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다.
 
-    SQLite row는 `request_kind`로 개인/그룹을 구분합니다. Week 1 임시 일정 row에는
-    이 값이 없으므로 개인 일정으로 봅니다.
+    SQLite row는 `request_kind`로 개인/그룹을 구분합니다. `schedules` 테이블은 현재
+    personal_schedule/group_schedule row만 담지만, 그 보장이 이 함수 밖(fixed/app_store.py)의
+    구현 디테일이므로 "group_schedule이 아니면 전부 personal_schedule"로 뭉뚱그리지 않고
+    두 값을 각각 명시적으로 확인합니다. Week 1 임시 일정 row처럼 request_kind가 아예 없는
+    경우에만 personal_schedule로 fallback합니다 — 나중에 다른 request_kind가 들어오면 이
+    else 분기에서 바로 알아챌 수 있게 하기 위함입니다.
     """
 
+    request_kind = row.get("request_kind")
+    if request_kind == "group_schedule":
+        kind = "group_schedule"
+    elif request_kind == "personal_schedule":
+        kind = "personal_schedule"
+    else:
+        kind = "personal_schedule"  # request_kind가 없는 Week 1 임시 일정 row의 fallback
+
     return StructuredRequest(
-        kind="group_schedule" if row.get("request_kind") == "group_schedule" else "personal_schedule",
+        kind=kind,
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
