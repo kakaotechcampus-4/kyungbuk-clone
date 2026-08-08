@@ -242,6 +242,14 @@ def kana_prompt_parts() -> list[str]:
         "extract_schedules_from_history 대신 collect_member_schedules를 사용한다 — "
         "이 tool은 '나'의 일정과 다른 멤버들의 일정을 같은 구조로 함께 모아 주므로, "
         "나를 포함한 공통 시간을 찾을 때만 이 tool을 쓴다.",
+        "그룹 미팅 시간을 실제로 확정해야 하면, collect_member_schedules로 모은 busy_rows를 근거로 "
+        "겹치지 않는 시간을 직접 골라 find_common_available_slots에 candidate_slots로 넘긴다. "
+        "find_common_available_slots와 decide_final_slot은 최적 시간을 대신 계산해 주지 않으므로, "
+        "항상 네가 직접 busy_rows를 확인해서 후보와 최종 시간을 판단해야 한다.",
+        "find_common_available_slots로 후보를 검증한 뒤에는 그 결과로 답변을 끝내지 말고, "
+        "반드시 decide_final_slot을 이어서 호출한다. 후보 중 하나를 확정할 수 있으면 selected_index나 "
+        "final_slot을 직접 골라 넘기고, 아직 고르지 못했다면 needs_agent_selection을 true로 남겨 사용자에게 "
+        "추가 정보나 선택을 요청한다.",
     ]
 
 
@@ -519,8 +527,8 @@ def kana_tools() -> list[Any]:
         extract_schedules_from_history,
         list_shared_schedules,
         collect_member_schedules,
-        #find_common_available_slots,
-        #decide_final_slot,
+        find_common_available_slots,
+        decide_final_slot,
     ]
 
 
@@ -614,9 +622,9 @@ def kana_agent(query: str) -> str:
     inner_tool_names = _tool_call_names(trace)
     final_slot_payload = None
     final_decision_payload = None
-    # decide_final_slot은 kana_tools()에서 아직 비활성화 상태(추가과제 미구현)라 이 루프는
-    # 지금은 항상 None을 반환합니다. 나중에 kana_tools()에서 decide_final_slot을 다시 활성화하면
-    # 별도 수정 없이 이 로직이 그대로 값을 채우도록 미리 맞춰둔 스캐폴딩입니다.
+    # decide_final_slot이 kana_tools()에 활성화되어 있으면, Kana가 실제로 호출한 결과에서
+    # final_slot_payload/final_decision_payload를 채웁니다. Kana가 아직 후보만 검증하고
+    # decide_final_slot을 호출하지 않았거나, 이 요청이 최종 확정과 무관하면 계속 None입니다.
     for event in trace:
         if event.get("event") == "tool_result" and event.get("tool_name") == "decide_final_slot":
             content = event.get("content")
