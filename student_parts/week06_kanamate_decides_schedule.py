@@ -692,8 +692,12 @@ _WRITE_TOOL_NAMES = {
 }
 # 쓰기 tool별 "상태가 실제로 바뀌었다"는 결과 증거 필드.
 _WRITE_EVIDENCE_KEYS = ("saved_rows", "deleted_count", "updated_schedule", "created_schedule", "shared_schedule", "reference")
-_EXECUTED_WRITE_QUERIES: dict[str, set[str]] = {}
+# 대화별로 "성공한 쓰기 query → 그 쓰기를 수행한 operation_id"를 기록한다.
+# operation_id는 사용자 턴마다 runner(코드)가 발급한다 — LLM에게 ID 발급을 맡기면
+# 다시 프롬프트 의존이 되므로, 멘토 리뷰의 operation 단위 구분을 코드 발급으로 구현했다.
+_EXECUTED_WRITE_QUERIES: dict[str, dict[str, str]] = {}
 _CURRENT_USER_MESSAGE: ContextVar[str] = ContextVar("week06_current_user_message", default="")
+_CURRENT_OPERATION_ID: ContextVar[str] = ContextVar("week06_current_operation_id", default="")
 
 
 def _write_succeeded(content: dict[str, Any]) -> bool:
@@ -712,14 +716,22 @@ def _write_succeeded(content: dict[str, Any]) -> bool:
 
 
 def _replayed_write_query(query: str) -> bool:
-    """과거 턴에서 성공한 쓰기 query의 잘못된 재전송인지 확인합니다."""
+    """이미 성공한 쓰기 query의 중복 실행인지 operation_id로 판정합니다.
+
+    - 같은 operation(같은 사용자 턴)에서 같은 쓰기 query가 다시 오면 무조건 중복이다.
+      한 턴의 요청 하나는 같은 상태 변경을 한 번만 수행해야 한다.
+    - 다른 operation(이전 턴)에서 성공한 query가 다시 오면 재전송(replay)으로 차단하되,
+      현재 사용자 메시지가 그 query와 겹치면(같은 문장을 지금 다시 요청) 사용자의
+      새로운 의사이므로 허용한다.
+    """
 
     from fixed.session_scope import current_session_scope
 
-    if query.strip() not in _EXECUTED_WRITE_QUERIES.get(current_session_scope(), set()):
+    executed_op = _EXECUTED_WRITE_QUERIES.get(current_session_scope(), {}).get(query.strip())
+    if executed_op is None:
         return False
-    # 현재 사용자 메시지가 위임 query와 겹치면(같은 문장 재요청, 또는 원문+맥락 위임)
-    # 사용자의 현재 의사에 따른 정상 반복이므로 차단하지 않는다.
+    if executed_op == _CURRENT_OPERATION_ID.get():
+        return True
     current_message = _CURRENT_USER_MESSAGE.get().strip()
     if current_message and (query.strip() in current_message or current_message in query.strip()):
         return False
@@ -727,7 +739,7 @@ def _replayed_write_query(query: str) -> bool:
 
 
 def _remember_write_query(query: str, events: list[dict[str, Any]]) -> None:
-    """상태 변경에 실제로 성공한 위임 query만 대화 범위로 기억합니다."""
+    """상태 변경에 실제로 성공한 위임 query를 현재 operation_id와 함께 기억합니다."""
 
     from fixed.session_scope import current_session_scope
 
@@ -736,7 +748,7 @@ def _remember_write_query(query: str, events: list[dict[str, Any]]) -> None:
             continue
         content = event.get("content")
         if isinstance(content, dict) and _write_succeeded(content):
-            _EXECUTED_WRITE_QUERIES.setdefault(current_session_scope(), set()).add(query.strip())
+            _EXECUTED_WRITE_QUERIES.setdefault(current_session_scope(), {})[query.strip()] = _CURRENT_OPERATION_ID.get()
             return
 
 
@@ -861,14 +873,20 @@ def kana_agent(query: str) -> str:
 class _SupervisorRunner:
     """supervisor 실행을 감싸 현재 사용자 메시지를 턴 범위로 기록합니다.
 
-    쓰기 재실행 게이트가 "사용자가 지금 요청한 반복"과 "과거 요청의 재전송"을
-    구분하려면 현재 턴의 사용자 메시지가 필요한데, wrapper tool은 이를 볼 수 없어
-    invoke/stream 경계에서 ContextVar로 전달한다(멘토 리뷰의 operation 단위 구분을
-    query 발급 대신 턴 컨텍스트로 구현한 것).
+    멘토 리뷰의 operation_id 구조: 사용자 턴마다 runner(코드)가 operation_id를
+    발급하고, 쓰기 게이트가 성공한 쓰기를 그 ID와 함께 저장해 중복을 판정한다.
+    같은 operation 안의 같은 쓰기 재위임은 무조건 차단되고(한 요청 = 한 번 실행),
+    이전 operation의 query 재등장은 현재 사용자 메시지와 겹칠 때만(의도적 반복) 허용된다.
+    LLM이 아니라 invoke/stream 경계에서 ID를 만들므로 프롬프트 의존이 없다.
     """
 
     def __init__(self, agent: Any) -> None:
         self._agent = agent
+        self._operation_seq = 0
+
+    def _next_operation_id(self) -> str:
+        self._operation_seq += 1
+        return f"op_{self._operation_seq}"
 
     @staticmethod
     def _last_user_content(payload: Any) -> str:
@@ -879,18 +897,22 @@ class _SupervisorRunner:
         return str(getattr(last, "content", "") or "")
 
     def invoke(self, payload: Any, **kwargs: Any) -> Any:
-        token = _CURRENT_USER_MESSAGE.set(self._last_user_content(payload))
+        message_token = _CURRENT_USER_MESSAGE.set(self._last_user_content(payload))
+        op_token = _CURRENT_OPERATION_ID.set(self._next_operation_id())
         try:
             return self._agent.invoke(payload, **kwargs)
         finally:
-            _CURRENT_USER_MESSAGE.reset(token)
+            _CURRENT_OPERATION_ID.reset(op_token)
+            _CURRENT_USER_MESSAGE.reset(message_token)
 
     def stream(self, payload: Any, **kwargs: Any) -> Any:
-        token = _CURRENT_USER_MESSAGE.set(self._last_user_content(payload))
+        message_token = _CURRENT_USER_MESSAGE.set(self._last_user_content(payload))
+        op_token = _CURRENT_OPERATION_ID.set(self._next_operation_id())
         try:
             yield from self._agent.stream(payload, **kwargs)
         finally:
-            _CURRENT_USER_MESSAGE.reset(token)
+            _CURRENT_OPERATION_ID.reset(op_token)
+            _CURRENT_USER_MESSAGE.reset(message_token)
 
 
 def build_langchain_supervisor_agent() -> object:
