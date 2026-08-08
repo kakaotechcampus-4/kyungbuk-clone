@@ -598,7 +598,7 @@ def nana_agent(query: str) -> str:
         {
             "ok": True,
             "tool_name": "nana_agent",
-            "selected_agent": "nana",
+            "selected_agent": "nana_agent",
             "answer": answer,
             "trace": events,
             "inner_tool_names": inner_tool_names,
@@ -658,7 +658,7 @@ def kana_agent(query: str) -> str:
         {
             "ok": True,
             "tool_name": "kana_agent",
-            "selected_agent": "kana",
+            "selected_agent": "kana_agent",
             "answer": answer,
             "trace": events,
             "inner_tool_names": inner_tool_names,
