@@ -20,7 +20,11 @@ from fixed.schedule_decision import (
     normalize_date_bound,
 )
 from student_parts.week01_wake_up_nana import join_system_prompt
-from student_parts.week03_build_nanas_logbook import WRITE_OPERATION_ID
+from student_parts.week03_build_nanas_logbook import (
+    WRITE_OPERATION_ID,
+    WRITE_TURN_INDEX,
+    has_fresh_duplicate_confirmation,
+)
 from student_parts.week02_structure_natural_language_requests import extract_schedule_request
 from student_parts.week04_retrieve_nanas_memory import week04_prompt_parts, week04_tools
 from student_parts.week05_load_kanas_past_conversations import (
@@ -247,7 +251,9 @@ def nana_prompt_parts() -> list[str]:
         "시간 미정 상태로 저장하지 말고 'Kana 담당'이라고 답한다. "
         "단, 사용자가 시간을 미정으로 두고 저장하겠다고 명시한 경우는 저장 요청이므로 그대로 저장한다. "
         "일정을 저장하기 전 같은 날짜의 기존 일정과 시간이 겹치면 바로 저장하지 말고, "
-        "겹치는 일정을 알리고 그래도 저장할지 확인을 구한다."
+        "겹치는 일정을 알리고 그래도 저장할지 확인을 구한다. "
+        "저장 결과에 duplicate_warning이 있으면 저장된 것이 아니다 — 기존 일정을 알리고 "
+        "실수가 아니라 별개 일정이 맞는지 확인 질문으로 답한다."
     )
     return [
         *week04_prompt_parts(),
@@ -737,6 +743,12 @@ def _replayed_write_query(query: str) -> bool:
     current_message = _CURRENT_USER_MESSAGE.get().strip()
     if current_message and (query.strip() in current_message or current_message in query.strip()):
         return False
+    # 바로 이전 턴에 tool 계층이 중복 확인 경고를 발행했다면, 이번 턴의 재위임은
+    # 사용자 확인에 대한 후속일 수 있으므로 통과시킨다(층간 충돌 방지 — 앱 검증에서
+    # 확인된 저장이 이 게이트에 막히는 실패가 재현됨). 최종 판정은 tool 계층의
+    # op 멱등성·중복 확인이 한다.
+    if has_fresh_duplicate_confirmation(current_session_scope(), WRITE_TURN_INDEX.get()):
+        return False
     return True
 
 
@@ -884,6 +896,7 @@ class _SupervisorRunner:
 
     def __init__(self, agent: Any) -> None:
         self._agent = agent
+        self._turn_index = 0
 
     @staticmethod
     def _next_operation_id() -> str:
@@ -900,24 +913,30 @@ class _SupervisorRunner:
 
     def invoke(self, payload: Any, **kwargs: Any) -> Any:
         operation_id = self._next_operation_id()
+        self._turn_index += 1
         message_token = _CURRENT_USER_MESSAGE.set(self._last_user_content(payload))
         op_token = _CURRENT_OPERATION_ID.set(operation_id)
         write_token = WRITE_OPERATION_ID.set(operation_id)
+        turn_token = WRITE_TURN_INDEX.set(self._turn_index)
         try:
             return self._agent.invoke(payload, **kwargs)
         finally:
+            WRITE_TURN_INDEX.reset(turn_token)
             WRITE_OPERATION_ID.reset(write_token)
             _CURRENT_OPERATION_ID.reset(op_token)
             _CURRENT_USER_MESSAGE.reset(message_token)
 
     def stream(self, payload: Any, **kwargs: Any) -> Any:
         operation_id = self._next_operation_id()
+        self._turn_index += 1
         message_token = _CURRENT_USER_MESSAGE.set(self._last_user_content(payload))
         op_token = _CURRENT_OPERATION_ID.set(operation_id)
         write_token = WRITE_OPERATION_ID.set(operation_id)
+        turn_token = WRITE_TURN_INDEX.set(self._turn_index)
         try:
             yield from self._agent.stream(payload, **kwargs)
         finally:
+            WRITE_TURN_INDEX.reset(turn_token)
             WRITE_OPERATION_ID.reset(write_token)
             _CURRENT_OPERATION_ID.reset(op_token)
             _CURRENT_USER_MESSAGE.reset(message_token)

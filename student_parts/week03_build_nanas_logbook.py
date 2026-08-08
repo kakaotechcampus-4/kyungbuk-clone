@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 from fixed.config import CONFIG
 from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
+from fixed.session_scope import current_session_scope
 from fixed.app_store import AppSQLiteStore
 from student_parts.week01_wake_up_nana import (
     join_system_prompt,
@@ -34,6 +35,25 @@ _WEEK03_AGENT: Any | None = None
 # "최종 쓰기 Tool이 그 ID를 저장해 중복 여부를 판단"). 값이 비어 있으면(Week 3~5 단독
 # 실행) 아무 동작도 바뀌지 않는다.
 WRITE_OPERATION_ID: ContextVar[str] = ContextVar("kanana_write_operation_id", default="")
+# 사용자 턴 순번. 중복 확인의 유효 기간을 "경고 바로 다음 턴"으로 한정하는 데 쓴다.
+WRITE_TURN_INDEX: ContextVar[int] = ContextVar("kanana_write_turn_index", default=0)
+
+# 대화별로 "중복 내용 저장을 경고한 기록"(content_key → 경고한 op_id)을 남긴다.
+# 같은 내용의 일정이 이미 있으면 바로 저장하지 않고 사용자 확인을 유도하고,
+# 사용자가 답한 다음 턴(다른 op)에서 같은 내용이 다시 오면 확인된 것으로 보고 저장한다.
+# content_key → (경고한 op_id, 경고한 턴 순번)
+_DUPLICATE_WARNED: dict[str, dict[tuple[Any, ...], tuple[str, int]]] = {}
+
+
+def has_fresh_duplicate_confirmation(session_id: str, current_turn: int) -> bool:
+    """이 대화에 '바로 이전 턴에 발행된 중복 확인 경고'가 있는지 알려줍니다.
+
+    Week 6 wrapper의 재실행 게이트가 확인 턴의 재위임을 통과시킬지 판단할 때 쓴다.
+    유효 기간을 다음 턴 하나로 한정해, 사용자가 확인을 거절한 뒤 한참 지나
+    발생하는 재전송까지 통과되는 일을 막는다.
+    """
+
+    return any(turn == current_turn - 1 for _, turn in _DUPLICATE_WARNED.get(session_id, {}).values())
 
 # Week 1의 임시 메모리와 달리, Week 3부터 일정은 앱 SQLite DB에 남는다는 점을 모델에게 알려준다.
 SQLITE_MEMORY_PROMPT = (
@@ -308,6 +328,42 @@ def save_structured_request_payload(
                     request_id=row.get("request_id"),
                     note="같은 요청(operation)에서 이미 저장된 내용이라 다시 저장하지 않았습니다.",
                 )
+        # 다른 턴에서 온 동일 내용 저장: 실수(중복)일 수 있으므로 바로 저장하지 않고
+        # 한 번 경고해 사용자 확인을 유도한다. 경고를 받은 뒤 사용자가 답한 새 턴(다른
+        # op)에서 같은 내용이 다시 오면 의도된 별개 일정로 보고 저장한다.
+        if payload.get("kind") in ("personal_schedule", "group_schedule") and payload.get("date") and payload.get("title"):
+            same_content = [
+                schedule
+                for schedule in (store or _store()).list_schedules(
+                    date_from=payload["date"], date_to=payload["date"]
+                )
+                if schedule.get("title") == payload.get("title")
+                and (schedule.get("start_time") or None) == (payload.get("start_time") or None)
+            ]
+            if same_content:
+                content_key = (payload.get("kind"), payload.get("title"), payload.get("date"), payload.get("start_time"))
+                warned = _DUPLICATE_WARNED.setdefault(current_session_scope(), {})
+                warned_entry = warned.get(content_key)
+                current_turn = WRITE_TURN_INDEX.get()
+                # 확인은 경고 바로 다음 턴에서만 유효하다. 처음이거나, 같은 턴의 재시도거나,
+                # 다음 턴을 지나쳐 한참 뒤에 온 동일 내용이면 다시 경고한다.
+                if (
+                    warned_entry is None
+                    or warned_entry[0] == operation_id
+                    or current_turn != warned_entry[1] + 1
+                ):
+                    warned[content_key] = (operation_id, current_turn)
+                    return tool_result(
+                        "save_structured_request",
+                        duplicate_warning=True,
+                        existing_schedule=same_content[0],
+                        note=(
+                            "같은 제목·날짜·시간의 일정이 이미 저장되어 있어 저장하지 않았습니다. "
+                            "사용자에게 기존 일정을 알리고, 실수가 아니라 별개의 일정이 맞는지 확인 질문으로 답하세요. "
+                            "사용자가 맞다고 확인하면 같은 내용으로 다시 저장을 요청하세요."
+                        ),
+                    )
+                warned.pop(content_key, None)
     # original_text의 빈 문자열도 시간 필드의 "미정"처럼 "모르는 값" sentinel이므로 같이 뺀다.
     # (LLM이 extract를 건너뛰고 save를 직접 불러도 ""가 원문 자리에 저장되지 않게 한다.
     #  Week 4부터 raw_json이 검색 대상이라 빈 원문이 저장 품질 문제가 된다.)
