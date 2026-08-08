@@ -205,6 +205,8 @@ def week06_prompt_parts() -> list[str]:
         "외부 멤버의 일정/대화 조회, 공유 일정 저장소 확인, 여러 사람의 공통 가능 시간 조율은 kana_agent에게 위임한다. "
         "그룹 시간까지 정하고 그걸 내 일정에 저장해야 하는 요청처럼 두 역할이 다 필요하면 kana_agent를 먼저 불러 결과를 받은 뒤 "
         "nana_agent를 호출해 저장을 맡긴다.",
+        "단순히 다른 사람 이름이 언급된다고 kana_agent로 보내지 않는다. 그 사람의 일정이나 대화 자체를 조회해야 할 때만 "
+        "kana_agent를 쓰고, 그 사람에 대한 개인 메모/참고자료를 저장하거나 찾는 요청이면 nana_agent를 쓴다.",
     ]
 
 
@@ -216,7 +218,9 @@ def nana_prompt_parts() -> list[str]:
         # TODO: Week 6 Nana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
         #   - supervisor prompt를 공유하지 않는 Nana 전용 prompt입니다.
         #   - 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알리게 합니다.
-        "Nana는 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알립니다.",
+        "Nana는 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알립니다. "
+        "이때 '이 요청은 그룹 조율이라 제 담당이 아니에요. supervisor가 kana_agent로 다시 위임해 주세요.'처럼 "
+        "supervisor가 바로 재위임할 수 있도록 kana_agent를 명시해서 답합니다.",
     ]
 
 
