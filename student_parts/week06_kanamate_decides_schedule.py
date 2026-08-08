@@ -320,9 +320,9 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     #     duration_minutes, reason을 포함해야 한다는 형식을 적습니다.
     #   - 후보는 어떤 busy row와도 겹치면 안 되고, busy_rows도 앞선 tool output에서 복사해 넘기게 합니다.
     #   - 이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출하도록 유도합니다.
-    "해당 Python tool은 후보를 계산하지 않습니다. Kana agent가 busy_rows를 읽고 candidate_slots를 직접 채워 넘기게 해야 합니다."
-    "candidate_slots 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), duration_minutes, reason을 포함해야 합니다. 후보는 어떤 busy row와도 겹치면 안 되며, busy_rows도 앞선 tool output에서 복사해 넘기게 합니다."
-    "이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출하도록 유도합니다."
+    "해당 Python tool은 후보를 계산하지 않습니다. Kana agent가 busy_rows를 읽고 candidate_slots를 직접 채워 넘기게 해야 합니다. "
+    "candidate_slots 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), duration_minutes, reason을 포함해야 합니다. 후보는 어떤 busy row와도 겹치면 안 되며, busy_rows도 앞선 tool output에서 복사해 넘기게 합니다. "
+    "이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출하도록 유도합니다. "
 )
 
 
@@ -333,7 +333,9 @@ DECIDE_FINAL_SLOT_DESCRIPTION = (
     #   - final_slot 형식('YYYY-MM-DD HH:MM-HH:MM')과 needs_agent_selection, reason을 채우는 기준을 적습니다.
     #   - 아직 고르지 않았다면 final_slot은 null, needs_agent_selection은 true로 두게 합니다.
     #   - 근거 trace를 위해 candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘기게 합니다.
-    ""
+    "해당 Python tool은 최종 시간을 자동 선택하지 않습니다. Kana agent가 selected_index 또는 selected_slot과 final_slot을 직접 골라 넘기게 해야 합니다. "
+    "final_slot을 채울 때는 'YYYY-MM-DD HH:MM-HH:MM' 형식의 문자열로 적습니다. 아직 고르지 않았다면 final_slot은 null, needs_agent_selection은 true로 두게 합니다. "
+    "근거 trace를 위해 candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘기게 합니다. "
 )
 
 
