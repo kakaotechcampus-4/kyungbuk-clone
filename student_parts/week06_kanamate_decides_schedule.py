@@ -203,6 +203,12 @@ def week06_prompt_parts() -> list[str]:
             "개인 일정 생성/조회/수정/삭제, 개인 메모/할일/알림 저장, 개인 참고자료 검색(RAG)은 nana_agent에게 위임합니다. "
             "외부 팀원 일정 조회, 공통 가능 시간 탐색, 그룹 일정 조율 및 회의 시간 결정은 kana_agent에게 위임합니다. "
             "요청이 두 영역에 걸치면 nana_agent를 먼저 호출한 뒤 필요 시 kana_agent를 호출합니다. "
+            "두 영역에 걸치는 예시: "
+            "'나 내일 오후 비어있고 팀원들이랑 회의 잡고 싶어' → nana_agent로 내 일정 조회 후 kana_agent로 공통 시간 탐색. "
+            "'다음 주 월요일 팀 회의 저장해줘' → kana_agent로 그룹 일정 조율 후 nana_agent로 개인 저장. "
+            "일정을 저장·확정하는 행위는 사용자가 '정해줘', '잡아줘', '결정해줘', '저장해줘'처럼 "
+            "명시적으로 확정 의사를 표현한 경우에만 수행하고, "
+            "단순 조회나 가능 시간 확인 요청에서는 저장하지 않습니다. "
             "위임 없이 직접 답변하거나 tool을 생략하면 안 됩니다."
         ),
     ]
@@ -217,7 +223,16 @@ def nana_prompt_parts() -> list[str]:
             "당신은 Nana입니다. 개인 일정 생성/조회/수정/삭제, 개인 메모/할일/알림 저장, "
             "개인 참고자료 검색(RAG)을 담당합니다. "
             "그룹 일정 조율이나 외부 팀원 일정 조회 요청은 담당이 아니므로 Kana에게 문의하도록 안내합니다. "
-            f"오늘 날짜는 {current_app_date_iso()}입니다."
+            f"오늘 날짜는 {current_app_date_iso()}입니다. "
+            "각 요청의 tool 호출 경로는 아래를 따르세요. "
+            "일정/메모/할일/알림 저장 요청: extract_schedule_request로 구조화한 뒤 save_structured_request로 저장합니다. "
+            "저장된 요청 조회: list_saved_requests 또는 search_saved_requests를 사용합니다. "
+            "임시 개인 일정 생성: personal_create_schedule을 사용합니다. "
+            "임시 개인 일정 조회: personal_list_schedules 또는 personal_list_saved_schedules를 사용합니다. "
+            "임시 개인 일정 삭제: personal_delete_schedule을 사용합니다. "
+            "개인 참고자료 추가: add_personal_reference를 사용합니다. "
+            "개인 참고자료 검색: search_personal_references를 사용합니다. "
+            "과거 대화 검색: search_conversation_messages를 사용합니다."
         ),
     ]
 
@@ -259,6 +274,19 @@ def supervisor_system_prompt() -> str:
             ),
         ]
     )
+
+
+def _parse_event_content(content: Any) -> dict[str, Any] | None:
+    if isinstance(content, dict):
+        return content
+    if isinstance(content, str):
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return None
 
 
 def _tool_call_names(events: list[dict[str, Any]]) -> list[str]:
@@ -400,17 +428,17 @@ def find_common_available_slots_dict(
     normalized_date_from = normalize_date_bound(date_from)
     normalized_date_to = normalize_date_bound(date_to)
 
+    all_members_with_me = ["나", *[m for m in normalized_members if m != "나"]]
+
     if busy_rows is None:
-        all_members = ["나", *[m for m in normalized_members if m != "나"]]
         result = collect_member_schedules.invoke({
-            "member_names": all_members,
+            "member_names": all_members_with_me,
             "date_from": normalized_date_from,
             "date_to": normalized_date_to,
         })
         parsed = json.loads(result) if isinstance(result, str) else result
         busy_rows = parsed.get("rows", [])
 
-    all_members_with_me = ["나", *[m for m in normalized_members if m != "나"]]
     return find_common_available_slots_payload(
         member_names=all_members_with_me,
         date_from=normalized_date_from,
@@ -585,22 +613,13 @@ def kana_agent(query: str) -> str:
     final_slot_payload: dict[str, Any] | None = None
     final_decision_payload: dict[str, Any] | None = None
     for event in events:
-        content = event.get("content")
-        if isinstance(content, dict):
-            if "final_slot" in content:
-                final_slot_payload = content
-            if "final_decision" in content:
-                final_decision_payload = content.get("final_decision")
-        elif isinstance(content, str):
-            try:
-                parsed = json.loads(content)
-                if isinstance(parsed, dict):
-                    if "final_slot" in parsed:
-                        final_slot_payload = parsed
-                    if "final_decision" in parsed:
-                        final_decision_payload = parsed.get("final_decision")
-            except (json.JSONDecodeError, TypeError):
-                pass
+        parsed = _parse_event_content(event.get("content"))
+        if parsed is None:
+            continue
+        if "final_slot" in parsed:
+            final_slot_payload = parsed
+        if "final_decision" in parsed:
+            final_decision_payload = parsed.get("final_decision")
 
     return json.dumps(
         {
