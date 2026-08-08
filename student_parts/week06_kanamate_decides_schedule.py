@@ -257,9 +257,11 @@ def supervisor_system_prompt() -> str:
             #   - 반드시 nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답하게 합니다.
             "supervisor는 직접 업무를 처리하지 않고, nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답합니다.",
             "supervisor는 어떤 요청이 Nana 담당이고 어떤 요청이 Kana 담당인지 판단 기준을 prompt에 적은 대로 따릅니다.",
-            "supervisor는 Nana/Kana 하위 agent가 반환한 answer만 근거로 답변을 요약해서 전달하고, "
-            "final_slot_payload에 확정된 시간이 있으면 그 시간을 사용자에게 분명히 알려줍니다.",
-            "하위 agent를 호출할 때는 AgentQueryInput 스키마에 맞춰 query를 넘기고, 하위 agent가 반환한 JSON 문자열을 파싱해 answer/trace/inner_tool_names/final_slot_payload/final_decision_payload를 supervisor trace에 기록합니다.",
+            "supervisor는 하위 agent가 반환한 JSON의 answer 필드만 읽어 자연어로 답합니다. "
+            "trace/inner_tool_names/final_slot_payload 등 나머지 데이터 조합은 시스템이 자동으로 처리하므로, "
+            "supervisor가 직접 JSON을 파싱하거나 그 값을 답변에 그대로 옮겨 적지 않습니다.",
+            "하위 agent의 answer에 확정된 시간이 이미 언급돼 있다면 그 내용을 답변에서 명확히 살려서 전달합니다.",
+            "하위 agent를 호출할 때는 AgentQueryInput 스키마에 맞춰 query를 넘깁니다.",
             "만약 하위 agent의 '본인 담당이 아니에요'류의 요청을 받으면 다른 하위 agent를 다시 호출해야 합니다.",
             "최종 답변은 항상 자연어 문장으로 쓰고, tool이 반환한 JSON이나 구조화된 데이터를 그대로 출력하지 않습니다. "
             "하위 agent의 answer를 사용자가 읽기 쉬운 문장으로 바꿔서 전달합니다.",
@@ -553,6 +555,9 @@ def kana_agent(query: str) -> str:
     inner_tool_names = _tool_call_names(trace)
     final_slot_payload = None
     final_decision_payload = None
+    # decide_final_slot은 kana_tools()에서 아직 비활성화 상태(추가과제 미구현)라 이 루프는
+    # 지금은 항상 None을 반환합니다. 나중에 kana_tools()에서 decide_final_slot을 다시 활성화하면
+    # 별도 수정 없이 이 로직이 그대로 값을 채우도록 미리 맞춰둔 스캐폴딩입니다.
     for event in trace:
         if event.get("event") == "tool_result" and event.get("tool_name") == "decide_final_slot":
             content = event.get("content")
