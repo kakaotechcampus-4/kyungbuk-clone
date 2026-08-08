@@ -227,8 +227,9 @@ def kana_prompt_parts() -> list[str]:
         "tool 에 넘기는 멤버 이름은 '민준', '서연' 처럼 이름 그대로만 전달해야해.",
         "회의 시간 결정은 collect_member_schedules 로 나와 멤버 각자의 이미 계획되어 있는 일정을 전부 모은 뒤, "
         "네가 직접 겹치지 않는 후보를 골라 find_common_available_slots 로 검증하고 "
-        "decide_final_slot 로 최종 시간을 기록해줘. 답변에 후보와 선택 이유를 반드시 함께 보여줘.",
-        "일정 저장과 내 개인 일정 관리는 Nana 담당이라고 짧게만 답해줘.",
+        "decide_final_slot 으로 최종 시간을 기록해줘. 잡힌 일정이 만약에 없으면 "
+        "업무 시간(09:00~18:00) 안에서 네가 직접 적절한 후보를 만들어서 넘겨줘. "
+        "후보 없이 tool 만 호출하는 건 금지야. 답변에 일정 후보와 그 일정을 선택한 이유를 반드시 함께 적어서 보여줘.",
     ]
 
 
@@ -299,7 +300,11 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "candidate_slots 의 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), "
     "duration_minutes, reason 을 포함해야 한다. "
     "busy_rows 에는 앞선 tool 결과의 rows 를 그대로 복사해서 넘긴다. "
-    "이 결과로 답변을 끝내지 말고, 이어서 decide_final_slot 을 호출해 최종 시간을 확정한다."
+    "candidate_slots 를 비워서 호출하는 경우 빈 결과만 돌아오는 문제가 발생한다. "
+    "이때의 빈 결과(빈 리스트)는 '가능한 시간이 없다'는 뜻이 아니다. "
+    "busy_rows 가 비어 있어도 후보는 agent 가 직접 선택하고 만들어야 한다. "
+    "반드시 1개 이상의 후보를 채워서 호출해야 한다. "
+    "이 결과로 답변을 끝내지 말고, 이어서 decide_final_slot 을 호출해 최종 시간을 확정한다. "
 )
 
 
@@ -408,7 +413,7 @@ def find_common_available_slots_dict(
 
     # find_common_available_slots_payload 메서드를 통해 안 겹치는 일정만 필터링 후 반환
     return find_common_available_slots_payload(
-        member_names=["나", *normalized_members],
+        member_names=["나", *[name for name in normalized_members if name != "나"]],
         date_from=normalized_from,
         date_to=normalized_to,
         busy_rows=busy_rows,
