@@ -14,9 +14,12 @@ from fixed.llm import chat_model
 from fixed.runtime_clock import current_app_date_iso
 from fixed.schedule_decision import (
     CommonSlotCandidate,
+    date_range,
     decide_final_slot_payload,
     find_common_available_slots_payload,
     normalize_date_bound,
+    normalize_llm_candidate_slots,
+    parse_time_minutes,
 )
 from student_parts.week01_wake_up_nana import join_system_prompt
 from student_parts.week02_structure_natural_language_requests import extract_schedule_request
@@ -148,9 +151,11 @@ _SUPERVISOR_AGENT: Any | None = None
 #     하위 agent 역할과 담당 경계, Kana의 조율 3단(수집 → 후보 검증 → 최종 확정) 호출 규칙입니다.
 #     Kana는 다른 주차 prompt를 누적하지 않으므로 오늘 날짜도 여기서 직접 알려 줍니다.
 #
-#   - [추가] _find_common_available_slots_note(...)
+#   - [추가] _free_window_exists(...) / _find_common_available_slots_note(...)
 #     후보 검증 결과에 다음 행동을 실어 보냅니다. tool description은 호출 전 근거이고
 #     이 note는 결과를 받은 뒤의 판단 지점이라, 같은 계약을 두 지점에 함께 둡니다.
+#     범위 전체가 이미 차 있으면 "다른 시간을 골라 다시 호출하라"가 만족될 수 없어 재호출이 반복되므로,
+#     _free_window_exists()로 그 상황을 먼저 판정해 note를 재시도 대신 종료 안내로 바꿉니다.
 #
 #   - [메인] _run_subagent(agent, query) / _final_payloads_from_events(events) / _kana_result_note(...)
 #     하위 agent 실행과 trace 정리, Kana trace에서 최종 시간 payload 끌어올리기,
@@ -282,6 +287,9 @@ KANA_TOOL_CALL_PROMPT = """Kana tool 호출 규칙:
 - 조율 요청의 기본 동작은 확정입니다. 후보를 나열하고 사용자에게 고르라고 되묻지 마세요.
   "후보만 알려줘", "어떤 시간대가 비어 있어?"처럼 나열만 명시적으로 요청한 경우에만
   final_slot을 null, needs_agent_selection을 true로 두고 reason에 이유를 적습니다.
+- 요청 범위에 회의 길이만큼 비는 구간이 아예 없다는 결과(range_fully_busy)를 받으면 후보를 다시 만들지 않습니다.
+  decide_final_slot을 needs_agent_selection=true로 호출해 마무리하고,
+  사용자에게 가능한 시간이 없다는 사실과 날짜 범위를 넓힐지를 함께 물어봅니다.
 - "후보만 알려줘"도 밟는 절차는 똑같습니다. candidate_slots를 직접 채워 find_common_available_slots를 부르고,
   decide_final_slot을 needs_agent_selection=true로 부른 뒤 후보를 안내합니다.
   후보를 채우지도 않은 채 "가능한 시간이 없다"거나 "후보를 직접 골라 달라"고 답하지 않습니다.
@@ -466,18 +474,68 @@ class AgentQueryInput(BaseModel):
     query: str
 
 
+def _free_window_exists(
+    *,
+    busy_rows: list[dict[str, Any]],
+    date_from: str,
+    date_to: str,
+    duration_minutes: int,
+    workday_start: str,
+    workday_end: str,
+) -> bool:
+    """요청 범위 안에 duration_minutes만큼 연속으로 비는 구간이 하나라도 있는지 봅니다.
+
+    후보를 대신 고르는 것이 아니라 "더 고를 수 있는가"만 판정합니다.
+    범위 전체가 이미 차 있으면 "다른 시간을 골라 다시 호출하라"는 안내가 영원히 만족될 수 없어
+    같은 호출이 반복되므로, 그때는 note를 재시도가 아니라 종료 쪽으로 바꾸기 위해 필요합니다.
+    """
+
+    work_start = parse_time_minutes(workday_start, 9 * 60)
+    work_end = parse_time_minutes(workday_end, 18 * 60)
+    needed = max(30, int(duration_minutes or 60))
+    for day in date_range(date_from, date_to):
+        blocked: list[tuple[int, int]] = []
+        for row in busy_rows:
+            if str(row.get("date") or "") != day:
+                continue
+            start = max(work_start, parse_time_minutes(row.get("start_time"), 0))
+            end = min(work_end, parse_time_minutes(row.get("end_time"), 24 * 60))
+            if end > start:
+                blocked.append((start, end))
+        cursor = work_start
+        for start, end in sorted(blocked):
+            if start - cursor >= needed:
+                return True
+            cursor = max(cursor, end)
+        if work_end - cursor >= needed:
+            return True
+    return False
+
+
 def _find_common_available_slots_note(
     *,
     requested_candidate_count: int,
     accepted_candidate_count: int,
+    rejected_candidate_count: int,
+    truncated_candidate_count: int,
     busy_row_count: int,
+    free_window_exists: bool,
 ) -> str:
     """후보 검증 결과에 다음 행동을 함께 실어 보냅니다.
 
     이 tool은 후보를 대신 계산하지 않으므로 candidate_slots가 비면 결과도 조용히 0건입니다.
     description(호출 전 근거)만으로는 확률이라, tool 결과(호출 후 판단 지점)에도 같은 계약을 남깁니다.
+    재시도를 유도하는 note는 "다시 하면 되는 상황"에서만 안전하므로, 빈 구간이 아예 없을 때는
+    같은 안내가 무한 재호출이 되기 전에 종료 조건을 대신 알려 줍니다.
     """
 
+    if not free_window_exists:
+        return (
+            f"요청한 날짜 범위와 업무 시간 안에는 {busy_row_count}건의 일정 때문에 "
+            "회의 길이만큼 연속으로 비는 구간이 없습니다. 후보를 다시 골라 이 tool을 재호출하지 마세요. "
+            "decide_final_slot을 final_slot=null, needs_agent_selection=true로 호출해 마무리하고, "
+            "사용자에게는 가능한 시간이 없다는 사실과 함께 날짜 범위를 넓힐지 물어보세요."
+        )
     if not requested_candidate_count:
         return (
             f"이 tool은 후보를 계산하지 않습니다. 후보 0건은 '가능한 시간이 없다'는 뜻이 아니라 "
@@ -489,12 +547,17 @@ def _find_common_available_slots_note(
         return (
             f"넘긴 후보 {requested_candidate_count}건이 모두 제외됐습니다. "
             "busy_rows와 겹치거나, 업무 시간 밖이거나, duration_minutes보다 짧은 후보입니다. "
-            "busy_rows를 다시 읽고 다른 시간을 골라 호출하세요."
+            "비어 있는 구간은 남아 있으니 busy_rows를 다시 읽고 다른 시간을 골라 한 번 더 호출하세요. "
+            "그래도 못 찾으면 decide_final_slot을 needs_agent_selection=true로 호출해 마무리하세요."
         )
-    rejected = requested_candidate_count - accepted_candidate_count
-    rejected_text = f" 겹침·업무시간·길이 조건으로 {rejected}건은 제외했습니다." if rejected else ""
+    detail: list[str] = []
+    if rejected_candidate_count:
+        detail.append(f"겹침·업무시간·길이 조건으로 {rejected_candidate_count}건 제외")
+    if truncated_candidate_count:
+        detail.append(f"limit 초과로 {truncated_candidate_count}건 생략")
+    detail_text = f" ({', '.join(detail)})" if detail else ""
     return (
-        f"후보 {accepted_candidate_count}건이 검증됐습니다.{rejected_text} "
+        f"후보 {accepted_candidate_count}건이 검증됐습니다{detail_text}. "
         "여기서 답변을 끝내지 말고 이 candidate_slots로 decide_final_slot을 호출해 "
         "그중 하나를 최종 시간으로 확정하세요. 사용자가 나열만 요청한 경우에만 미확정으로 둡니다."
     )
@@ -549,15 +612,45 @@ def find_common_available_slots_dict(
         candidate_slots=candidate_slots,
         llm_reason=llm_reason,
     )
+    # "검증에서 탈락한 후보"와 "limit 때문에 결과에서 잘린 후보"는 원인이 다르므로 따로 셉니다.
+    # limit을 후보 수만큼 풀어 한 번 더 정규화하면 검증만 통과한 개수를 알 수 있습니다.
+    validated_candidate_count = len(
+        normalize_llm_candidate_slots(
+            candidate_slots=candidate_slots,
+            llm_reason=llm_reason,
+            date_from=normalized_date_from,
+            date_to=normalized_date_to,
+            busy_rows=rows,
+            duration_minutes=duration_minutes,
+            workday_start=workday_start,
+            workday_end=workday_end,
+            limit=max(requested_candidate_count, 1),
+        )
+    )
+    accepted_candidate_count = len(payload["candidate_slots"])
+    free_window_exists = _free_window_exists(
+        busy_rows=rows,
+        date_from=normalized_date_from,
+        date_to=normalized_date_to,
+        duration_minutes=duration_minutes,
+        workday_start=workday_start,
+        workday_end=workday_end,
+    )
+
     # decide_final_slot에 그대로 넘길 값이라 결과에 함께 남깁니다.
     payload["date_from"] = normalized_date_from
     payload["date_to"] = normalized_date_to
     payload["duration_minutes"] = duration_minutes
-    payload["rejected_candidate_count"] = requested_candidate_count - len(payload["candidate_slots"])
+    payload["rejected_candidate_count"] = requested_candidate_count - validated_candidate_count
+    payload["truncated_candidate_count"] = validated_candidate_count - accepted_candidate_count
+    payload["range_fully_busy"] = not free_window_exists
     payload["note"] = _find_common_available_slots_note(
         requested_candidate_count=requested_candidate_count,
-        accepted_candidate_count=len(payload["candidate_slots"]),
+        accepted_candidate_count=accepted_candidate_count,
+        rejected_candidate_count=payload["rejected_candidate_count"],
+        truncated_candidate_count=payload["truncated_candidate_count"],
         busy_row_count=len(rows),
+        free_window_exists=free_window_exists,
     )
     return payload
 

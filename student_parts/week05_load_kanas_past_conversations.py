@@ -151,6 +151,8 @@ _WEEK05_AGENT: Any | None = None
 #   - [메인] _collect_member_schedules(...)
 #     내 일정과 외부 멤버 일정을 같은 member_name/title/date/start_time/end_time/notes row 구조로 합칩니다.
 #     외부 멤버 이름과 날짜 범위는 fixed/external_people_store.py helper로 정규화합니다.
+#     반환 member_names는 rows에 실제로 들어간 수집 대상("나" + 외부 멤버)이고,
+#     호출자가 넘긴 목록은 requested_member_names로 따로 남겨 둘을 구분할 수 있게 합니다.
 #
 #   - [메인] search_previous_conversations(...)
 #     외부 SQLite/MCP 서버에 저장된 과거 대화를 검색합니다. wrapper는 query/member_names/limit를 넘기고 결과 문자열을 그대로 반환합니다.
@@ -476,6 +478,10 @@ def _collect_member_schedules(
     external_member_names = [
         name for name in requested_member_names if name != PERSONAL_SHARED_MEMBER_NAME
     ]
+    # rows에는 호출자가 "나"를 넣지 않아도 내 일정이 항상 들어갑니다. 수집 대상 목록에서만
+    # "나"가 빠지면 같은 payload 안에서 rows의 소유자와 member_names의 범위가 어긋납니다.
+    # 입력에 "나"가 이미 있어도 정확히 한 번만 남도록 앞에 고정해 둡니다.
+    collected_member_names = [PERSONAL_SHARED_MEMBER_NAME, *external_member_names]
 
     rows = [
         _personal_busy_row(schedule)
@@ -499,7 +505,8 @@ def _collect_member_schedules(
     rows.sort(key=_busy_row_sort_key)
 
     return {
-        "member_names": requested_member_names,
+        "member_names": collected_member_names,
+        "requested_member_names": requested_member_names,
         "external_member_names": external_member_names,
         "date_from": normalized_date_from,
         "date_to": normalized_date_to,
