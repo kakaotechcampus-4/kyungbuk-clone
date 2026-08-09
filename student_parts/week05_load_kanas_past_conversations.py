@@ -188,20 +188,27 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
     return str(schedule.get("session_id") or DEFAULT_SESSION_SCOPE)
 
 
-def _personal_schedules_for_current_scope(date_from: str, date_to: str) -> list[dict[str, Any]]:
-    """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
+SAVED_SCHEDULE_FETCH_LIMIT = 200
+
+
+def _personal_schedules_for_current_scope(date_from: str, date_to: str) -> tuple[list[dict[str, Any]], bool]:
+    """SQLite 저장 일정과 현재 대화의 임시 일정을 합치고, 잘렸는지 여부를 함께 반환합니다."""
 
     date_start, date_end = normalize_external_schedule_date_bounds(None, date_from, date_to)
 
     store = AppSQLiteStore(CONFIG.app_db_path)
-    db_schedules = store.list_schedules(date_from=date_start, date_to=date_end, limit=200)
+    db_schedules = store.list_schedules(
+        date_from=date_start, date_to=date_end, limit=SAVED_SCHEDULE_FETCH_LIMIT
+    )
+
+    truncated = len(db_schedules) >= SAVED_SCHEDULE_FETCH_LIMIT
 
     saved_schedule_ids = {row["schedule_id"] for row in db_schedules}
     for s in PERSONAL_SCHEDULES:
         if _schedule_scope(s) == current_session_scope():
             if s.get("id") not in saved_schedule_ids:
                 db_schedules.append(s)
-    return db_schedules
+    return db_schedules, truncated
 
 
 def json_payload(payload: dict[str, Any]) -> str:
@@ -297,29 +304,36 @@ def _my_schedule_notes(request: StructuredRequest) -> str:
     return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
 
 
-def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """같은 일정이 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다.
+def _schedule_dedupe_key(row: dict[str, Any]) -> tuple[str, ...]:
+    """출처가 다른 두 row가 같은 일정인지 비교할 때 쓰는 키입니다."""
 
-    앱 DB에 저장된 내 일정은 공유 저장소에도 자동 동기화되므로, member_names에 "나"가
-    들어온 호출에서는 같은 일정이 두 경로로 들어옵니다. 앞에 오는 앱 DB row를 남깁니다.
+    return (
+        str(row.get("member_name") or "").strip(),
+        str(row.get("date") or "").strip(),
+        str(row.get("start_time") or "").strip() or "미정",
+        strip_parenthetical_text(str(row.get("title") or "")),
+    )
 
-    두 경로가 같은 일정을 서로 다르게 다듬기 때문에 값을 그대로 비교하면 안 됩니다.
-      - 공유 저장소는 제목에서 소괄호를 지우고 공백을 하나로 줄입니다. 앱 DB는 원문을 둡니다.
-      - 앱 DB 경로만 end_time "미정"을 "18:00"으로 바꿉니다. 그래서 end_time은 키에서 뺍니다.
-        같은 사람이 같은 날 같은 시각에 시작하는 같은 제목의 일정은 하나로 봅니다.
-      - start_time이 비어 있으면 공유 저장소는 "미정"으로 저장하므로 같은 값으로 맞춥니다.
+
+def _dedupe_external_rows(
+    my_rows: list[dict[str, Any]], external_rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """앱 DB 일정과 겹치는 외부 row만 걸러냅니다.
+
+    중복은 "같은 일정이 앱 DB와 공유 저장소 두 곳에 있을 때"만 생깁니다.
+    앱 DB row끼리는 서로 다른 저장 row이므로 같은 일정일 수 없고, 공유 저장소 row끼리도 마찬가지입니다.
+    그래서 같은 출처 안에서는 비교하지 않고, 출처가 다른 경우에만 비교합니다.
+
+    한 목록 안에서까지 비교하면 "회의 (A팀)"과 "회의 (B팀)"처럼 제목의 괄호만 다른
+    별개의 일정이 하나로 합쳐집니다. 공유 저장소가 제목의 괄호를 지우고 저장하기 때문에
+    비교 키에서도 괄호를 지워야 하는데, 그 때문에 생기는 오탐입니다.
+
+    남기는 쪽은 앱 DB row입니다. notes가 "Nana 그룹 일정 · 참석자: ..."처럼 더 정확하고,
+    공유 저장소 쪽은 "앱 개인 일정 자동 동기화"로 덮여 있습니다.
     """
 
-    deduped: dict[tuple[str, ...], dict[str, Any]] = {}
-    for row in rows:
-        key = (
-            str(row.get("member_name") or "").strip(),
-            str(row.get("date") or "").strip(),
-            str(row.get("start_time") or "").strip() or "미정",
-            strip_parenthetical_text(str(row.get("title") or "")),
-        )
-        deduped.setdefault(key, row)
-    return list(deduped.values())
+    my_keys = {_schedule_dedupe_key(row) for row in my_rows}
+    return [row for row in external_rows if _schedule_dedupe_key(row) not in my_keys]
 
 
 def _has_time(value: Any) -> bool:
@@ -337,6 +351,7 @@ def _collect_member_schedules(
     date_from: str,
     date_to: str,
     personal_schedules: list[dict[str, Any]],
+    personal_truncated: bool = False,
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
@@ -380,7 +395,6 @@ def _collect_member_schedules(
             else:
                 lookup_error = {"reason": "외부 응답의 rows가 list가 아닙니다."}
     except Exception as exc:
-
         lookup_error = {
             "reason": f"외부 일정 조회 중 오류가 발생했습니다: {exc}",
             "error_type": type(exc).__name__,
@@ -400,7 +414,7 @@ def _collect_member_schedules(
             "time_complete": _has_time(sr.start_time) and _has_time(sr.end_time),
         })
 
-    all_rows = _dedupe_schedule_rows(my_rows + external_rows)
+    all_rows = my_rows + _dedupe_external_rows(my_rows, external_rows)
     summary = external_schedule_summary(all_rows)
 
     if any(not row["time_complete"] for row in all_rows):
@@ -412,10 +426,26 @@ def _collect_member_schedules(
         summary = "외부 멤버 일정 조회에 실패했습니다. 아래 목록에는 외부 멤버 일정이 빠져 있으므로, " \
                   "외부 멤버에게 일정이 없다거나 한가하다고 답하지 마시오.\n" + summary
 
+    if personal_truncated:
+        summary = f"내 저장 일정이 {SAVED_SCHEDULE_FETCH_LIMIT}건 한도에 걸려 일부만 조회됐습니다. " \
+                  "요청한 기간의 뒤쪽 일정이 빠져 있을 수 있으므로 이 목록을 전부라고 단정하지 말고, " \
+                  "기간을 좁혀 다시 조회하도록 사용자에게 안내하시오.\n" + summary
+
+    if not all_rows:
+        queried = f"{date_start or '제한 없음'} ~ {date_end or '제한 없음'}"
+        summary = f"이 조회 범위({queried})에는 아무 일정도 없습니다. " \
+                  "이것은 그 기간이 비어 있다는 뜻일 뿐, 해당 멤버가 한가하다는 뜻이 아닙니다. " \
+                  "\"언제든 만날 수 있다\"거나 \"일정이 없다\"고 단정하지 마시오. " \
+                  "사용자가 날짜를 말하지 않았다면 과거를 포함한 더 넓은 범위로 다시 조회하고, " \
+                  "그래도 비어 있으면 어떤 범위를 조회했는지 밝히며 답하시오.\n" + summary
+
     return {
         "rows": all_rows,
         "schedule_summary": summary,
         "external_lookup": {"ok": lookup_error is None, "error": lookup_error},
+        "personal_schedules_truncated": personal_truncated,
+        "personal_schedules_fetch_limit": SAVED_SCHEDULE_FETCH_LIMIT,
+        "queried_range": {"date_from": date_start, "date_to": date_end},
     }
 
 
@@ -528,12 +558,16 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
     내 일정을 빼고 답해서는 안 됩니다. 특정 멤버의 일정만 알려주면 되는 요청이라면
     대신 extract_schedules_from_history를 사용합니다.
 
-    사용자가 날짜를 말하지 않았다면 date_from/date_to를 오늘 하루나 이번 달로 좁히지 말고,
-    최근 두세 달 전부터 다음 달까지처럼 과거를 포함한 넉넉한 범위를 넣으십시오.
-    결과가 0건이면 범위를 넓혀 다시 조회하고, 결과가 비어 있을 때는 어떤 날짜 범위를
-    조회했는지 반드시 답변에 밝히십시오.
+    사용자가 날짜를 말하지 않았다면 date_from/date_to를 오늘 이후로 잡지 마십시오.
+    일정 기록은 대부분 과거 날짜에 있으므로, 오늘부터 앞으로만 조회하면 거의 항상 0건이 나옵니다.
+    날짜 언급이 없으면 date_from을 오늘보다 최소 3개월 이전으로, date_to를 다음 달 말로 잡으십시오.
+
+    결과가 0건이면 그 기간이 비어 있다는 뜻일 뿐 상대가 한가하다는 뜻이 아닙니다.
+    "언제든 만날 수 있다"거나 "일정이 없다"고 단정하지 말고, 범위를 더 넓혀 다시 조회하십시오.
+    그래도 0건이면 어떤 날짜 범위를 조회했는지 반드시 답변에 밝히십시오.
 
     반환값 해석:
+    - queried_range는 실제로 조회한 날짜 범위입니다. 결과가 비어 있을 때 이 값을 답변에 밝힙니다.
     - schedule_summary 맨 앞에 경고 문장이 붙어 있으면 그 지시를 우선 따릅니다.
     - external_lookup.ok가 false이면 외부 조회가 실패한 것이므로, rows에 그 멤버가 없다는 이유로
       한가하다고 답하지 말고 조회에 실패했다는 사실을 사용자에게 알립니다.
@@ -541,11 +575,13 @@ def collect_member_schedules(member_names: list[str], date_from: str, date_to: s
       일정이므로, 그 시간대를 단정하지 말고 사용자에게 정확한 시간을 확인합니다.
     """
 
+    personal_schedules, personal_truncated = _personal_schedules_for_current_scope(date_from, date_to)
     result = _collect_member_schedules(
         member_names=member_names,
         date_from=date_from,
         date_to=date_to,
-        personal_schedules=_personal_schedules_for_current_scope(date_from, date_to),
+        personal_schedules=personal_schedules,
+        personal_truncated=personal_truncated,
     )
 
     return json_payload(result)

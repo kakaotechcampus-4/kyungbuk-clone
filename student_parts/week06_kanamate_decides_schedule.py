@@ -212,7 +212,12 @@ def week06_prompt_parts() -> list[str]:
         "\"민준이 언제 바빠?\"와 \"민준이랑 언제 만날까?\"는 kana_agent다.",
         "요청에 내 일정이 함께 언급돼도 다른 사람과 시간을 맞추는 것이 목적이면 kana_agent로 위임하시오. "
         "예: \"내 일정 보여줘\"는 nana_agent, \"내 일정이랑 민준이 일정 맞춰줘\"는 kana_agent다.",
-        "어느 쪽인지 판단이 어려우면 사용자에게 무엇을 원하는지 되묻고, 임의로 한쪽을 고르지 마시오.",
+        "요청에 어떤 동작(조회·저장·수정·삭제·조율)도, 사람 이름도, 날짜도 없어서 "
+        "무엇을 하려는지 자체를 알 수 없는 경우에만 사용자에게 무엇을 원하는지 되묻고, "
+        "임의로 한쪽을 고르지 마시오. "
+        "예: \"일정 좀 도와줘\", \"뭐 좀 물어볼게\"가 여기에 해당한다. "
+        "반대로 동작이나 사람 이름이 하나라도 있으면 되묻지 말고 위 기준으로 판단해 위임하시오. "
+        "예: \"민준이\"만 나와도 다른 사람 데이터가 필요하므로 kana_agent다.",
     ]
 
 
@@ -232,9 +237,11 @@ def nana_prompt_parts() -> list[str]:
         "네가 담당하지 않는 것은 앱 밖의 데이터다. 외부 멤버의 과거 대화 검색, 외부 멤버의 일정이나 바쁜 시간 조회, "
         "공유 일정 저장소 조회, 나와 다른 사람의 시간을 맞추는 조율은 Kana 담당이다. "
         "판단 기준은 사람 이름이 나왔는지가 아니라 앱에 저장된 데이터로 처리할 수 있는 일인지다.",
-        "담당이 아닌 요청을 받으면 무엇이 담당 밖인지 한 문장으로만 알리고 끝내시오. "
-        "이 답은 사용자에게 바로 보이는 것이 아니라 supervisor가 읽고 다른 에이전트에게 다시 위임하는 데 쓰이므로, "
-        "길게 설명하거나 대안을 제안하지 마시오.",
+        "담당이 아닌 요청을 받으면 무엇이 담당 밖인지 한 문장으로만 알리고, "
+        "답변 마지막 줄에 다음 형식을 그대로 한 줄 추가하시오.\n"
+        "HANDOFF: kana_agent | 담당이 아닌 이유\n"
+        "이 줄은 supervisor가 다른 담당자에게 다시 넘기기 위해 읽는 표시이므로 형식을 바꾸지 말고, "
+        "담당인 요청에는 절대 붙이지 마시오. 길게 설명하거나 대안을 제안하지도 마시오.",
         "담당 밖 데이터를 추측해서 답하지 마시오. 외부 멤버의 일정이나 공유 저장소 내용은 네 도구로 확인할 수 없으므로, "
         "모르는 것을 아는 것처럼 답하지 말고 담당이 아니라고만 알리시오.",
         "조회 요청에는 extract_schedule_request를 호출하지 마시오. "
@@ -242,8 +249,15 @@ def nana_prompt_parts() -> list[str]:
         "personal_list_saved_schedules로 바로 조회하시오.",
         "무엇을 할 수 있는지, 누가 담당하는지 묻기만 한 질문에는 도구를 호출해 실제로 저장·수정·삭제를 실행하지 마시오. "
         "\"누가 담당해?\", \"저장할 수 있어?\", \"이런 것도 돼?\"처럼 능력을 묻는 질문에는 말로만 답하시오. "
-        "실제 저장은 사용자가 무엇을 저장할지 구체적으로 요청했을 때만 하시오. "
-        "제목이나 날짜가 비어 있는 채로 일정을 저장하지 말고, 필요한 정보가 없으면 먼저 사용자에게 물어보시오.",
+        "실제 저장은 사용자가 무엇을 저장할지 구체적으로 요청했을 때만 하시오.",
+        "save_structured_request는 다음 세 가지가 모두 갖춰졌을 때만 호출하시오. "
+        "① 사용자가 무언가를 저장·등록해달라고 요청했고 ② 저장할 일정의 제목이 있고 ③ 날짜가 있다. "
+        "셋 중 하나라도 없으면 저장하지 말고 없는 항목을 사용자에게 물어보시오. "
+        "특히 extract_schedule_request 결과의 kind가 \"unknown\"이거나 title이나 date가 비어 있으면 "
+        "그 결과를 save_structured_request에 넘기지 마시오. "
+        "빈 제목이나 빈 날짜로 저장하면 앱 DB에 쓸모없는 일정이 남는다.",
+        "인사나 잡담(\"안녕\", \"고마워\", \"수고했어\")에는 도구를 호출하지 말고 인사로만 답하시오. "
+        "묻지 않은 일정 목록을 먼저 나열하지 마시오.",
     ]
 
 
@@ -263,12 +277,14 @@ def kana_prompt_parts() -> list[str]:
         "비어 있을 때만 그렇게 답하시오. 조회하지 않은 멤버에 대해 일정이 없다고 단정하지 마시오.",
         "일정을 앱에 저장하거나 저장된 일정을 수정·삭제하는 일은 네 담당이 아니라 Nana 담당이다. "
         "조율해서 시간을 정한 뒤 그 일정을 저장해달라는 요청을 받으면, 정한 시간을 답에 명확히 적고 "
-        "저장은 Nana 담당이라고 한 문장으로 알리시오.",
+        "저장은 Nana 담당이라고 알린 뒤 아래 재위임 표시를 붙이시오.",
         "공유 일정 저장소에 일정을 새로 등록하거나 삭제하는 기능은 이번 주차에서 지원하지 않는다. "
         "공유 일정 조회는 list_shared_schedules로 지원하므로 조회 요청까지 거절하지 마시오.",
-        "담당이 아닌 요청을 받으면 무엇이 담당 밖인지 한 문장으로만 알리고 끝내시오. "
-        "이 답은 사용자에게 바로 보이는 것이 아니라 supervisor가 읽고 다른 에이전트에게 다시 위임하는 데 쓰이므로, "
-        "길게 설명하거나 대안을 제안하지 마시오.",
+        "담당이 아닌 요청을 받으면 무엇이 담당 밖인지 한 문장으로만 알리고, "
+        "답변 마지막 줄에 다음 형식을 그대로 한 줄 추가하시오.\n"
+        "HANDOFF: nana_agent | 담당이 아닌 이유\n"
+        "이 줄은 supervisor가 다른 담당자에게 다시 넘기기 위해 읽는 표시이므로 형식을 바꾸지 말고, "
+        "담당인 요청에는 절대 붙이지 마시오. 길게 설명하거나 대안을 제안하지도 마시오.",
         "여러 사람이 함께 가능한 시간을 물으면, collect_member_schedules로 모은 rows를 근거로 "
         "겹치지 않는 시간대를 직접 골라 설명하시오. 근거 없이 시간을 만들어내지 말고, "
         "rows에 없는 사람의 일정을 아는 것처럼 답하지 마시오.",
@@ -290,25 +306,35 @@ def supervisor_system_prompt() -> str:
     return join_system_prompt(
         [
             *week06_prompt_parts(),
-            "너는 실행 단계에서 반드시 nana_agent 또는 kana_agent 중 하나를 먼저 호출해야 한다. "
-            "하위 에이전트를 호출하지 않은 채 직접 답을 만들지 마시오. "
+            "너는 실행 단계에서 요청 유형을 판단할 수 있으면 반드시 nana_agent 또는 kana_agent 중 "
+            "하나를 먼저 호출해야 한다. 하위 에이전트를 호출하지 않은 채 직접 답을 만들지 마시오. "
             "일정이 있는지 없는지, 언제가 가능한지를 하위 에이전트 결과 없이 추측해서 답하면 안 된다.",
             "하위 에이전트 결과의 answer를 근거로 사용자에게 답하시오. "
             "answer에 없는 일정이나 시간을 새로 만들어내지 말고, 결과가 비어 있으면 비어 있다고 그대로 전하시오.",
             "하위 에이전트 결과에 error가 들어 있으면 실행이 실패한 것이다. "
-            "그 경우 일정이 없다거나 한가하다고 답하지 말고, 요청을 처리하지 못했다는 사실과 "
-            "error의 reason을 사용자에게 알리시오. 필요하면 다시 시도해도 되는지 물어보시오.",
-            "하위 에이전트가 자기 담당이 아니라고 답하면, 그 답을 사용자에게 전하지 말고 "
-            "즉시 다른 하위 에이전트를 호출해 다시 위임하시오. "
-            "kana_agent가 \"Nana 담당\"이라고 하면 nana_agent를, nana_agent가 \"Kana 담당\"이라고 하면 "
-            "kana_agent를 이어서 호출한다. 두 에이전트가 모두 담당이 아니라고 한 경우에만 "
-            "사용자에게 지원하지 않는다고 답하시오.",
+            "그 경우 일정이 없다거나 한가하다고 답하지 말고 error의 user_message를 사용자에게 전하시오. "
+            "error_type과 debug_reason은 내부 확인용이므로 사용자에게 보여주지 마시오. "
+            "필요하면 다시 시도해도 되는지 물어보시오.",
+            "하위 에이전트 결과에 handoff_to가 채워져 있으면 그 에이전트가 담당이 아니라는 뜻이다. "
+            "그때는 answer를 사용자에게 전하지 말고 handoff_to가 가리키는 에이전트를 즉시 호출해 "
+            "같은 요청을 다시 위임하시오. 두 에이전트가 모두 handoff_to를 채워 돌려준 경우에만 "
+            "사용자에게 지원하지 않는다고 답하시오. "
+            "handoff_to가 비어 있으면 재위임하지 마시오. handled가 false여도 handoff_to가 없으면 "
+            "담당이 아니라서가 아니라 실행이 실패한 것이므로, 위의 error 규칙에 따라 처리하시오. "
+            "handoff_to와 handoff_reason은 내부 판단용이므로 사용자에게 그대로 보여주지 마시오.",
             "Nana와 Kana는 사용자에게 보이는 이름이므로 답변에 그대로 써도 된다. "
             "누가 어떤 일을 맡는지 묻는 질문에는 담당자 이름을 밝혀 답하시오. "
             "다만 \"에이전트\", \"tool\", \"limit\" 같은 내부 용어는 쓰지 말고, "
             "네가 하위 담당자 본인인 것처럼 말하지 마시오. "
             "\"Nana 에이전트, 즉 제가 담당합니다\"가 아니라 \"일정 저장은 Nana가 맡습니다\"처럼 답하시오. "
             "하위 답변에 limit 값이나 도구 이름 같은 내부 정보가 섞여 있으면 그대로 옮기지 말고 빼시오.",
+            "위의 \"반드시 하위 에이전트를 먼저 호출하라\"는 규칙에는 예외가 하나 있다. "
+            "사용자가 무엇을 하려는지 자체를 알 수 없는 요청에는 "
+            "nana_agent도 kana_agent도 호출하지 말고 사용자에게 무엇을 원하는지만 되물으시오. "
+            "\"일정 좀 도와줘\", \"뭐 좀 물어볼게\", \"안녕\"이 여기에 해당한다. "
+            "이런 요청에 하위 에이전트를 호출하면 담당자가 빈 일정을 저장하거나 "
+            "묻지 않은 목록을 나열하게 되므로 호출 자체를 하지 않아야 한다. "
+            "되물을 때도 일정 정보를 지어내 답해서는 안 되고, 사용자가 답해서 유형이 정해지면 그때 위임하시오.",
         ]
     )
 
@@ -317,20 +343,87 @@ def _tool_call_names(events: list[dict[str, Any]]) -> list[str]:
     return [event["tool_name"] for event in events if event.get("event") == "tool_call" and event.get("tool_name")]
 
 
-def _trace_summary(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """하위 agent trace에서 호출 순서만 남기고 arguments와 content는 버립니다.
+HANDOFF_PREFIX = "HANDOFF:"
 
-    이 값은 tool 반환 JSON에 담겨 supervisor의 LLM 컨텍스트로 들어갑니다.
-    원본 event에는 filters, limit, schedule_id, request_id 같은 내부 값이 들어 있어
-    supervisor가 answer 대신 그 값을 읽고 답변에 섞는 일이 있었습니다.
-    supervisor는 호출 순서만 알면 되므로 나머지는 남기지 않습니다.
+
+def _split_handoff(answer: str) -> tuple[str, str | None, str | None]:
+    """하위 agent 답변에서 재위임 표시를 떼어내고 (사용자용 답변, 대상, 이유)로 나눕니다.
+
+    담당이 아닐 때 하위 agent가 마지막 줄에 `HANDOFF: nana_agent | 이유` 형태로 표시합니다.
+    답변 문장을 의미로 해석해 "Nana 담당"인지 판단하면 모델이 표현을 조금만 바꿔도
+    재위임이 누락되므로, 고정된 토큰 한 줄만 맞추게 했습니다.
+    표시 줄은 사용자에게 보일 필요가 없으므로 answer에서 제거합니다.
     """
 
-    return [
-        {"event": event.get("event"), "tool_name": event.get("tool_name")}
-        for event in events
-        if event.get("tool_name")
-    ]
+    lines = [line for line in (answer or "").splitlines()]
+    for index in range(len(lines) - 1, -1, -1):
+        stripped = lines[index].strip()
+        if not stripped.startswith(HANDOFF_PREFIX):
+            continue
+        body = stripped[len(HANDOFF_PREFIX):].strip()
+        target, _, reason = body.partition("|")
+        target = target.strip()
+        if target not in {"nana_agent", "kana_agent"}:
+            continue
+        del lines[index]
+        return "\n".join(lines).strip(), target, reason.strip() or None
+    return (answer or "").strip(), None, None
+
+
+_RESULT_LIST_KEYS = ("rows", "schedules", "hits", "messages", "deleted", "candidates")
+
+
+def _result_summary(content: Any) -> dict[str, Any] | None:
+    """tool 결과에서 검증에 필요한 요약만 뽑습니다.
+
+    사용자 데이터(제목, 시간, 본문)와 내부 식별자(schedule_id, request_id)는 남기지 않고,
+    성공 여부와 개수처럼 "호출됐다"와 "정상 결과를 얻었다"를 구분할 수 있는 값만 남깁니다.
+    """
+
+    if not isinstance(content, dict):
+        return None
+
+    summary: dict[str, Any] = {}
+    if "ok" in content:
+        summary["ok"] = bool(content.get("ok"))
+    for key in _RESULT_LIST_KEYS:
+        value = content.get(key)
+        if isinstance(value, list):
+            summary[f"{key}_count"] = len(value)
+
+    error = content.get("error")
+    if isinstance(error, dict) and error.get("error_type"):
+        summary["error_type"] = error["error_type"]
+    elif isinstance(error, str) and error and "ok" not in summary:
+        summary["ok"] = False
+
+    external_lookup = content.get("external_lookup")
+    if isinstance(external_lookup, dict):
+        summary["external_lookup_ok"] = bool(external_lookup.get("ok"))
+
+    return summary or None
+
+
+def _trace_summary(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """하위 agent trace에서 호출 순서와 결과 요약만 남기고 나머지는 버립니다.
+
+    이 값은 tool 반환 JSON에 담겨 supervisor의 LLM 컨텍스트로 들어갑니다.
+    원본 event에는 filters, limit, schedule_id, request_id 같은 내부 값과 사용자 데이터가
+    들어 있어, supervisor가 answer 대신 그 값을 읽고 답변에 섞는 일이 있었습니다.
+    그렇다고 tool 이름만 남기면 그 호출이 성공했는지 실패 payload를 받았는지 확인할 수 없어,
+    _result_summary로 ok/개수/error_type 같은 안전한 요약만 함께 남깁니다.
+    """
+
+    summarized: list[dict[str, Any]] = []
+    for event in events:
+        if not event.get("tool_name"):
+            continue
+        item: dict[str, Any] = {"event": event.get("event"), "tool_name": event.get("tool_name")}
+        result = _result_summary(event.get("content"))
+        if result:
+            item["result"] = result
+        summarized.append(item)
+    return summarized
 
 
 def extract_langchain_trace(result: dict[str, Any]) -> dict[str, Any]:
@@ -583,20 +676,29 @@ def nana_agent(query: str) -> str:
             {
                 "selected_agent": "nana_agent",
                 "answer": "",
+                "handled": False,
+                "handoff_to": None,
+                "handoff_reason": None,
                 "trace": [],
                 "inner_tool_names": [],
                 "error": {
-                    "reason": f"Nana 실행 중 오류가 발생했습니다: {exc}",
+                    "user_message": "Nana가 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.",
                     "error_type": type(exc).__name__,
+                    "debug_reason": str(exc),
                 },
             },
             ensure_ascii=False,
         )
 
+    answer, handoff_to, handoff_reason = _split_handoff(answer)
+
     return json.dumps(
         {
             "selected_agent": "nana_agent",
             "answer": answer,
+            "handled": handoff_to is None,
+            "handoff_to": handoff_to,
+            "handoff_reason": handoff_reason,
             "trace": _trace_summary(events),
             "inner_tool_names": _tool_call_names(events),
         },
@@ -625,13 +727,17 @@ def kana_agent(query: str) -> str:
             {
                 "selected_agent": "kana_agent",
                 "answer": "",
+                "handled": False,
+                "handoff_to": None,
+                "handoff_reason": None,
                 "trace": [],
                 "inner_tool_names": [],
                 "final_slot_payload": None,
                 "final_decision_payload": None,
                 "error": {
-                    "reason": f"Kana 실행 중 오류가 발생했습니다: {exc}",
+                    "user_message": "Kana가 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.",
                     "error_type": type(exc).__name__,
+                    "debug_reason": str(exc),
                 },
             },
             ensure_ascii=False,
@@ -646,10 +752,16 @@ def kana_agent(query: str) -> str:
                 final_slot_payload = content
             if content.get("final_decision"):
                 final_decision_payload = content["final_decision"]
+
+    answer, handoff_to, handoff_reason = _split_handoff(answer)
+
     return json.dumps(
         {
             "selected_agent": "kana_agent",
             "answer": answer,
+            "handled": handoff_to is None,
+            "handoff_to": handoff_to,
+            "handoff_reason": handoff_reason,
             "trace": _trace_summary(events),
             "inner_tool_names": _tool_call_names(events),
             "final_slot_payload": final_slot_payload,
