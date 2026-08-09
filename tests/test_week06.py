@@ -11,7 +11,10 @@ from student_parts.week05_load_kanas_past_conversations import week05_prompt_par
 from student_parts.week06_kanamate_decides_schedule import (
     agent_tool_names,
     build_langchain_supervisor_agent,
+    decide_final_slot,
     extract_langchain_trace,
+    find_common_available_slots,
+    find_common_available_slots_dict,
     kana_agent,
     kana_prompt_parts,
     kana_system_prompt,
@@ -114,10 +117,10 @@ def test_supervisor_tools_expose_only_two_delegates():
     assert [tool_name(t) for t in supervisor_tools()] == ["nana_agent", "kana_agent"]
 
 
-def test_kana_tools_excludes_unimplemented_extra_task_tools():
+def test_kana_tools_includes_extra_task_tools():
     names = [tool_name(t) for t in kana_tools()]
-    assert "find_common_available_slots" not in names
-    assert "decide_final_slot" not in names
+    assert "find_common_available_slots" in names
+    assert "decide_final_slot" in names
 
 
 def test_kana_tools_excludes_personal_app_tools():
@@ -126,7 +129,7 @@ def test_kana_tools_excludes_personal_app_tools():
     assert kana_names.isdisjoint(personal_only_names)
 
 
-def test_kana_tools_contains_expected_six_names():
+def test_kana_tools_contains_expected_eight_names():
     assert [tool_name(t) for t in kana_tools()] == [
         "extract_schedule_request",
         "search_previous_conversations",
@@ -134,6 +137,8 @@ def test_kana_tools_contains_expected_six_names():
         "extract_schedules_from_history",
         "list_shared_schedules",
         "collect_member_schedules",
+        "find_common_available_slots",
+        "decide_final_slot",
     ]
 
 
@@ -231,8 +236,6 @@ def test_kana_prompt_parts_mentions_only_available_tools():
     text = "\n".join(kana_prompt_parts())
     for name in [tool_name(t) for t in kana_tools()]:
         assert name in text
-    assert "find_common_available_slots" not in text
-    assert "decide_final_slot" not in text
 
 
 def test_kana_prompt_parts_declares_personal_save_out_of_scope():
@@ -439,3 +442,109 @@ def test_extract_langchain_trace_with_nana_payload_leaves_final_slot_payload_non
     trace = extract_langchain_trace({"messages": supervisor_messages})
     assert trace["supervisor_selected_agent"] == "nana_agent"
     assert trace["final_slot_payload"] is None
+
+
+# --- 심화과제: find_common_available_slots / decide_final_slot ---
+
+
+def test_find_common_available_slots_dict_keeps_non_overlapping_candidate_and_drops_overlapping_one():
+    busy_rows = [{"member_name": "철수", "date": "2026-08-11", "start_time": "14:00", "end_time": "15:00"}]
+    candidate_slots = [
+        {"date": "2026-08-11", "start_time": "14:00", "end_time": "15:00", "duration_minutes": 60, "reason": "겹침"},
+        {"date": "2026-08-11", "start_time": "16:00", "end_time": "17:00", "duration_minutes": 60, "reason": "안 겹침"},
+    ]
+    result = find_common_available_slots_dict(
+        member_names=["철수"],
+        date_from="2026-08-10",
+        date_to="2026-08-14",
+        busy_rows=busy_rows,
+        candidate_slots=candidate_slots,
+    )
+    assert [slot["start_time"] for slot in result["candidate_slots"]] == ["16:00"]
+    assert result["busy_rows"] == busy_rows
+
+
+def test_find_common_available_slots_dict_normalizes_iso_datetime_bounds():
+    result = find_common_available_slots_dict(
+        member_names=["철수"],
+        date_from="2026-08-10T00:00:00",
+        date_to="2026-08-14T23:59:59",
+        busy_rows=[],
+        candidate_slots=[],
+    )
+    assert result["members"] == ["철수"]
+    assert result["candidate_slots"] == []
+
+
+def test_find_common_available_slots_dict_collects_busy_rows_when_missing(monkeypatch):
+    collected_rows = [{"member_name": "나", "date": "2026-08-11", "start_time": "09:00", "end_time": "10:00"}]
+
+    class _FakeCollectTool:
+        def __init__(self):
+            self.invoked_with = None
+
+        def invoke(self, args):
+            self.invoked_with = args
+            return json.dumps({"rows": collected_rows}, ensure_ascii=False)
+
+    fake_tool = _FakeCollectTool()
+    monkeypatch.setattr(w6, "collect_member_schedules", fake_tool)
+
+    result = w6.find_common_available_slots_dict(
+        member_names=["철수"],
+        date_from="2026-08-10",
+        date_to="2026-08-14",
+        candidate_slots=[],
+    )
+    assert fake_tool.invoked_with["member_names"] == ["나", "철수"]
+    assert result["busy_rows"] == collected_rows
+
+
+def test_find_common_available_slots_tool_matches_dict_version():
+    busy_rows = [{"member_name": "철수", "date": "2026-08-11", "start_time": "14:00", "end_time": "15:00"}]
+    candidate_slots = [{"date": "2026-08-11", "start_time": "16:00", "end_time": "17:00", "duration_minutes": 60, "reason": "가능"}]
+    dict_result = find_common_available_slots_dict(
+        member_names=["철수"], date_from="2026-08-10", date_to="2026-08-14", busy_rows=busy_rows, candidate_slots=candidate_slots
+    )
+    tool_result = json.loads(
+        find_common_available_slots.invoke(
+            {
+                "member_names": ["철수"],
+                "date_from": "2026-08-10",
+                "date_to": "2026-08-14",
+                "busy_rows": busy_rows,
+                "candidate_slots": candidate_slots,
+            }
+        )
+    )
+    assert tool_result["candidate_slots"] == dict_result["candidate_slots"]
+
+
+def test_decide_final_slot_tool_needs_agent_selection_without_a_choice():
+    result = json.loads(
+        decide_final_slot.invoke(
+            {
+                "candidate_slots": [{"date": "2026-08-11", "start_time": "16:00", "end_time": "17:00"}],
+            }
+        )
+    )
+    assert result["needs_agent_selection"] is True
+    assert result["final_slot"] is None
+
+
+def test_decide_final_slot_tool_confirms_when_index_selected():
+    result = json.loads(
+        decide_final_slot.invoke(
+            {
+                "candidate_slots": [
+                    {"date": "2026-08-11", "start_time": "14:00", "end_time": "15:00"},
+                    {"date": "2026-08-11", "start_time": "16:00", "end_time": "17:00"},
+                ],
+                "selected_index": 1,
+                "reason": "철수·영희 모두 가능",
+            }
+        )
+    )
+    assert result["needs_agent_selection"] is False
+    assert result["final_slot"] == "2026-08-11 16:00-17:00"
+    assert result["reason"] == "철수·영희 모두 가능"
