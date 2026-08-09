@@ -192,9 +192,18 @@ class DisableParallelToolCalls(AgentMiddleware):
 class DecideFinalSlotInput(BaseModel):
     """팀원 가능 시간 후보 비교 및 최종 결정 입력입니다."""
 
-    candidate_slots: list[str] = Field(description="비교 대상 팀원 가능 시간 후보 문자열 목록")
-    selected_slot: str = Field(description="candidate_slots 중 최종으로 고른 시간 문자열")
-    reason: str = Field(description="이 후보를 최종으로 고른 짧은 근거")
+    candidate_slots: list[str | CommonSlotCandidate] = Field(
+        description=(
+            "비교 대상 팀원 가능 시간 후보 목록. 문자열로 직접 적어도 되고, "
+            "find_common_available_slots가 candidate_slots로 돌려준 객체를 그대로 넘겨도 됩니다. "
+            "후보가 하나도 없으면 빈 목록을 넘깁니다."
+        )
+    )
+    selected_slot: str | CommonSlotCandidate | None = Field(
+        default=None,
+        description="candidate_slots 중 최종으로 고른 시간. 후보가 없어 확정하지 못했다면 생략합니다.",
+    )
+    reason: str = Field(description="이 후보를 최종으로 고른, 혹은 확정하지 못한 짧은 근거")
     member_names: list[str] | None = None
     date_from: str | None = None
     date_to: str | None = None
@@ -214,20 +223,37 @@ class FindCommonAvailableSlotsInput(BaseModel):
     reason: str | None = None
 
 
+def _slot_to_plain(value: str | CommonSlotCandidate | None) -> str | dict[str, Any] | None:
+    """CommonSlotCandidate 객체를 decide_final_slot_payload가 이해하는 plain dict/문자열로 바꿉니다.
+
+    find_common_available_slots의 candidate_slots를 그대로 넘기면 args_schema가 이 값을
+    CommonSlotCandidate 인스턴스로 만들어 두므로, decide_final_slot_payload에 넘기기 전에
+    다시 dict로 풀어 준다.
+    """
+
+    if isinstance(value, CommonSlotCandidate):
+        return value.model_dump()
+    return value
+
+
 @tool(args_schema=DecideFinalSlotInput)
 def decide_final_slot(
-    candidate_slots: list[str],
-    selected_slot: str,
+    candidate_slots: list[str | CommonSlotCandidate],
     reason: str,
+    selected_slot: str | CommonSlotCandidate | None = None,
     member_names: list[str] | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> str:
-    """팀원 가능 시간 후보만 비교해 최종 회의 시간 후보를 결정합니다. 개인 일정 충돌은 판단하지 않습니다."""
+    """팀원 가능 시간 후보만 비교해 최종 회의 시간 후보를 결정합니다. 개인 일정 충돌은 판단하지 않습니다.
+
+    candidate_slots가 비어 있으면 selected_slot 없이 호출해, 공통 가능 시간을 찾지 못했다는
+    결과를 그대로 기록합니다.
+    """
 
     payload = decide_final_slot_payload(
-        candidate_slots=candidate_slots,
-        selected_slot=selected_slot,
+        candidate_slots=[_slot_to_plain(slot) for slot in candidate_slots],
+        selected_slot=_slot_to_plain(selected_slot),
         reason=reason,
         member_names=member_names,
         date_from=date_from,
@@ -400,6 +426,9 @@ def kana_agent_system_prompt() -> str:
 - collect_member_schedules 결과의 "나" 관련 row 자체로 개인 일정 충돌 여부를 직접 판단하거나
   답변에 쓰지 않는다.
 - 팀원 후보를 모았으면 반드시 decide_final_slot을 호출해 candidate_slots와 selected_slot, reason을 기록한다.
+  find_common_available_slots가 candidate_slots를 하나도 찾지 못했다면, 빈 candidate_slots와
+  selected_slot 없이 decide_final_slot을 호출해 "공통 가능 시간을 찾지 못했다"는 reason을 남긴다.
+  candidate_slots가 비어 있다는 이유로 decide_final_slot 호출을 건너뛰지 않는다.
 - 답변에는 팀원 후보와 그 근거만 쓴다. 개인 일정 세부 내용이나 "충돌하지 않는다"는 단정을 쓰지 않는다.
   그건 Nana와 supervisor의 몫이다.
 tool 호출 없이 답하지 않는다."""

@@ -320,6 +320,10 @@ def _collect_member_schedules(
             continue
         if normalized_date_to and (not date or date > normalized_date_to):
             continue
+        kind_label = "그룹 일정" if request.kind == "group_schedule" else "개인 일정"
+        notes = kind_label
+        if request.members:
+            notes += f" · 참석자: {', '.join(request.members)}"
         rows.append(
             {
                 "member_name": PERSONAL_SHARED_MEMBER_NAME,
@@ -329,7 +333,7 @@ def _collect_member_schedules(
                 "start_time": request.start_time,
                 "end_time": request.end_time,
                 "members": request.members,
-                "notes": None,
+                "notes": notes,
             }
         )
         request_id = schedule.get("request_id")
@@ -364,10 +368,15 @@ def _collect_member_schedules(
 
     rows.sort(key=lambda row: (row.get("date") or "", row.get("start_time") or "", row.get("member_name") or ""))
 
+    # "나"는 rows에 항상 포함되므로, 호출자가 member_names에 "나"를 넣었는지와 무관하게
+    # 결과 member_names에도 정확히 한 번 포함시킨다.
+    other_members = list(dict.fromkeys(name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME))
+    member_names_for_result = [PERSONAL_SHARED_MEMBER_NAME, *other_members]
+
     return {
         "rows": rows,
         "schedule_summary": external_schedule_summary(rows),
-        "member_names": normalized_members,
+        "member_names": member_names_for_result,
         "date_from": normalized_date_from,
         "date_to": normalized_date_to,
     }
