@@ -284,10 +284,14 @@ class CollectMemberSchedulesInput(BaseModel):
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
-    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
+    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다.
+
+    SQLite row는 `request_kind`로 개인/그룹을 구분합니다. Week 1 임시 일정 row에는
+    이 값이 없으므로 개인 일정으로 봅니다.
+    """
 
     return StructuredRequest(
-        kind="personal_schedule",
+        kind="group_schedule" if row.get("request_kind") == "group_schedule" else "personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -295,6 +299,15 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
         members=row.get("attendees") or row.get("members") or [],
         original_text=str(row.get("title") or ""),
     )
+
+
+def _my_schedule_notes(request: StructuredRequest) -> str:
+    """내 일정 row가 개인 일정인지, 참석자가 있는 그룹 일정인지 설명합니다."""
+
+    if request.kind != "group_schedule":
+        return "Nana 개인 일정"
+    members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
+    return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
 
 
 def _collect_member_schedules(
@@ -328,7 +341,7 @@ def _collect_member_schedules(
                 "date": request.date,
                 "start_time": request.start_time,
                 "end_time": request.end_time,
-                "notes": row.get("notes"),
+                "notes": _my_schedule_notes(request),
             }
         )
 
@@ -347,10 +360,13 @@ def _collect_member_schedules(
     # rows(외부 MCP 일정) 만 꺼내 external_rows 에 저장
     external_rows = external_payload.get("rows") or []
 
-    # 임시 일정/외부 일정을 합친 후 
-    # rows, schedule_summary(rows 를 str 로 요약) dict 형태로 반환
+    # 임시 일정/외부 일정을 합친 후
+    # course 계약 키(ok/tool_name/members/rows/schedule_summary) dict 형태로 반환
     rows = [*my_rows, *external_rows]
     return {
+        "ok": True,
+        "tool_name": "collect_member_schedules",
+        "members": ["나", *normalized_members],
         "rows": rows,
         "schedule_summary": external_schedule_summary(rows),
     }
