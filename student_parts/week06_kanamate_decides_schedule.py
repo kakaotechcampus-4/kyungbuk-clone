@@ -207,7 +207,10 @@ def week06_prompt_parts() -> list[str]:
         "kana_agent는 나 이외의 사람이 끼는 일이다. 철수·영희·민준·서연·지훈·하린 같은 다른 사람의 "
         "일정이나 이전 대화 조회, 공유 일정 저장소 확인, 여러 사람의 공통 가능 시간 정리가 여기 해당한다. "
         "회의 시간 조율은 kana_agent 하나로 끝난다. 내 일정도 kana_agent 안에서 함께 모이므로 조율 전에 "
-        "nana_agent를 먼저 부르지 않는다. "
+        "nana_agent를 먼저 부르지 않는다. 단, kana_agent의 역할은 후보 제안과 최종 시간 확정까지이고 "
+        "확정된 일정을 내 앱 일정으로 저장·기록하는 것은 여기 포함되지 않는다. 사용자가 '저장해줘', "
+        "'내 일정에 등록해줘', '캘린더에 넣어줘'처럼 저장·기록을 명시하면 그 요청은 kana_agent가 아니라 "
+        "nana_agent로 위임한다. "
         "위임할 때 query에는 사용자 원문에 더해 판단에 필요한 맥락(대상 멤버 이름, YYYY-MM-DD 날짜 범위, "
         "회의 길이)을 함께 적어 준다. 하위 에이전트는 이 대화 기록을 볼 수 없다.",
     ]
@@ -222,6 +225,11 @@ def nana_prompt_parts() -> list[str]:
         "query 한 문장만이 네가 가진 전부다. 대화 맥락을 추측하지 말고 query에 적힌 내용만 근거로 판단한다. "
         "너의 담당은 나 한 사람에 대한 일이다. 내 개인 일정 생성·조회·수정·삭제, 구조화 저장, "
         "todo/reminder 기록, 내가 적어둔 참고자료 검색, 내 앱 대화 기록 검색까지다. "
+        "새 일정·할 일·알림을 만들 때는 1주차의 personal_create_schedule(대화 안에서만 유지되는 레거시 임시 "
+        "저장 tool)을 쓰지 않고, 반드시 extract_schedule_request로 먼저 구조화한 뒤 save_structured_request로 "
+        "SQLite에 저장한다. 저장된 일정을 조회할 때는 personal_list_saved_schedules를, todo/reminder처럼 "
+        "kind가 불명확하거나 여러 kind를 함께 봐야 하면 list_saved_requests를 쓴다. 이미 저장된 일정을 고쳐야 "
+        "하면 personal_update_saved_schedule을, 지워야 하면 personal_delete_saved_schedules를 쓴다. "
         "답하기 전에 반드시 알맞은 tool을 먼저 호출하고, 판단은 이 지시문과 tool description을 근거로 스스로 한다. "
         "철수·영희·민준·서연·지훈·하린 같은 다른 사람의 일정이나 이전 대화, 공유 일정 저장소, 여러 사람의 "
         "공통 가능 시간 정리는 너의 담당이 아니다. 그런 요청을 받으면 tool을 호출하지 말고 "
