@@ -93,8 +93,11 @@ _WEEK05_AGENT: Any | None = None
 #
 #   5. collect_member_schedules
 #      - 3주차 이후 저장된 내 일정은 앱 SQLite에서 읽고, 현재 대화의 임시 일정만 추가로 합칩니다.
-#      - 외부 멤버 일정은 call_mcp_tool_sync("extract_schedules_from_history", args) 결과를 이 tool 안에서 읽습니다.
-#      - 두 출처를 member_name/title/date/start_time/end_time/notes가 있는 rows 배열로 직접 합칩니다.
+#        request_kind(personal_schedule/group_schedule)와 참석자(attendees)를 row에 그대로 유지합니다.
+#      - 멤버별 일정은 call_mcp_tool_sync("list_shared_schedules", args) 결과를 이 tool 안에서 읽습니다.
+#        (extract_schedules_from_history와 list_shared_schedules는 같은 공유 일정 저장소를 조회하므로 하나만 씁니다.)
+#      - 두 출처를 member_name/kind/title/date/start_time/end_time/members/notes가 있는 rows 배열로 합치되,
+#        공유 저장소의 "나" row 중 내 앱 DB row와 같은 source_conversation_id를 가진 것은 중복이므로 제외합니다.
 #      - schedule_summary도 함께 반환해 LLM이 바쁜 시간을 자연어로 설명할 수 있게 합니다.
 #      - PERSONAL_SCHEDULES는 현재 대화 범위의 아직 DB에 없는 임시 일정만 합치고, SQLite에 이미 저장된 일정과 중복하지 않습니다.
 #      - Week 6 추가 과제(find_common_available_slots)가 이 tool의 rows를 busy_rows 근거로 사용합니다.
@@ -270,10 +273,14 @@ class CollectMemberSchedulesInput(BaseModel):
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
-    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
+    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다.
+
+    AppSQLiteStore.list_schedules()가 반환하는 request_kind(personal_schedule/group_schedule)를
+    그대로 읽어, 그룹 일정을 개인 일정으로 잘못 표시하지 않습니다.
+    """
 
     return StructuredRequest(
-        kind="personal_schedule",
+        kind=row.get("request_kind") or row.get("kind") or "personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -290,7 +297,13 @@ def _collect_member_schedules(
     date_to: str,
     personal_schedules: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
+    """앱 DB의 내 일정과 공유 일정 저장소의 멤버별 일정을 합치고 중복만 제거합니다.
+
+    내 일정은 kind(personal_schedule/group_schedule)와 참석자(members)를 유지합니다.
+    앱이 저장한 내 일정은 공유 저장소에도 "나" 복사본으로 동기화되므로, 공유 저장소 조회
+    결과 중 내 앱 DB row에서 이미 넣은 것과 같은 source_conversation_id를 가진 "나" row는
+    건너뛰어 같은 일정이 두 번 잡히지 않게 합니다. 다른 멤버의 row는 그대로 유지합니다.
+    """
 
     normalized_members = normalize_external_member_names(member_names)
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
@@ -298,6 +311,7 @@ def _collect_member_schedules(
     )
 
     rows: list[dict[str, Any]] = []
+    my_synced_source_ids: set[str] = set()
 
     for schedule in personal_schedules:
         request = _structured_request_from_schedule_row(schedule)
@@ -309,40 +323,41 @@ def _collect_member_schedules(
         rows.append(
             {
                 "member_name": PERSONAL_SHARED_MEMBER_NAME,
+                "kind": request.kind,
                 "title": request.title,
                 "date": date,
                 "start_time": request.start_time,
                 "end_time": request.end_time,
+                "members": request.members,
                 "notes": None,
             }
         )
+        request_id = schedule.get("request_id")
+        if request_id:
+            my_synced_source_ids.add(f"app:{request_id}")
+            my_synced_source_ids.add(f"group:{request_id}:{PERSONAL_SHARED_MEMBER_NAME}")
 
-    # 내 일정은 앱 SQLite(personal_schedules)가 유일한 출처입니다. 앱이 저장한 내 일정은
-    # 공유 저장소에도 member_name="나" 복사본으로 동기화되므로, 외부 조회에 "나"를 그대로
-    # 넘기면 같은 일정이 앱 DB row와 외부 동기화 row로 두 번 잡힙니다. 외부 조회 대상에서는
-    # "나"를 제외해 앱 DB row만 남깁니다.
-    external_member_names = [
-        name for name in member_names if str(name).strip() != PERSONAL_SHARED_MEMBER_NAME
-    ]
-
-    external_payload = (
-        json.loads(
-            call_mcp_tool_sync(
-                "extract_schedules_from_history",
-                {"member_names": external_member_names, "date_from": date_from, "date_to": date_to},
-            )
+    # extract_schedules_from_history와 list_shared_schedules는 같은 공유 일정 저장소
+    # (external_schedules 테이블)를 서로 다른 필터로 조회할 뿐인 같은 데이터라서,
+    # "공유 저장소"라는 이름 그대로인 list_shared_schedules 하나로 멤버별 일정을 모읍니다.
+    shared_payload = json.loads(
+        call_mcp_tool_sync(
+            "list_shared_schedules",
+            {"member_names": member_names, "date_from": date_from, "date_to": date_to},
         )
-        if external_member_names
-        else {"rows": []}
     )
-    for row in external_payload.get("rows", []):
+    for row in shared_payload.get("rows", []):
+        if row.get("member_name") == PERSONAL_SHARED_MEMBER_NAME and row.get("source_conversation_id") in my_synced_source_ids:
+            continue  # 내 앱 DB row와 같은 일정의 공유 저장소 복사본
         rows.append(
             {
                 "member_name": row.get("member_name"),
+                "kind": None,  # 공유 저장소 row는 개인/그룹 구분을 따로 저장하지 않는다.
                 "title": row.get("title"),
                 "date": row.get("date"),
                 "start_time": row.get("start_time"),
                 "end_time": row.get("end_time"),
+                "members": [],
                 "notes": row.get("notes"),
             }
         )

@@ -49,8 +49,9 @@ _WEEK06_AGENT: Any | None = None
 #   - 메인과제: nana_agent/kana_agent delegate tool과 이를 감싸는 supervisor를 완성하고,
 #     Kana 전용 tool인 decide_final_slot으로 팀원 후보 중 최종 시간을 고릅니다.
 #   - 추가 과제: find_common_available_slots로 collect_member_schedules의 busy_rows를
-#     근거 삼아 공통 가능 시간을 자동 계산합니다. 구현하지 않으려면 kana_agent_tools()
-#     목록에서 이 tool을 빼면 됩니다(system prompt의 관련 안내도 함께 지웁니다).
+#     근거 삼아 공통 가능 시간을 자동 계산합니다. kana_agent_tools()에 포함되어 있어
+#     collect_member_schedules -> find_common_available_slots -> decide_final_slot 흐름을
+#     실제로 호출할 수 있습니다.
 #
 # 구현 위치와 사용할 코드
 #   - 이 파일(student_parts/week06_kanamate_decides_schedule.py)의 delegate tool과
@@ -75,11 +76,16 @@ _WEEK06_AGENT: Any | None = None
 #
 #   2. nana_agent
 #      - request 문자열을 받아 Nana sub-agent(build_nana_agent())를 실행합니다.
-#      - 결과에서 answer와 tool trace를 꺼내 {"agent": "nana", "answer", "trace"} JSON으로 반환합니다.
+#      - 결과에서 answer와 tool trace를 꺼내 {"agent": "nana", "answer", "trace", "inner_tool_names",
+#        "final_slot_payload"} JSON으로 반환합니다. inner_tool_names/final_slot_payload는 supervisor가
+#        raw trace 구조를 직접 몰라도 "어떤 tool이 호출됐는지"와 "확정된 시간"을 top-level에서 바로
+#        읽을 수 있게 하는 필드입니다.
 #
 #   3. kana_agent
 #      - request 문자열을 받아 Kana sub-agent(build_kana_agent())를 실행합니다.
-#      - 결과에서 answer와 tool trace를 꺼내 {"agent": "kana", "answer", "trace"} JSON으로 반환합니다.
+#      - nana_agent와 같은 모양으로 {"agent": "kana", "answer", "trace", "inner_tool_names",
+#        "final_slot_payload"} JSON을 반환합니다. decide_final_slot을 호출했다면
+#        final_slot_payload에 그 결과가 그대로 담깁니다.
 #
 #   4. build_week06_agent() / build_week_agent()
 #      - supervisor tool 목록에는 nana_agent, kana_agent만 놓습니다. personal_* tool이나
@@ -93,9 +99,9 @@ _WEEK06_AGENT: Any | None = None
 #        외부 멤버 일정)를 모은 뒤 find_common_available_slots_payload(...)에 넘겨 자동으로
 #        공통 가능 시간을 계산합니다.
 #      - 이 tool은 collect_member_schedules의 rows를 그대로 근거로 쓰므로 내 개인 일정도
-#        busy time에 포함됩니다. decide_final_slot과 달리 개인 일정까지 반영하는 자동 계산
-#        경로이므로, kana_agent_tools()에 추가할 때는 Kana의 system prompt에서
-#        "개인 일정 충돌을 판단하지 않는다"는 문장을 이 tool에는 적용되지 않는다고 구분해 둡니다.
+#        busy time에 포함됩니다. decide_final_slot과 달리 개인 일정까지 반영해 계산하는
+#        경로이므로, Kana의 system prompt에서 이 tool을 쓸 때는 계산에는 내 일정이 반영되지만
+#        답변에서 내 개인 일정의 제목/세부 내용은 언급하지 않는다고 구분해 둡니다.
 #
 # 책임 경계
 #   Supervisor는 personal_* tool도, search_previous_conversations 같은 MCP tool도 직접 호출하지
@@ -106,11 +112,15 @@ _WEEK06_AGENT: Any | None = None
 # 검증 방법
 #   - 메인과제: "팀원 A/B/C와 다음 주 회의 시간을 잡아줘" 같은 요청을 build_week_agent()에 넣고,
 #     supervisor trace에서 nana_agent -> kana_agent 순서로 tool_call/tool_result가 나오는지 봅니다.
-#     nana_agent의 trace에 personal_list_schedules 계열 호출이, kana_agent의 trace에
+#     nana_agent의 trace에 personal_list_saved_schedules 계열 호출이(새 대화에서도 SQLite 저장
+#     일정을 확인해야 하므로 personal_list_schedules만으로는 부족합니다), kana_agent의 trace에
 #     search_previous_conversations/extract_schedules_from_history/decide_final_slot 호출이
 #     있는지 확인하고, kana_agent의 answer가 개인 일정 충돌을 단정하지 않는지 확인합니다.
-#   - 추가 과제: kana_agent_tools()에 find_common_available_slots를 넣은 뒤, 응답에 내 개인 일정과
-#     겹치지 않는 후보만 candidate_slots로 남는지 확인합니다.
+#     nana_agent/kana_agent의 반환 JSON에서 inner_tool_names와 final_slot_payload가 raw trace와
+#     일치하고, supervisor의 바깥 trace(delegate_payloads)에서도 그대로 유지되는지 확인합니다.
+#   - 추가 과제: collect_member_schedules -> find_common_available_slots -> decide_final_slot
+#     순서로 tool_call이 이어지는지, 응답에 내 개인 일정과 겹치지 않는 후보만 candidate_slots로
+#     남는지 확인합니다.
 #
 # 함수별 동작 설명 ([메인]/[추가]/[공통]은 각 함수가 속한 과제 티어입니다)
 #   - [공통] json_payload(payload)
@@ -135,6 +145,10 @@ _WEEK06_AGENT: Any | None = None
 #   - [추가] find_common_available_slots(...)
 #     collect_member_schedules의 rows를 busy_rows로 삼아 공통 가능 시간을 자동 계산하는 Kana tool입니다.
 #
+#   - [공통] _inner_tool_names(trace_events) / _final_slot_payload(trace_events)
+#     delegate sub-agent의 raw trace에서 호출된 tool 이름 목록과 decide_final_slot 결과 payload를
+#     각각 뽑아, nana_agent/kana_agent 반환 JSON의 top-level 필드로 올려 줍니다.
+#
 #   - [메인] nana_agent_tools() / nana_agent_system_prompt() / build_nana_agent()
 #     Nana sub-agent가 쓸 tool 목록(week04_tools() 재사용), system prompt, agent builder입니다.
 #
@@ -142,8 +156,8 @@ _WEEK06_AGENT: Any | None = None
 #     개인 일정 CRUD/구조화 저장/개인 RAG 검색을 Nana sub-agent에게 위임하는 delegate tool입니다.
 #
 #   - [메인] kana_agent_tools() / kana_agent_system_prompt() / build_kana_agent()
-#     Kana sub-agent가 쓸 tool 목록(Week 5 MCP tool + decide_final_slot), system prompt,
-#     agent builder입니다.
+#     Kana sub-agent가 쓸 tool 목록(Week 5 MCP tool + find_common_available_slots + decide_final_slot),
+#     system prompt, agent builder입니다.
 #
 #   - [메인] kana_agent(...)
 #     외부 팀원의 이전 대화·공유 일정 조회와 최종 후보 결정을 Kana sub-agent에게 위임하는 delegate tool입니다.
@@ -254,6 +268,35 @@ def find_common_available_slots(
     return json_payload({"ok": True, "tool_name": "find_common_available_slots", **payload})
 
 
+def _inner_tool_names(trace_events: list[dict[str, Any]]) -> list[str]:
+    """sub-agent trace에서 호출된 tool 이름만 순서대로 뽑습니다.
+
+    supervisor가 delegate 결과의 raw trace 구조(event/tool_name/id 필드)를 직접 파싱하지
+    않아도 "어떤 tool이 호출됐는지"를 top-level에서 바로 읽을 수 있게 합니다.
+    """
+
+    return [
+        event["tool_name"]
+        for event in trace_events
+        if event.get("event") == "tool_call" and event.get("tool_name")
+    ]
+
+
+def _final_slot_payload(trace_events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """sub-agent trace에서 decide_final_slot의 결과 payload를 찾습니다. 호출하지 않았으면 None입니다.
+
+    supervisor가 확정된 시간을 얻으려고 raw trace를 뒤져 decide_final_slot tool_result를 직접
+    찾아야 하는 방식 대신, 이미 찾아 둔 값을 top-level 필드로 바로 전달합니다.
+    """
+
+    for event in reversed(trace_events):
+        if event.get("event") == "tool_result" and event.get("tool_name") == "decide_final_slot":
+            content = event.get("content")
+            if isinstance(content, dict):
+                return content
+    return None
+
+
 def nana_agent_tools() -> list[Any]:
     """Nana sub-agent에 공개할 개인 일정 CRUD/구조화 저장/개인 RAG 도구 목록입니다."""
 
@@ -268,7 +311,10 @@ def nana_agent_system_prompt() -> str:
             *week04_prompt_parts(),
             f"""오늘은 {current_app_date_iso()}이다.
 Week 6부터 너는 supervisor가 위임한 요청만 처리하는 개인 메이트 Nana다.
-어떤 회의/일정 조율 요청을 받아도 반드시 personal_list_schedules로 내 개인 일정을 먼저 확인한 뒤 답한다.
+어떤 회의/일정 조율 요청을 받아도 앞서 누적된 안내(personal_list_saved_schedules로 SQLite에 저장된 내 일정을
+먼저 확인)를 그대로 따른 뒤에만 답한다. personal_list_schedules는 현재 대화의 임시 일정만 보여주므로
+그것만으로는 새 대화에서 이전 주차에 저장한 일정을 놓칠 수 있다. personal_list_saved_schedules 확인 없이는
+개인 일정에 충돌이 없다고 답하지 않는다.
 외부 팀원의 일정이나 이전 대화는 네 책임이 아니므로 언급하지 않는다. tool 호출 없이 답하지 않는다.""",
         ]
     )
@@ -302,13 +348,16 @@ def nana_agent(request: str) -> str:
 
     agent = build_nana_agent()
     result = agent.invoke({"messages": [{"role": "user", "content": request}]})
+    trace = extract_agent_events(result)
     return json_payload(
         {
             "ok": True,
             "tool_name": "nana_agent",
             "agent": "nana",
             "answer": extract_final_text(result),
-            "trace": extract_agent_events(result),
+            "trace": trace,
+            "inner_tool_names": _inner_tool_names(trace),
+            "final_slot_payload": _final_slot_payload(trace),
         }
     )
 
@@ -316,7 +365,8 @@ def nana_agent(request: str) -> str:
 def kana_agent_tools() -> list[Any]:
     """Kana sub-agent에 공개할 MCP/공유 일정/최종 후보 결정 도구 목록입니다.
 
-    find_common_available_slots(추가 과제)를 쓰지 않으려면 이 목록에서 빼면 됩니다.
+    find_common_available_slots(추가 과제)까지 포함해 collect_member_schedules ->
+    find_common_available_slots -> decide_final_slot으로 이어지는 흐름을 실제로 호출할 수 있습니다.
     """
 
     return [
@@ -325,6 +375,7 @@ def kana_agent_tools() -> list[Any]:
         extract_schedules_from_history,
         list_shared_schedules,
         collect_member_schedules,
+        find_common_available_slots,
         decide_final_slot,
     ]
 
@@ -339,10 +390,17 @@ def kana_agent_system_prompt() -> str:
   원문 전체가 필요하면 검색 결과의 conversation_id로 load_conversation_messages를 호출한다.
 - 팀원별 일정/바쁜 시간 후보가 필요하면 extract_schedules_from_history를 호출한다.
 - 공유 일정 저장소에 등록된 row 자체를 확인해야 하면 list_shared_schedules를 호출한다.
-- 내 일정과 팀원 바쁜 시간을 함께 살펴 전체 그림이 필요하면 collect_member_schedules를 호출할 수 있지만,
-  이 결과의 "나" 관련 row로 개인 일정 충돌 여부를 판단하거나 답변에 쓰지 않는다.
+- 내 일정과 팀원 바쁜 시간을 함께 살펴 전체 그림이 필요하면 collect_member_schedules를 호출할 수 있다.
+- 내 일정까지 포함한 공통 가능 시간을 자동으로 한 번에 계산해야 하면, collect_member_schedules로 모은
+  busy_rows를 근거로 find_common_available_slots를 호출해 후보를 얻은 뒤 그 candidate_slots를
+  decide_final_slot에 그대로 전달해 최종 후보를 확정한다. find_common_available_slots는 계산 과정에서
+  내 일정도 busy time으로 반영하지만, 그렇다고 답변에서 내 개인 일정의 제목이나 세부 내용을 언급하거나
+  "개인 일정과 충돌하지 않는다"처럼 개인 일정 자체를 사실로 확정해 설명하지 않는다 — "가능한 시간 후보와
+  그 이유"만 말한다.
+- collect_member_schedules 결과의 "나" 관련 row 자체로 개인 일정 충돌 여부를 직접 판단하거나
+  답변에 쓰지 않는다.
 - 팀원 후보를 모았으면 반드시 decide_final_slot을 호출해 candidate_slots와 selected_slot, reason을 기록한다.
-- 답변에는 팀원 후보와 그 근거만 쓴다. 개인 일정, 개인 일정 충돌 여부, "충돌하지 않는다"는 단정을 쓰지 않는다.
+- 답변에는 팀원 후보와 그 근거만 쓴다. 개인 일정 세부 내용이나 "충돌하지 않는다"는 단정을 쓰지 않는다.
   그건 Nana와 supervisor의 몫이다.
 tool 호출 없이 답하지 않는다."""
 
@@ -375,13 +433,16 @@ def kana_agent(request: str) -> str:
 
     agent = build_kana_agent()
     result = agent.invoke({"messages": [{"role": "user", "content": request}]})
+    trace = extract_agent_events(result)
     return json_payload(
         {
             "ok": True,
             "tool_name": "kana_agent",
             "agent": "kana",
             "answer": extract_final_text(result),
-            "trace": extract_agent_events(result),
+            "trace": trace,
+            "inner_tool_names": _inner_tool_names(trace),
+            "final_slot_payload": _final_slot_payload(trace),
         }
     )
 
