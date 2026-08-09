@@ -481,7 +481,8 @@ def find_common_available_slots_dict(
             'date_from': normalized_date_from,
             'date_to': normalized_date_to 
         })
-        rows = res['rows']
+        res_dict = json.loads(res)
+        rows = res_dict.get('rows', [])
     else:
         rows = busy_rows
 
