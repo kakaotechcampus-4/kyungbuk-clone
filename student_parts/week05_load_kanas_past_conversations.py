@@ -141,11 +141,18 @@ _WEEK05_AGENT: Any | None = None
 #
 #   - [메인] _structured_request_from_schedule_row(row)
 #     SQLite schedule row나 Week 1 임시 schedule row를 Week 2 StructuredRequest 모양으로 읽습니다.
+#     개인/그룹 구분은 row의 request_kind에서 읽고, 그 값이 없는 Week 1 임시 일정은 개인 일정으로 봅니다.
 #     뒤에서 내 일정 row를 외부 멤버 row와 같은 구조로 맞출 때 사용합니다.
+#
+#   - [메인] _my_schedule_notes(request, source)
+#     내 일정 row의 notes에 출처와 개인/그룹(참석자) 구분을 함께 남깁니다.
+#     이미 잡아둔 그룹 회의가 Week 6에서 다시 빈 시간 후보로 뽑히지 않게 하는 근거입니다.
 #
 #   - [메인] _collect_member_schedules(...)
 #     내 일정과 외부 멤버 일정을 같은 member_name/title/date/start_time/end_time/notes row 구조로 합칩니다.
 #     외부 멤버 이름과 날짜 범위는 fixed/external_people_store.py helper로 정규화합니다.
+#     반환 member_names는 rows에 실제로 들어간 수집 대상("나" + 외부 멤버)이고,
+#     호출자가 넘긴 목록은 requested_member_names로 따로 남겨 둘을 구분할 수 있게 합니다.
 #
 #   - [메인] search_previous_conversations(...)
 #     외부 SQLite/MCP 서버에 저장된 과거 대화를 검색합니다. wrapper는 query/member_names/limit를 넘기고 결과 문자열을 그대로 반환합니다.
@@ -322,10 +329,14 @@ class CollectMemberSchedulesInput(BaseModel):
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
-    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
+    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다.
+
+    SQLite row는 `request_kind`로 개인/그룹을 구분합니다. Week 1 임시 일정 row에는
+    이 값이 없으므로 개인 일정으로 봅니다.
+    """
 
     return StructuredRequest(
-        kind="personal_schedule",
+        kind="group_schedule" if row.get("request_kind") == "group_schedule" else "personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -339,6 +350,20 @@ def _personal_schedule_source(schedule: dict[str, Any]) -> str:
     """내 일정 row가 앱 SQLite에서 왔는지 현재 대화 임시 저장소에서 왔는지 구분합니다."""
 
     return "app_sqlite" if schedule.get("schedule_id") else "session_temp"
+
+
+def _my_schedule_notes(request: StructuredRequest, source: str) -> str:
+    """내 일정 row의 출처와, 개인 일정인지 참석자가 있는 그룹 일정인지를 함께 남깁니다.
+
+    그룹 일정도 내가 그 시간에 바쁘다는 근거라 rows에 함께 들어오는데, 출처만 적으면
+    Week 6이 "이미 누구와 잡아둔 회의인지"를 구분하지 못해 같은 자리를 다시 후보로 고릅니다.
+    """
+
+    origin = PERSONAL_SOURCE_NOTES[source]
+    if request.kind != "group_schedule":
+        return origin
+    members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
+    return f"{origin} · 그룹 일정 참석자: {', '.join(members)}" if members else f"{origin} · 그룹 일정"
 
 
 def _busy_row_within_dates(row: dict[str, Any], date_from: str, date_to: str) -> bool:
@@ -368,7 +393,7 @@ def _personal_busy_row(schedule: dict[str, Any]) -> dict[str, Any]:
         "date": request.date,
         "start_time": request.start_time or "미정",
         "end_time": request.end_time or "미정",
-        "notes": PERSONAL_SOURCE_NOTES[source],
+        "notes": _my_schedule_notes(request, source),
         "source": source,
     }
 
@@ -453,6 +478,10 @@ def _collect_member_schedules(
     external_member_names = [
         name for name in requested_member_names if name != PERSONAL_SHARED_MEMBER_NAME
     ]
+    # rows에는 호출자가 "나"를 넣지 않아도 내 일정이 항상 들어갑니다. 수집 대상 목록에서만
+    # "나"가 빠지면 같은 payload 안에서 rows의 소유자와 member_names의 범위가 어긋납니다.
+    # 입력에 "나"가 이미 있어도 정확히 한 번만 남도록 앞에 고정해 둡니다.
+    collected_member_names = [PERSONAL_SHARED_MEMBER_NAME, *external_member_names]
 
     rows = [
         _personal_busy_row(schedule)
@@ -476,7 +505,8 @@ def _collect_member_schedules(
     rows.sort(key=_busy_row_sort_key)
 
     return {
-        "member_names": requested_member_names,
+        "member_names": collected_member_names,
+        "requested_member_names": requested_member_names,
         "external_member_names": external_member_names,
         "date_from": normalized_date_from,
         "date_to": normalized_date_to,
