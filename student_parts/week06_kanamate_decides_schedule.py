@@ -343,7 +343,10 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "agent가 앞선 collect_member_schedules 또는 extract_schedules_from_history 결과의 rows를 busy_rows로 복사하고, "
     "그 rows와 겹치지 않는 후보를 직접 골라 candidate_slots에 채워 넘겨야 합니다. "
     "candidate_slots 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), duration_minutes, reason 필드를 포함해야 합니다. "
-    "후보는 busy_rows의 어떤 row와도 시간이 겹치면 안 됩니다. "
+    "busy_rows가 비어 있더라도 candidate_slots를 비워서 넘기면 안 됩니다. "
+    "busy_rows가 없거나 비어 있으면 date_from~date_to 범위의 workday_start~workday_end 시간대에서 "
+    "구체적인 날짜와 시간을 직접 골라 candidate_slots에 반드시 1개 이상 채워야 합니다. "
+    "candidate_slots가 비어 있으면 tool 결과가 무의미하므로 반드시 구체적인 후보를 제시해야 합니다. "
     "이 tool 호출 결과만으로 답변을 끝내지 말고, 반드시 decide_final_slot을 이어서 호출해 최종 시간을 확정합니다."
 )
 
