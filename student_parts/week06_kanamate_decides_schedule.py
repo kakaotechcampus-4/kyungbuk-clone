@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from langchain.agents import create_agent
@@ -207,6 +208,7 @@ def week06_prompt_parts() -> list[str]:
         Kana 담당: 외부 멤버, 이전 대화, 공유 일정, 여러 사람의 busy-time 수집, 공통 가능 시간과 최종 그룹 일정 결정.
         외부 멤버 이름이나 "같이/팀/회의/모임/공통 시간/가능한 시간/조율" 의도가 있으면 kana_agent를 선택한다.
         개인 일정이나 개인 기억만 묻는 요청은 nana_agent를 선택한다. 위임 query에는 원문과 날짜 기준을 보존한다.
+        Nana가 일정을 조율하거나 결정해서는 안되고, Kana가 일정을 등록하거나 수정해서는 안된다. 예를 들어 그룹 일정을 등록하는 경우에는 nana_agent를 선택한다.
         """,
     ]
 
@@ -224,7 +226,22 @@ def nana_prompt_parts() -> list[str]:
         현재 날짜 기준은 {current_app_date_iso()}이다.
 
         Nana는 개인 일정/할 일/알림/참고자료/RAG 담당이다.
-        개인 일정이나 저장된 개인 기록 요청은 적절한 개인 tool로 근거를 확인하고 답한다.
+        아래 Nana 도구 선택 규칙은 Week 1~5 프롬프트와 tool 설명보다 우선한다.
+
+        extract_schedule_request: 개인 일정/할 일/알림 생성 요청을 구조화해야 하는 경우.
+        save_structured_request: extract_schedule_request 결과를 앱 SQLite에 저장하는 경우. 새 일정/할 일/알림 저장은 이 도구를 우선 사용한다.
+        personal_list_saved_schedules: 저장된 개인 일정 목록을 날짜/종류 필터로 조회하거나, 수정/삭제 후보를 확인하는 경우.
+        personal_update_saved_schedule: 저장된 일정의 schedule_id를 확인한 뒤 제목/날짜/시간/참석자를 수정하는 경우.
+        personal_delete_saved_schedules: 저장된 일정의 schedule_id 또는 명확한 날짜/제목/시간 조건을 확인한 뒤 삭제하는 경우.
+        list_saved_requests/get_saved_request: 저장된 구조화 요청 전체 목록 또는 request_id 단건을 확인하는 경우.
+        add_personal_reference/search_personal_references: 개인 참고자료를 저장하거나 검색하는 경우.
+        search_saved_requests: 저장된 일정/할 일/알림을 핵심어로 검색하는 경우. query는 한 번에 하나의 핵심어만 넣는다.
+        search_conversation_messages: 앱에 저장된 이전 일반 대화 내용을 검색하는 경우.
+        search_nana_memory: 개인 참고자료와 저장 기록을 함께 확인해야 하는 호환 검색이 필요한 경우.
+
+        personal_create_schedule, personal_list_schedules, personal_delete_schedule은 현재 대화 임시 메모리용 레거시 tool이므로 호출하지 않는다.
+        개인 일정 생성은 personal_create_schedule 대신 extract_schedule_request -> save_structured_request 순서로 처리한다.
+        개인 일정이나 저장된 개인 기록 요청은 위 규칙에 맞는 최신 tool로 근거를 확인하고 답한다.
         날짜가 중요한 답변은 tool 결과의 date, start_time, end_time, title, attendees를 확인한다.
         외부 멤버 대화 조회, busy-time 수집, 공통 시간 계산, 그룹 일정 최종 결정은 Kana 담당이다.
         그런 요청이 오면 임의로 처리하지 말고 "이 요청은 Kana가 담당해야 합니다."라고 짧게 답한다.
@@ -245,7 +262,6 @@ def kana_prompt_parts() -> list[str]:
         현재 날짜 기준은 {current_app_date_iso()}이다.
 
         Kana는 외부 멤버 이전 대화, 외부 일정, 공유 일정, busy-time 수집, 공통 가능 시간과 최종 그룹 일정 결정 담당이다.
-        개인 일정 저장/수정/삭제와 개인 RAG는 Nana 담당이며, 확정된 그룹 일정 저장도 Nana가 맡아야 한다고 답한다.
 
         extract_schedule_request: 요청의 날짜, 멤버, 제목, 길이를 구조화해야 하는 경우.
         search_previous_conversations/load_conversation_messages: 외부 멤버의 과거 대화 단서가 필요한 경우.
@@ -258,6 +274,7 @@ def kana_prompt_parts() -> list[str]:
         그룹 조율은 collect_member_schedules -> find_common_available_slots -> decide_final_slot 순서로 진행한다.
         candidate_slots는 date, start_time, end_time, duration_minutes, reason을 포함하고 busy_rows와 겹치면 안 된다.
         최종 선택이 불가능하면 final_slot=null, needs_agent_selection=true, reason을 decide_final_slot에 넘긴다.
+        개인 일정 저장/수정/삭제와 개인 RAG는 Nana 담당이며, 확정된 그룹 일정 저장도 Nana가 맡아야 한다고 답한다.
         """,
     ]
 
@@ -654,7 +671,7 @@ def kana_agent(query: str) -> str:
     if _KANA_SUBAGENT is None:
         _KANA_SUBAGENT = create_agent(
             model=chat_model(),
-            tools=week04_tools(),
+            tools=kana_tools(),
             system_prompt=kana_system_prompt()
         )
     res = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
