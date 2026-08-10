@@ -299,21 +299,36 @@ def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     앱 DB에 저장된 내 일정은 공유 저장소에도 자동 동기화되므로, member_names에 "나"가
     들어온 호출에서는 같은 일정이 두 경로로 들어옵니다. 앞에 오는 앱 DB row를 남깁니다.
 
-    두 경로가 같은 일정을 서로 다르게 다듬기 때문에 값을 그대로 비교하면 안 됩니다.
+    동기화 시 `source_conversation_id`에 `app:{request_id}`를 심어 두므로
+    (`fixed/external_mcp.py`), 두 row의 request_id가 이렇게 연결되면 이를 우선
+    동일 일정으로 판정합니다. 제목/시간만 보는 fuzzy 비교는 "회의 (A팀)"과
+    "회의 (B팀)"처럼 같은 시각에 겹치는 서로 다른 일정을 괄호 제거 후 같은 키로
+    묶어버릴 수 있어서, ID로 연결 가능한 row에는 fuzzy 비교를 적용하지 않습니다.
+
+    ID로 연결할 수 없는 row(임시 개인 일정, 다른 멤버의 외부 일정 등)에 한해서만
+    기존 fuzzy key로 폴백합니다.
       - 공유 저장소는 제목에서 소괄호를 지우고 공백을 하나로 줄입니다. 앱 DB는 원문을 둡니다.
       - 앱 DB 경로만 end_time "미정"을 "18:00"으로 바꿉니다. 그래서 end_time은 키에서 뺍니다.
         같은 사람이 같은 날 같은 시각에 시작하는 같은 제목의 일정은 하나로 봅니다.
       - start_time이 비어 있으면 공유 저장소는 "미정"으로 저장하므로 같은 값으로 맞춥니다.
     """
 
-    deduped: dict[tuple[str, ...], dict[str, Any]] = {}
+    deduped: dict[tuple[Any, ...], dict[str, Any]] = {}
     for row in rows:
-        key = (
-            str(row.get("member_name") or "").strip(),
-            str(row.get("date") or "").strip(),
-            str(row.get("start_time") or "").strip() or "미정",
-            strip_parenthetical_text(str(row.get("title") or "")),
-        )
+        request_id = row.get("_request_id")
+        source_conversation_id = str(row.get("_source_conversation_id") or "")
+        if request_id:
+            key: tuple[Any, ...] = ("id", request_id)
+        elif source_conversation_id.startswith("app:"):
+            key = ("id", source_conversation_id.removeprefix("app:"))
+        else:
+            key = (
+                "fuzzy",
+                str(row.get("member_name") or "").strip(),
+                str(row.get("date") or "").strip(),
+                str(row.get("start_time") or "").strip() or "미정",
+                strip_parenthetical_text(str(row.get("title") or "")),
+            )
         deduped.setdefault(key, row)
     return list(deduped.values())
 
@@ -378,6 +393,7 @@ def _collect_member_schedules(
                 "end_time": request.end_time,
                 "notes": _my_schedule_notes(request),
                 "time_completeness": completeness,
+                "_request_id": schedule.get("request_id"),
             }
         )
 
@@ -407,10 +423,14 @@ def _collect_member_schedules(
                 "end_time": row.get("end_time"),
                 "notes": row.get("notes"),
                 "time_completeness": completeness,
+                "_source_conversation_id": row.get("source_conversation_id"),
             }
         )
 
     rows = _dedupe_schedule_rows(rows)
+    for row in rows:
+        row.pop("_request_id", None)
+        row.pop("_source_conversation_id", None)
     rows.sort(key=lambda row: (row["date"] or "", row["start_time"] or "", row["member_name"] or ""))
     busy_rows = [row for row in rows if row["time_completeness"] == "complete"]
 
