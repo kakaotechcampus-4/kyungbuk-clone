@@ -240,7 +240,16 @@ def _save_input_from(value: SaveStructuredRequestInput | StructuredRequest | dic
     """저장 입력을 SaveStructuredRequestInput 하나로 모읍니다."""
 
     # TODO: dict/JSON/자연어/StructuredRequest 입력을 SaveStructuredRequestInput으로 검증하고 정규화하세요.
-    ...
+    if isinstance(value, SaveStructuredRequestInput):
+        return value
+
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = extract_structured_request(value)
+
+    return SaveStructuredRequestInput.model_validate(value)
 
 
 def save_structured_request_payload(
@@ -251,7 +260,17 @@ def save_structured_request_payload(
     """검증된 structured request를 앱 DB에 저장합니다."""
 
     # TODO: 입력을 검증한 뒤 AppSQLiteStore.save_structured_request(...)로 저장하고 tool 결과를 반환하세요.
-    ...
+    selected_store = store or _store()
+    structured_request = _save_input_from(request)
+
+    saved = selected_store.save_structured_request(
+        structured_request.model_dump(exclude_none=True)
+    )
+
+    return tool_result(
+        "save_structured_request",
+        **saved,
+    )
 
 
 class SavedRequestListInput(BaseModel):
@@ -320,7 +339,21 @@ def structured_request_from_week01_schedule(schedule: dict[str, Any]) -> SaveStr
     """Week 1 임시 일정 dict를 Week 3 저장 입력으로 변환합니다."""
 
     # TODO: Week 1 schedule의 attendees/id를 Week 3 members/source_schedule_id에 맞춰 변환하세요.
-    ...
+    attendees = schedule.get("attendees") or []
+
+    return SaveStructuredRequestInput(
+        kind="personal_schedule",
+        title=schedule.get("title"),
+        date=schedule.get("date"),
+        start_time=schedule.get("start_time"),
+        end_time=schedule.get("end_time"),
+        members=attendees,
+        reason=(
+            "Week 3 personal_create_schedule 호환 도구가 Week 1 임시 일정을 저장 입력으로 변환했습니다."
+        ),
+        original_text=schedule.get("title") or "",
+        source_schedule_id=schedule.get("id"),
+    )
 
 
 @tool("personal_create_schedule")
@@ -335,8 +368,35 @@ def personal_create_schedule(
 
     # TODO: Week 1 임시 일정 tool을 호출한 뒤 결과를 StructuredRequest로 바꿔 SQLite에도 저장하세요.
     # TODO: created 결과에 structured_request와 sqlite_save를 합쳐 JSON 문자열로 반환하세요.
-    ...
+    created = json.loads(
+        week01_personal_create_schedule.invoke(
+            {
+                "title": title,
+                "date": date,
+                "start_time": start_time,
+                "end_time": end_time,
+                "attendees": attendees,
+            }
+        )
+    )
+    structured_request = structured_request_from_week01_schedule(
+        created["created_schedule"]
+    )
+    saved = save_structured_request_payload(
+        structured_request,
+        store=_store(),
+    )
 
+    return json_payload(
+        {
+            **created,
+            "structured_request": structured_request.model_dump(
+                exclude_none=True
+            ),
+            "sqlite_save": saved,
+        }
+    )
+    
 
 @tool(args_schema=SaveStructuredRequestInput)
 def save_structured_request(
