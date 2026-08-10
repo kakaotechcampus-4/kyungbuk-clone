@@ -242,7 +242,7 @@ def kana_prompt_parts() -> list[str]:
         #   - 다른 주차 prompt를 누적하지 않으므로 Kana 역할을 처음부터 작성해야 합니다.
         #   - 외부 멤버 일정/공통 가능 시간/그룹 조율을 담당하고, 확정된 일정 저장은 Nana 담당이라고 답하게 합니다.
         #   - 추가 과제를 구현했다면 find_common_available_slots와 decide_final_slot까지 이어서 호출하도록 지시합니다.
-        """
+        f"""
         너는 Kana다. 오늘 날짜는 {current_app_date_iso()}이다. "다음 주", "화요일"처럼
         상대적인 날짜 표현이 나오면 이 날짜를 기준으로 계산한다. 
         
@@ -346,23 +346,23 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     #   - 후보는 어떤 busy row와도 겹치면 안 되고, busy_rows도 앞선 tool output에서 복사해 넘기게 합니다.
     #   - 이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출하도록 유도합니다.
     """
-    이 tool은 공통 가능 시간을 스스로 계산하지 않습니다. 반드시 네가 직접 busy_rows를 읽고,
-    겹치지 않는 시간대를 골라 candidate_slots 인자로 넘겨야 합니다. 이 tool은 네가 고른 후보가
-    busy_rows와 실제로 겹치지 않는지 검증하고 기록만 합니다.
+이 tool은 공통 가능 시간을 스스로 계산하지 않습니다. 반드시 네가 직접 busy_rows를 읽고,
+겹치지 않는 시간대를 골라 candidate_slots 인자로 넘겨야 합니다. 이 tool은 네가 고른 후보가
+busy_rows와 실제로 겹치지 않는지 검증하고 기록만 합니다.
 
-    candidate_slots는 리스트이며, 각 항목은 다음 필드를 가진 객체입니다.
-    - date: "YYYY-MM-DD" 형식 날짜
-    - start_time / end_time: "HH:MM" 24시간 형식
-    - duration_minutes: 회의 길이(분)
-    - reason: 이 시간을 고른 짧은 이유
+candidate_slots는 리스트이며, 각 항목은 다음 필드를 가진 객체입니다.
+- date: "YYYY-MM-DD" 형식 날짜
+- start_time / end_time: "HH:MM" 24시간 형식
+- duration_minutes: 회의 길이(분)
+- reason: 이 시간을 고른 짧은 이유
 
-    busy_rows는 앞서 collect_member_schedules 등에서 얻은 결과를 그대로 복사해서 함께 넘겨야
-    검증이 정확해집니다. 네가 고른 candidate_slots 중 하나라도 busy_rows와 겹치면 그 후보는
-    결과에서 제외됩니다.
+busy_rows는 앞서 collect_member_schedules 등에서 얻은 결과를 그대로 복사해서 함께 넘겨야
+검증이 정확해집니다. 네가 고른 candidate_slots 중 하나라도 busy_rows와 겹치면 그 후보는
+결과에서 제외됩니다.
 
-    이 tool 호출 결과만으로 사용자에게 답변을 끝내지 말고, 후보 중 하나를 선택하거나 사용자
-    확인을 받은 뒤 decide_final_slot을 이어서 호출해 최종 시간을 확정해야 합니다.
-    """
+decide_final_slot을 이어서 호출할지는 system prompt의 지침(사용자가 확정을 요청했는지,
+후보만 요청했는지)에 따라 결정하세요.
+"""
 )
 
 
