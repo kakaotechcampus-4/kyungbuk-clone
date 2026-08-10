@@ -204,8 +204,8 @@ def week06_prompt_parts() -> list[str]:
         "요청마다 담당인 하나를 골라 그 tool을 한 번 호출하고, 돌아온 JSON의 answer와 근거만으로 최종 답을 쓴다. "
         "nana_agent는 나 한 사람에 대한 일이다. 내 개인 일정 생성·조회·수정·삭제, 구조화 저장, "
         "todo/reminder, 내가 적어둔 참고자료 검색, 내 앱 대화 기록 검색이 여기 해당한다. "
-        "kana_agent는 나 이외의 사람이 끼는 일이다. 철수·영희·민준·서연·지훈·하린 같은 다른 사람의 "
-        "일정이나 이전 대화 조회, 공유 일정 저장소 확인, 여러 사람의 공통 가능 시간 정리가 여기 해당한다. "
+        "kana_agent가 맡는 일은 철수·영희·민준·서연·지훈·하린 같은 다른 사람의 일정이나 이전 대화 조회, "
+        "공유 일정 저장소 확인, 여러 사람의 공통 가능 시간 정리다. "
         "회의 시간 조율은 kana_agent 하나로 끝난다. 내 일정도 kana_agent 안에서 함께 모이므로 조율 전에 "
         "nana_agent를 먼저 부르지 않는다. 단, kana_agent의 역할은 후보 제안과 최종 시간 확정까지이고 "
         "확정된 일정을 내 앱 일정으로 저장·기록하는 것은 여기 포함되지 않는다. 사용자가 '저장해줘', "
@@ -438,7 +438,7 @@ def find_common_available_slots_dict(
         collected = json.loads(
             collect_member_schedules.invoke(
                 {
-                    "member_names": [PERSONAL_SHARED_MEMBER_NAME, *normalized_members],
+                    "member_names": normalized_members,
                     "date_from": normalized_date_from,
                     "date_to": normalized_date_to,
                 }
@@ -447,7 +447,7 @@ def find_common_available_slots_dict(
         busy_rows = collected.get("rows") or []
 
     return find_common_available_slots_payload(
-        member_names=normalized_members,
+        member_names=[PERSONAL_SHARED_MEMBER_NAME, *normalized_members],
         date_from=normalized_date_from,
         date_to=normalized_date_to,
         busy_rows=busy_rows,

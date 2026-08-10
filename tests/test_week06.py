@@ -472,7 +472,7 @@ def test_find_common_available_slots_dict_normalizes_iso_datetime_bounds():
         busy_rows=[],
         candidate_slots=[],
     )
-    assert result["members"] == ["철수"]
+    assert result["members"] == ["나", "철수"]
     assert result["candidate_slots"] == []
 
 
@@ -496,7 +496,7 @@ def test_find_common_available_slots_dict_collects_busy_rows_when_missing(monkey
         date_to="2026-08-14",
         candidate_slots=[],
     )
-    assert fake_tool.invoked_with["member_names"] == ["나", "철수"]
+    assert fake_tool.invoked_with["member_names"] == ["철수"]
     assert result["busy_rows"] == collected_rows
 
 
