@@ -337,7 +337,9 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
     """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다.
 
     SQLite row는 `request_kind`로 개인/그룹을 구분합니다. Week 1 임시 일정 row에는
-    이 값이 없으므로 개인 일정으로 봅니다.
+    이 값이 없으므로 개인 일정으로 봅니다. `schedules`에는 kind가
+    personal_schedule/group_schedule일 때만 row가 생기므로(`fixed/app_store.py`),
+    request_kind는 이 두 값이나 None만 가능합니다.
     """
 
     return StructuredRequest(
