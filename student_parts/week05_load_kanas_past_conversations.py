@@ -306,13 +306,23 @@ def _my_schedule_notes(request: StructuredRequest) -> str:
     return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
 
 
+# 동기화 복사본을 원본 앱 일정과 이어 주는 id를 dedupe 동안만 row에 얹어 두는 자리입니다.
+# 밖으로 나가는 rows에는 남기지 않으려고 _dedupe_schedule_rows에서 꺼내 버립니다.
+_SOURCE_ID_FIELD = "_source_conversation_id"
+
+
 def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """같은 일정이 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다.
 
     앱 DB에 저장된 내 일정은 공유 저장소에도 자동 동기화되므로, member_names에 "나"가
     들어온 호출에서는 같은 일정이 두 경로로 들어옵니다. 앞에 오는 앱 DB row를 남깁니다.
 
-    두 경로가 같은 일정을 서로 다르게 다듬기 때문에 값을 그대로 비교하면 안 됩니다.
+    동기화 복사본에는 원본 앱 일정의 request_id가 source_conversation_id("app:{request_id}")로
+    박혀 있으므로, 같은 일정인지는 값이 아니라 이 id로 판단합니다. create_shared_schedule로
+    공유 저장소에 직접 등록한 "나" row는 이 값이 비어 있어 복사본과 섞이지 않고 따로 남습니다.
+
+    id가 없는 row끼리는 값으로 비교하는데, 두 경로가 같은 일정을 서로 다르게 다듬기 때문에
+    값을 그대로 비교하면 안 됩니다.
       - 공유 저장소는 제목에서 소괄호를 지우고 공백을 하나로 줄입니다. 앱 DB는 원문을 둡니다.
       - 앱 DB 경로만 end_time "미정"을 "18:00"으로 바꿉니다. 그래서 end_time은 키에서 뺍니다.
         같은 사람이 같은 날 같은 시각에 시작하는 같은 제목의 일정은 하나로 봅니다.
@@ -321,12 +331,17 @@ def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     deduped: dict[tuple[str, ...], dict[str, Any]] = {}
     for row in rows:
-        key = (
-            str(row.get("member_name") or "").strip(),
-            str(row.get("date") or "").strip(),
-            str(row.get("start_time") or "").strip() or "미정",
-            strip_parenthetical_text(str(row.get("title") or "")),
-        )
+        source_id = str(row.pop(_SOURCE_ID_FIELD, "") or "").strip()
+        if source_id:
+            key = ("source", source_id)
+        else:
+            key = (
+                "value",
+                str(row.get("member_name") or "").strip(),
+                str(row.get("date") or "").strip(),
+                str(row.get("start_time") or "").strip() or "미정",
+                strip_parenthetical_text(str(row.get("title") or "")),
+            )
         deduped.setdefault(key, row)
     return list(deduped.values())
 
@@ -357,6 +372,9 @@ def _collect_member_schedules(
             continue
         if normalized_to and row_date > normalized_to:
             continue
+        # 공유 저장소 복사본이 달고 있는 id와 같은 모양으로 맞춰 dedupe가 짝을 찾게 합니다.
+        # Week 1 임시 일정처럼 request_id가 없으면 동기화 복사본도 없으므로 비워 둡니다.
+        request_id = str(schedule.get("request_id") or "").strip()
         rows.append(
             {
                 "member_name": PERSONAL_SHARED_MEMBER_NAME,
@@ -365,6 +383,7 @@ def _collect_member_schedules(
                 "start_time": request.start_time or "미정",
                 "end_time": request.end_time or "미정",
                 "notes": _my_schedule_notes(request),
+                _SOURCE_ID_FIELD: f"app:{request_id}" if request_id else None,
             }
         )
 
@@ -391,6 +410,8 @@ def _collect_member_schedules(
                     "start_time": row.get("start_time"),
                     "end_time": row.get("end_time"),
                     "notes": row.get("notes"),
+                    # 앱에서 동기화된 복사본에만 값이 있고, 직접 등록한 row는 비어 있습니다.
+                    _SOURCE_ID_FIELD: row.get("source_conversation_id"),
                 }
             )
 
