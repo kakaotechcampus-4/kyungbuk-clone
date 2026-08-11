@@ -209,6 +209,16 @@ def week06_prompt_parts() -> list[str]:
             "외부 멤버의 이전 대화·일정 조회, 여러 사람의 공통 가능 시간 조율, "
             "그룹 일정 최종 시간 확정처럼 '나 이외의 사람'이 관련된 요청은 kana_agent에게 위임한다."
         ),
+        (
+            "그룹 일정이라도 시간이 이미 확정돼 있어서 조율 없이 그대로 저장·알림만 하면 되는 "
+            "요청은 nana_agent에게 위임한다. 즉 라우팅 기준은 '그룹이냐 아니냐'가 아니라 "
+            "'아직 조율이 필요하냐'이다."
+        ),
+        (
+            "'오늘', '내일', '그때' 같은 상대적 시간 표현은 supervisor가 먼저 구체적인 날짜·시간으로 "
+            "해석한 뒤 query 문장에 포함시켜 하위 agent에게 넘긴다. 하위 agent는 이번 query 한 건만 "
+            "보고 이전 대화 맥락을 모른다."
+        ),
     ]
 
 
@@ -274,8 +284,10 @@ def supervisor_system_prompt() -> str:
             *week06_prompt_parts(),
             (
                 "요청을 받으면 스스로 답을 만들지 말고 반드시 nana_agent 또는 kana_agent 중 "
-                "하나를 호출한다. 하위 agent가 돌려준 answer만 근거로 최종 답변을 작성하고, "
-                "하위 agent가 알려주지 않은 내용을 추측해서 채우지 않는다."
+                "하나를 호출한다. 하위 agent가 돌려준 answer만 근거로 최종 답변을 작성한다. "
+                "kana_agent 응답에 final_slot_payload가 함께 들어 있다면, 자유 텍스트인 answer보다 "
+                "final_slot_payload를 우선 신뢰하고, 둘의 내용이 다르면 final_slot_payload 기준으로 "
+                "답변을 정정한다. 하위 agent가 알려주지 않은 내용을 추측해서 채우지 않는다."
             ),
         ]
     )
@@ -609,9 +621,9 @@ def kana_agent(query: str) -> str:
         content = event.get("content")
         if not isinstance(content, dict):
             continue
-        if final_slot_payload is None and "final_slot" in content:
+        if "final_slot" in content:
             final_slot_payload = content
-        if final_decision_payload is None and "final_decision" in content:
+        if "final_decision" in content:
             final_decision_payload = content["final_decision"]
 
     return json.dumps(
