@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 from langchain.agents import create_agent
@@ -16,6 +17,7 @@ from fixed.schedule_decision import (
     decide_final_slot_payload,
     find_common_available_slots_payload,
     normalize_date_bound,
+    slot_to_text,
 )
 from student_parts.week01_wake_up_nana import join_system_prompt
 from student_parts.week02_structure_natural_language_requests import extract_schedule_request
@@ -282,7 +284,10 @@ def supervisor_system_prompt() -> str:
                 "kana_agent 중 알맞은 tool을 호출하세요. 두 영역이 섞여 있으면 필요한 agent를 "
                 "모두 호출한 뒤 그 결과를 종합하세요. "
                 "하위 agent를 호출하기 전에는 어떤 경우에도 최종 답을 내지 마세요. "
-                "최종 답변은 호출한 하위 agent가 돌려준 answer 내용만 근거로 정리해서 전달하고, "
+                "kana_agent 결과에 final_decision_payload.final_slot처럼 확정된 구조화 값이 있으면 "
+                "그 값을 최종 시간의 source of truth로 삼아 답변에 그대로 쓰고, answer 텍스트는 설명을 "
+                "보강하는 용도로만 쓰세요 — 둘이 다르면 구조화 값을 따르세요. "
+                "확정된 구조화 값이 없으면 answer 내용만 근거로 정리해서 전달하고, "
                 "하위 agent가 답하지 않은 사실을 추가하거나 지어내지 마세요. "
                 "하위 agent 결과가 애매하거나 실패했다면 그 사실을 그대로 사용자에게 알리세요."
             ),
@@ -426,22 +431,42 @@ def find_common_available_slots_dict(
     normalized_date_from = normalize_date_bound(date_from)
     normalized_date_to = normalize_date_bound(date_to)
 
-    members_with_me = (
-        normalized_members
-        if PERSONAL_SHARED_MEMBER_NAME in normalized_members
-        else [PERSONAL_SHARED_MEMBER_NAME, *normalized_members]
-    )
+    external_members = [name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME]
+    members_with_me = [PERSONAL_SHARED_MEMBER_NAME, *external_members]
+
+    if not external_members:
+        return {
+            "ok": False,
+            "tool_name": "find_common_available_slots",
+            "members": members_with_me,
+            "needs_member_names": True,
+            "error": "조율할 외부 멤버가 없습니다. 그룹 공통 시간을 찾으려면 외부 멤버 이름이 최소 한 명 필요합니다.",
+        }
 
     if busy_rows is None:
-        collected = json.loads(
-            collect_member_schedules.invoke(
-                {
-                    "member_names": members_with_me,
-                    "date_from": normalized_date_from,
-                    "date_to": normalized_date_to,
-                }
-            )
+        raw_result = collect_member_schedules.invoke(
+            {
+                "member_names": members_with_me,
+                "date_from": normalized_date_from,
+                "date_to": normalized_date_to,
+            }
         )
+        try:
+            collected = json.loads(raw_result)
+        except (TypeError, ValueError) as exc:
+            return {
+                "ok": False,
+                "tool_name": "find_common_available_slots",
+                "members": members_with_me,
+                "error": f"collect_member_schedules 응답을 해석하지 못했습니다: {exc}",
+            }
+        if not collected.get("ok", False):
+            return {
+                "ok": False,
+                "tool_name": "find_common_available_slots",
+                "members": members_with_me,
+                "error": collected.get("error") or "collect_member_schedules 조회에 실패했습니다.",
+            }
         busy_rows = collected.get("busy_rows", [])
 
     return find_common_available_slots_payload(
@@ -504,6 +529,28 @@ def decide_final_slot(
 ) -> str:
     """LLM이 직접 고른 후보/최종 시간을 course repo payload로 기록합니다."""
 
+    # selected_slot/selected_index는 검증된 candidate_slots를 직접 가리키므로, final_slot
+    # 문자열보다 신뢰할 수 있는 source of truth로 취급합니다. 둘이 다르면 선택된 후보를 쓰고
+    # mismatch 사실을 payload에 남깁니다.
+    slots = list(candidate_slots or [])
+    selected = selected_slot
+    if selected is None and selected_index is not None:
+        try:
+            index = int(selected_index)
+        except (TypeError, ValueError):
+            index = None
+        if index is not None and 0 <= index < len(slots):
+            selected = slots[index]
+
+    selected_final_slot = slot_to_text(selected) if selected is not None else None
+    final_slot_mismatch = bool(selected_final_slot and final_slot and selected_final_slot != final_slot)
+    resolved_final_slot = selected_final_slot or final_slot
+    resolved_reason = reason or (
+        "selected_index/selected_slot과 final_slot이 서로 달라 선택된 후보를 최종 시간으로 사용했습니다."
+        if final_slot_mismatch
+        else None
+    )
+
     payload = decide_final_slot_payload(
         candidate_slots=candidate_slots,
         selected_slot=selected_slot,
@@ -512,11 +559,12 @@ def decide_final_slot(
         date_from=date_from,
         date_to=date_to,
         duration_minutes=duration_minutes,
-        final_slot=final_slot,
+        final_slot=resolved_final_slot,
         needs_agent_selection=needs_agent_selection,
-        reason=reason,
+        reason=resolved_reason,
         busy_rows=busy_rows,
     )
+    payload["final_slot_mismatch"] = final_slot_mismatch
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -606,7 +654,10 @@ def kana_agent(query: str) -> str:
             system_prompt=kana_system_prompt(),
         )
 
-    result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    live_today = datetime.now().astimezone().date().isoformat()
+    dated_query = f"(오늘 실제 날짜는 {live_today}입니다. 이 날짜를 기준으로 상대 날짜를 계산하세요.) {query}"
+
+    result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": dated_query}]})
     events = extract_agent_events(result)
 
     final_slot_payload: dict[str, Any] | None = None
