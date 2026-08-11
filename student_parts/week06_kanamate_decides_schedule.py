@@ -221,6 +221,7 @@ def kana_prompt_parts() -> list[str]:
         "너는 그룹 일정 조율과 외부 멤버 일정 관리를 전담하는 에이전트다.",
         "주어진 도구를 사용해 외부 대화를 검색하고 팀 멤버의 일정을 추출하며,",
         "find_common_available_slots와 decide_final_slot을 사용해 공통 가능한 시간 후보를 직접 골라 검증하고 최종 시간을 확정하라.",
+        "(단, 사용자가 단순히 '가능한 시간 후보만 알려줘'라고 한 경우에는 decide_final_slot에서 needs_agent_selection=true로 두어 확정을 보류하라.)",
         "개인 확정 일정을 저장하는 역할은 네 담당이 아니므로 'Nana가 처리할 일입니다'라고 답하라.",
     ]
 
@@ -287,7 +288,8 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     "candidate_slots 인자로 직접 넘겨줘야 합니다. 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), "
     "duration_minutes, reason을 포함해야 합니다. 후보는 어떤 busy row와도 겹치면 안 되며, "
     "이전 도구에서 구한 busy_rows도 함께 넘겨주세요.\n"
-    "결과를 받은 뒤 반드시 이어서 decide_final_slot을 호출해 최종 시간을 논의/결정하세요."
+    "결과를 받은 뒤 결정이 필요하면 이어서 decide_final_slot을 호출하세요. "
+    "(단, 사용자가 단순히 후보만 묻는 경우에는 최종 시간을 임의로 확정하지 말고 needs_agent_selection=true 상태로 보류하세요.)"
 )
 
 
@@ -374,9 +376,10 @@ def find_common_available_slots_dict(
     d_from = normalize_date_bound(date_from)
     d_to = normalize_date_bound(date_to)
 
+    if "나" not in norm_members:
+        norm_members.append("나")
+
     if busy_rows is None:
-        if "나" not in norm_members:
-            norm_members.append("나")
         res_json = collect_member_schedules.invoke({
             "member_names": norm_members,
             "date_from": d_from,
