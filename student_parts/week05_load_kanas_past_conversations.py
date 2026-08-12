@@ -190,7 +190,7 @@ def _schedule_scope(schedule: dict[str, Any]) -> str:
 def _personal_schedules_for_current_scope() -> list[dict[str, Any]]:
     """SQLite 저장 일정과 현재 대화의 임시 일정만 group 조율 후보로 사용합니다."""
 
-    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200, kind="personal_schedule")
+    saved_schedules = AppSQLiteStore(CONFIG.app_db_path).list_schedules(limit=200)
     saved_ids = {schedule.get("schedule_id") for schedule in saved_schedules}
 
     session_id = current_session_scope()
@@ -269,10 +269,14 @@ class CollectMemberSchedulesInput(BaseModel):
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
-    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
+    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다.
+
+    SQLite row는 `request_kind`로 개인/그룹을 구분합니다. Week 1 임시 일정 row에는
+    이 값이 없으므로 개인 일정으로 봅니다.
+    """
 
     return StructuredRequest(
-        kind="personal_schedule",
+        kind="group_schedule" if row.get("request_kind") == "group_schedule" else "personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -280,6 +284,15 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
         members=row.get("attendees") or row.get("members") or [],
         original_text=str(row.get("title") or ""),
     )
+
+
+def _my_schedule_notes(request: StructuredRequest) -> str:
+    """내 일정 row가 개인 일정인지, 참석자가 있는 그룹 일정인지 설명합니다."""
+
+    if request.kind != "group_schedule":
+        return "Nana 개인 일정"
+    members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
+    return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
 
 
 def _collect_member_schedules(
@@ -298,7 +311,7 @@ def _collect_member_schedules(
     external_member_names = [name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME]
     queried_members = [PERSONAL_SHARED_MEMBER_NAME, *external_member_names]
 
-    rows: list[dict[str, Any]] = []
+    my_rows: list[dict[str, Any]] = []
     for schedule in personal_schedules:
         structured = _structured_request_from_schedule_row(schedule)
         schedule_date = structured.date or ""
@@ -306,17 +319,18 @@ def _collect_member_schedules(
             continue
         if normalized_date_to and schedule_date > normalized_date_to:
             continue
-        rows.append(
+        my_rows.append(
             {
                 "member_name": PERSONAL_SHARED_MEMBER_NAME,
                 "title": structured.title,
                 "date": structured.date,
                 "start_time": structured.start_time,
                 "end_time": structured.end_time,
-                "notes": "",
+                "notes": _my_schedule_notes(structured),
             }
         )
 
+    external_rows: list[dict[str, Any]] = []
     if external_member_names:
         external_payload = json.loads(
             call_mcp_tool_sync(
@@ -325,7 +339,7 @@ def _collect_member_schedules(
             )
         )
         for row in external_payload.get("rows", []):
-            rows.append(
+            external_rows.append(
                 {
                     "member_name": row.get("member_name"),
                     "title": row.get("title"),
@@ -336,6 +350,9 @@ def _collect_member_schedules(
                 }
             )
 
+    # external_member_names가 이미 "나"를 제외하므로, 내 일정이 앱 DB와 공유 저장소
+    # 양쪽에서 중복으로 들어올 일이 없다 — 그래서 별도 dedup 없이 그대로 이어붙인다.
+    rows = [*my_rows, *external_rows]
     return {"members": queried_members, "rows": rows, "schedule_summary": external_schedule_summary(rows)}
 
 
