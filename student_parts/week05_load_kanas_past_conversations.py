@@ -14,6 +14,7 @@ from fixed.external_people_store import (
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
+    strip_parenthetical_text,
 )
 from fixed.llm import chat_model
 from fixed.mcp_client import (
@@ -275,10 +276,26 @@ class CollectMemberSchedulesInput(BaseModel):
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
-    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
+    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다.
+
+    SQLite row는 `request_kind`로 개인/그룹을 구분합니다. `schedules` 테이블은 현재
+    personal_schedule/group_schedule row만 담지만, 그 보장이 이 함수 밖(fixed/app_store.py)의
+    구현 디테일이므로 "group_schedule이 아니면 전부 personal_schedule"로 뭉뚱그리지 않고
+    두 값을 각각 명시적으로 확인합니다. Week 1 임시 일정 row처럼 request_kind가 아예 없는
+    경우에만 personal_schedule로 fallback합니다 — 나중에 다른 request_kind가 들어오면 이
+    else 분기에서 바로 알아챌 수 있게 하기 위함입니다.
+    """
+
+    request_kind = row.get("request_kind")
+    if request_kind == "group_schedule":
+        kind = "group_schedule"
+    elif request_kind == "personal_schedule":
+        kind = "personal_schedule"
+    else:
+        kind = "personal_schedule"  # request_kind가 없는 Week 1 임시 일정 row의 fallback
 
     return StructuredRequest(
-        kind="personal_schedule",
+        kind=kind,
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -286,6 +303,50 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
         members=row.get("attendees") or row.get("members") or [],
         original_text=str(row.get("title") or ""),
     )
+
+
+def _my_schedule_notes(request: StructuredRequest) -> str:
+    """내 일정 row가 개인 일정인지, 참석자가 있는 그룹 일정인지 설명합니다."""
+
+    if request.kind != "group_schedule":
+        return "Nana 개인 일정"
+    members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
+    return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
+
+
+def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """"나" row가 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다.
+
+    앱 DB에 저장된 내 일정은 공유 저장소에도 "나" 이름으로 자동 동기화되므로, member_names에
+    "나"가 들어온 호출에서는 내 일정만 두 경로로 들어옵니다. 이 dedup은 그 "나" 중복 문제를
+    풀려고 만든 것이라 member_name이 "나"인 row에만 적용하고, 외부 멤버 row는 원래 순서 그대로
+    손대지 않고 통과시킵니다 — 외부 멤버 일정까지 같은 기준으로 뭉치면, 서로 다른 실제 일정이
+    우연히 날짜/시간/제목이 겹칠 때 잘못 하나로 합쳐질 위험이 있기 때문입니다.
+
+    "나" row 사이에서는 두 경로가 같은 일정을 서로 다르게 다듬기 때문에 값을 그대로 비교하면
+    안 됩니다.
+      - 공유 저장소는 제목에서 소괄호를 지우고 공백을 하나로 줄입니다. 앱 DB는 원문을 둡니다.
+      - 앱 DB 경로만 end_time "미정"을 "18:00"으로 바꿉니다. 그래서 end_time은 키에서 뺍니다.
+        같은 날 같은 시각에 시작하는 같은 제목의 일정은 하나로 봅니다.
+      - start_time이 비어 있으면 공유 저장소는 "미정"으로 저장하므로 같은 값으로 맞춥니다.
+    """
+
+    seen_my_keys: set[tuple[str, ...]] = set()
+    deduped_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if str(row.get("member_name") or "").strip() != "나":
+            deduped_rows.append(row)
+            continue
+        key = (
+            str(row.get("date") or "").strip(),
+            str(row.get("start_time") or "").strip() or "미정",
+            strip_parenthetical_text(str(row.get("title") or "")),
+        )
+        if key in seen_my_keys:
+            continue
+        seen_my_keys.add(key)
+        deduped_rows.append(row)
+    return deduped_rows
 
 
 def _collect_member_schedules(
@@ -308,7 +369,7 @@ def _collect_member_schedules(
                 "date": structured.date,
                 "start_time": structured.start_time,
                 "end_time": structured.end_time,
-                "notes": schedule.get("notes"),
+                "notes": _my_schedule_notes(structured),
             }
         )
 
@@ -334,6 +395,10 @@ def _collect_member_schedules(
         integrated_rows.extend(external_rows)
     except Exception as exc:
         external_error = f"{type(exc).__name__}: {exc}"
+
+    # "나"가 member_names에 포함되면 내 일정이 앱 DB 경로와 공유 저장소 경로 양쪽으로 들어오므로
+    # 여기서 한 번 걸러냅니다. my 쪽 row가 먼저 들어가 있으므로 notes가 (C)에서 만든 값으로 남습니다.
+    integrated_rows = _dedupe_schedule_rows(integrated_rows)
 
     result: dict[str, Any] = {
         "rows": integrated_rows,

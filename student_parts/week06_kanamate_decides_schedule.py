@@ -200,6 +200,13 @@ def week06_prompt_parts() -> list[str]:
         # TODO: Week 6 supervisor agent system prompt를 자유롭게 추가하세요.
         #   - supervisor는 직접 업무를 처리하지 않고 nana_agent 또는 kana_agent로만 위임합니다.
         #   - 어떤 요청이 Nana 담당이고 어떤 요청이 Kana 담당인지 판단 기준을 적습니다.
+        "supervisor는 직접 업무를 처리하지 않고, nana_agent 또는 kana_agent로만 위임합니다. Nana는 개인 일정/저장/RAG를 담당하고, Kana는 외부 멤버 일정/공통 가능 시간/그룹 조율을 담당합니다.",
+        "개인 일정 조회·생성·수정·삭제, todo/reminder 저장, 내 대화·참고자료 검색은 nana_agent에게 위임한다. "
+        "외부 멤버의 일정/대화 조회, 공유 일정 저장소 확인, 여러 사람의 공통 가능 시간 조율은 kana_agent에게 위임한다. "
+        "그룹 시간까지 정하고 그걸 내 일정에 저장해야 하는 요청처럼 두 역할이 다 필요하면 kana_agent를 먼저 불러 결과를 받은 뒤 "
+        "nana_agent를 호출해 저장을 맡긴다.",
+        "단순히 다른 사람 이름이 언급된다고 kana_agent로 보내지 않는다. 그 사람의 일정이나 대화 자체를 조회해야 할 때만 "
+        "kana_agent를 쓰고, 그 사람에 대한 개인 메모/참고자료를 저장하거나 찾는 요청이면 nana_agent를 쓴다.",
     ]
 
 
@@ -211,6 +218,9 @@ def nana_prompt_parts() -> list[str]:
         # TODO: Week 6 Nana 하위 에이전트 전용 system prompt를 자유롭게 추가하세요.
         #   - supervisor prompt를 공유하지 않는 Nana 전용 prompt입니다.
         #   - 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알리게 합니다.
+        "Nana는 개인 일정/저장/RAG를 담당하고, 그룹 조율 요청은 담당이 아니라고 짧게 알립니다. "
+        "이때 '이 요청은 그룹 조율이라 제 담당이 아니에요. supervisor가 kana_agent로 다시 위임해 주세요.'처럼 "
+        "supervisor가 바로 재위임할 수 있도록 kana_agent를 명시해서 답합니다.",
     ]
 
 
@@ -222,6 +232,24 @@ def kana_prompt_parts() -> list[str]:
         #   - 다른 주차 prompt를 누적하지 않으므로 Kana 역할을 처음부터 작성해야 합니다.
         #   - 외부 멤버 일정/공통 가능 시간/그룹 조율을 담당하고, 확정된 일정 저장은 Nana 담당이라고 답하게 합니다.
         #   - 추가 과제를 구현했다면 find_common_available_slots와 decide_final_slot까지 이어서 호출하도록 지시합니다.
+        "Kana는 외부 멤버 일정/공통 가능 시간/그룹 조율을 담당하고, 확정된 일정 저장은 Nana 담당이라고 답합니다.",
+        "자연어로 들어온 그룹 일정 요청을 날짜/시간/참석자 구조로 정리해야 하면 extract_schedule_request로 먼저 구조화한다.",
+        "특정 멤버와 나눈 대화 자체를 찾고 싶으면 search_previous_conversations로 먼저 검색하고, "
+        "그 결과의 conversation_id로 load_conversation_messages를 불러 대화 전체를 확인한다.",
+        "특정 멤버(들)의 일정이나 바쁜 시간만 필요하면 extract_schedules_from_history를 쓰고, "
+        "공유 일정 저장소에 등록된 row 자체를 확인하고 싶으면 list_shared_schedules를 쓴다.",
+        "여러 사람의 일정을 한 번에 비교해 그룹 미팅 시간을 조율해야 하면 "
+        "extract_schedules_from_history 대신 collect_member_schedules를 사용한다 — "
+        "이 tool은 '나'의 일정과 다른 멤버들의 일정을 같은 구조로 함께 모아 주므로, "
+        "나를 포함한 공통 시간을 찾을 때만 이 tool을 쓴다.",
+        "그룹 미팅 시간을 실제로 확정해야 하면, collect_member_schedules로 모은 busy_rows를 근거로 "
+        "겹치지 않는 시간을 직접 골라 find_common_available_slots에 candidate_slots로 넘긴다. "
+        "find_common_available_slots와 decide_final_slot은 최적 시간을 대신 계산해 주지 않으므로, "
+        "항상 네가 직접 busy_rows를 확인해서 후보와 최종 시간을 판단해야 한다.",
+        "find_common_available_slots로 후보를 검증한 뒤에는 그 결과로 답변을 끝내지 말고, "
+        "반드시 decide_final_slot을 이어서 호출한다. 후보 중 하나를 확정할 수 있으면 selected_index나 "
+        "final_slot을 직접 골라 넘기고, 아직 고르지 못했다면 needs_agent_selection을 true로 남겨 사용자에게 "
+        "추가 정보나 선택을 요청한다.",
     ]
 
 
@@ -239,6 +267,16 @@ def supervisor_system_prompt() -> str:
             *week06_prompt_parts(),
             # TODO: supervisor 실행 역할에 필요한 최종 system prompt를 자유롭게 추가하세요.
             #   - 반드시 nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답하게 합니다.
+            "supervisor는 직접 업무를 처리하지 않고, nana_agent 또는 kana_agent 중 하나를 호출한 뒤 그 결과만 근거로 답합니다.",
+            "supervisor는 어떤 요청이 Nana 담당이고 어떤 요청이 Kana 담당인지 판단 기준을 prompt에 적은 대로 따릅니다.",
+            "supervisor는 하위 agent가 반환한 JSON의 answer 필드만 읽어 자연어로 답합니다. "
+            "trace/inner_tool_names/final_slot_payload 등 나머지 데이터 조합은 시스템이 자동으로 처리하므로, "
+            "supervisor가 직접 JSON을 파싱하거나 그 값을 답변에 그대로 옮겨 적지 않습니다.",
+            "하위 agent의 answer에 확정된 시간이 이미 언급돼 있다면 그 내용을 답변에서 명확히 살려서 전달합니다.",
+            "하위 agent를 호출할 때는 AgentQueryInput 스키마에 맞춰 query를 넘깁니다.",
+            "만약 하위 agent의 '본인 담당이 아니에요'류의 요청을 받으면 다른 하위 agent를 다시 호출해야 합니다.",
+            "최종 답변은 항상 자연어 문장으로 쓰고, tool이 반환한 JSON이나 구조화된 데이터를 그대로 출력하지 않습니다. "
+            "하위 agent의 answer를 사용자가 읽기 쉬운 문장으로 바꿔서 전달합니다.",
         ]
     )
 
@@ -290,7 +328,9 @@ FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION = (
     #     duration_minutes, reason을 포함해야 한다는 형식을 적습니다.
     #   - 후보는 어떤 busy row와도 겹치면 안 되고, busy_rows도 앞선 tool output에서 복사해 넘기게 합니다.
     #   - 이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출하도록 유도합니다.
-    ""
+    "해당 Python tool은 후보를 계산하지 않습니다. Kana agent가 busy_rows를 읽고 candidate_slots를 직접 채워 넘기게 해야 합니다. "
+    "candidate_slots 각 항목은 date(YYYY-MM-DD), start_time(HH:MM), end_time(HH:MM), duration_minutes, reason을 포함해야 합니다. 후보는 어떤 busy row와도 겹치면 안 되며, busy_rows도 앞선 tool output에서 복사해 넘기게 합니다. "
+    "이 결과로 답변을 끝내지 말고 decide_final_slot을 이어서 호출하도록 유도합니다. "
 )
 
 
@@ -301,7 +341,9 @@ DECIDE_FINAL_SLOT_DESCRIPTION = (
     #   - final_slot 형식('YYYY-MM-DD HH:MM-HH:MM')과 needs_agent_selection, reason을 채우는 기준을 적습니다.
     #   - 아직 고르지 않았다면 final_slot은 null, needs_agent_selection은 true로 두게 합니다.
     #   - 근거 trace를 위해 candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘기게 합니다.
-    ""
+    "해당 Python tool은 최종 시간을 자동 선택하지 않습니다. Kana agent가 selected_index 또는 selected_slot과 final_slot을 직접 골라 넘기게 해야 합니다. "
+    "final_slot을 채울 때는 'YYYY-MM-DD HH:MM-HH:MM' 형식의 문자열로 적습니다. 아직 고르지 않았다면 final_slot은 null, needs_agent_selection은 true로 두게 합니다. "
+    "근거 trace를 위해 candidate_slots, busy_rows, member_names, date_from/date_to도 함께 넘기게 합니다. "
 )
 
 
@@ -382,7 +424,33 @@ def find_common_available_slots_dict(
     #   - busy_rows가 None이면 collect_member_schedules.invoke({...})를 호출해 rows를 채웁니다.
     #   - 검증 payload 생성은 find_common_available_slots_payload(...)에 넘깁니다. 이때 내 일정도 근거이므로
     #     member_names에는 "나"를 함께 포함합니다.
-    ...
+    normalized_member_names = normalize_external_member_names(member_names)
+    if "나" not in normalized_member_names:
+        normalized_member_names = ["나", *normalized_member_names]
+    normalized_date_from = normalize_date_bound(date_from)
+    normalized_date_to = normalize_date_bound(date_to)
+    if busy_rows is None:
+        busy_rows_result = collect_member_schedules.invoke(
+            {
+                "member_names": normalized_member_names,
+                "date_from": normalized_date_from,
+                "date_to": normalized_date_to,
+            }
+        )
+        busy_rows = json.loads(busy_rows_result).get("rows", [])
+    payload = find_common_available_slots_payload(
+        member_names=normalized_member_names,
+        date_from=normalized_date_from,
+        date_to=normalized_date_to,
+        duration_minutes=duration_minutes,
+        workday_start=workday_start,
+        workday_end=workday_end,
+        limit=limit,
+        busy_rows=busy_rows,
+        candidate_slots=candidate_slots or [],
+        llm_reason=llm_reason,
+    )
+    return payload
 
 
 @tool(description=FIND_COMMON_AVAILABLE_SLOTS_DESCRIPTION, args_schema=FindCommonAvailableSlotsInput)
@@ -401,7 +469,19 @@ def find_common_available_slots(
     """수집된 멤버 일정에서 LLM이 직접 고른 공통 가능 후보 시간을 검증합니다."""
 
     # TODO: find_common_available_slots_dict(...) 결과를 JSON 문자열로 반환하세요.
-    ...
+    payload = find_common_available_slots_dict(
+        member_names=member_names,
+        date_from=date_from,
+        date_to=date_to,
+        duration_minutes=duration_minutes,
+        workday_start=workday_start,
+        workday_end=workday_end,
+        limit=limit,
+        busy_rows=busy_rows,
+        candidate_slots=candidate_slots,
+        llm_reason=llm_reason,
+    )
+    return json.dumps(payload, ensure_ascii=False)
 
 
 @tool(description=DECIDE_FINAL_SLOT_DESCRIPTION, args_schema=DecideFinalSlotInput)
@@ -423,7 +503,20 @@ def decide_final_slot(
     # TODO: Kana agent가 고른 최종 시간 정보를 course repo JSON 계약에 맞춰 기록하세요.
     #   - 직접 최종 시간을 고르지 말고 받은 인자를 그대로 decide_final_slot_payload(...)에 넘깁니다.
     #   - 결과를 JSON 문자열로 반환합니다.
-    ...
+    payload = decide_final_slot_payload(
+        candidate_slots=candidate_slots or [],
+        selected_slot=selected_slot,
+        selected_index=selected_index,
+        final_slot=final_slot,
+        needs_agent_selection=needs_agent_selection,
+        member_names=member_names,
+        date_from=date_from,
+        date_to=date_to,
+        duration_minutes=duration_minutes,
+        reason=reason,
+        busy_rows=busy_rows,
+    )
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def kana_tools() -> list[Any]:
@@ -486,7 +579,26 @@ def nana_agent(query: str) -> str:
     #   - query를 user 메시지로 invoke하고, extract_agent_events(...)와 extract_final_text(...)로
     #     trace와 answer를 뽑습니다.
     #   - selected_agent, answer, trace, inner_tool_names를 담은 JSON 문자열을 반환합니다.
-    ...
+    global _NANA_SUBAGENT
+    if _NANA_SUBAGENT is None:
+        _NANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=week04_tools(),
+            system_prompt=nana_system_prompt(),
+        )
+    query_result = _NANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    trace = extract_agent_events(query_result)
+    answer = extract_final_text(query_result)
+    inner_tool_names = _tool_call_names(trace)
+    return json.dumps({
+        "ok": True,
+        "tool_name": "nana_agent",
+        "supervisor_selected_agent": "nana_agent",
+        "answer": answer,
+        "trace": trace,
+        "inner_tool_names": inner_tool_names,
+    }, ensure_ascii=False)
+        
 
 
 @tool(args_schema=AgentQueryInput)
@@ -497,7 +609,42 @@ def kana_agent(query: str) -> str:
     #   - _KANA_SUBAGENT를 kana_tools()와 kana_system_prompt()로 한 번만 만들고 재사용합니다.
     #   - trace event의 content를 훑어 final_slot이 들어 있는 dict와 final_decision 값을 찾습니다.
     #   - answer, trace, inner_tool_names, final_slot_payload, final_decision_payload를 JSON으로 반환합니다.
-    ...
+    global _KANA_SUBAGENT
+    if _KANA_SUBAGENT is None:
+        _KANA_SUBAGENT = create_agent(
+            model=chat_model(),
+            tools=kana_tools(),
+            system_prompt=kana_system_prompt(),
+        )
+    query_result = _KANA_SUBAGENT.invoke({"messages": [{"role": "user", "content": query}]})
+    trace = extract_agent_events(query_result)
+    answer = extract_final_text(query_result)
+    inner_tool_names = _tool_call_names(trace)
+    final_slot_payload = None
+    final_decision_payload = None
+    # decide_final_slot이 kana_tools()에 활성화되어 있으면, Kana가 실제로 호출한 결과에서
+    # final_slot_payload/final_decision_payload를 채웁니다. Kana가 아직 후보만 검증하고
+    # decide_final_slot을 호출하지 않았거나, 이 요청이 최종 확정과 무관하면 계속 None입니다.
+    for event in trace:
+        if event.get("event") == "tool_result" and event.get("tool_name") == "decide_final_slot":
+            content = event.get("content")
+            if isinstance(content, dict):
+                if content.get("final_slot_payload"):
+                    final_slot_payload = content["final_slot_payload"]
+                elif "final_slot" in content:
+                    final_slot_payload = content
+                if content.get("final_decision_payload"):
+                    final_decision_payload = content["final_decision_payload"]
+    return json.dumps({
+        "ok": True,
+        "tool_name": "kana_agent",
+        "supervisor_selected_agent": "kana_agent",
+        "answer": answer,
+        "trace": trace,
+        "inner_tool_names": inner_tool_names,
+        "final_slot_payload": final_slot_payload,
+        "final_decision_payload": final_decision_payload,
+    }, ensure_ascii=False)
 
 
 def build_langchain_supervisor_agent() -> object:
