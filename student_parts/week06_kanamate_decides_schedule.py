@@ -203,11 +203,19 @@ def week06_prompt_parts() -> list[str]:
 
 - nana_agent: 나의 개인 일정 생성/조회/수정/삭제, 할 일·알림 저장, 개인 참고자료(RAG),
   내 이전 대화 검색처럼 "나 개인"에 관한 요청을 맡긴다.
+  참석자가 있어도 시간이 이미 정해진 일정("하린과 내일 3시에 회의 잡아줘")은
+  조율이 필요 없으므로 nana_agent에 바로 위임한다.
 - kana_agent: 외부 팀원의 이전 대화·일정 조회, 여러 사람의 busy-time 종합,
-  공통 가능 시간 후보 검증과 최종 회의 시간 결정처럼 "여러 사람 조율"에 관한 요청을 맡긴다.
+  아직 시간이 정해지지 않아 공통 가능 시간을 찾고 확정해야 하는 요청("팀원들과 다음 주에
+  언제 만날지 잡아줘")을 맡긴다. kana_agent는 확정한 시간을 직접 저장하지 않으므로,
+  확정 후 저장까지 필요하면 이어서 nana_agent를 호출한다.
 
 요청이 여러 성격을 동시에 담고 있으면(예: "다음 주 회의 잡고 확정되면 내 일정에도 저장해줘")
-필요한 하위 agent를 순서대로 여러 번 호출한다.
+필요한 하위 agent를 순서대로 여러 번 호출한다. 이때 각 하위 agent는 서로의 대화를 보지
+못하므로, "그 시간", "거기서 정한 걸로" 같은 지시어를 그대로 다음 agent에 전달하지 않는다.
+앞선 호출의 answer/final_slot_payload에서 실제 날짜·시간 같은 구체적인 값을 확인한 뒤,
+그 값을 다음 agent에게 명시적으로 채워서 물어본다(예: kana_agent가 "7월 8일 09:00-10:00"을
+확정했다면, nana_agent에게는 "7월 8일 09:00-10:00에 회의 일정 저장해줘"라고 요청한다).
 """,
     ]
 
@@ -271,8 +279,12 @@ def supervisor_system_prompt() -> str:
         [
             *week06_prompt_parts(),
             """
-반드시 nana_agent 또는 kana_agent 중 하나 이상을 호출한 뒤, 그 결과(answer/trace)만 근거로
-최종 답변을 작성한다. 하위 agent를 호출하지 않고 직접 답하지 않는다.
+반드시 nana_agent 또는 kana_agent 중 하나 이상을 호출한 뒤, 그 결과만 근거로 최종 답변을
+작성한다. 하위 agent를 호출하지 않고 직접 답하지 않는다.
+
+kana_agent 결과에 final_slot_payload가 있으면, 그 안의 final_slot/reason/candidates는
+decide_final_slot이 검증해 기록한 값이라 answer(자연어 요약)보다 신뢰도가 높다. 둘이
+어긋나면 final_slot_payload를 기준으로 답하고, answer는 설명을 다듬는 데만 참고한다.
 """,
         ]
     )
@@ -411,6 +423,9 @@ def find_common_available_slots_dict(
     """멤버별 busy-time rows와 LLM이 고른 후보 payload를 검증 결과로 바꿉니다."""
 
     normalized_members = normalize_external_member_names(member_names)
+    # Kana가 member_names에 "나"를 이미 포함해 넘겨도 members에 두 번 남지 않도록
+    # collect_member_schedules와 같은 방식으로 여기서도 걸러낸다.
+    external_members = [name for name in normalized_members if name != PERSONAL_SHARED_MEMBER_NAME]
     normalized_date_from = normalize_date_bound(date_from)
     normalized_date_to = normalize_date_bound(date_to)
 
@@ -418,7 +433,7 @@ def find_common_available_slots_dict(
         collected = json.loads(
             collect_member_schedules.invoke(
                 {
-                    "member_names": normalized_members,
+                    "member_names": external_members,
                     "date_from": normalized_date_from,
                     "date_to": normalized_date_to,
                 }
@@ -427,7 +442,7 @@ def find_common_available_slots_dict(
         busy_rows = collected.get("rows", [])
 
     return find_common_available_slots_payload(
-        member_names=[PERSONAL_SHARED_MEMBER_NAME, *normalized_members],
+        member_names=[PERSONAL_SHARED_MEMBER_NAME, *external_members],
         date_from=normalized_date_from,
         date_to=normalized_date_to,
         busy_rows=busy_rows,
