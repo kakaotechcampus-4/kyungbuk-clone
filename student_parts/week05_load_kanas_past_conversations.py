@@ -14,6 +14,7 @@ from fixed.external_people_store import (
     external_schedule_summary,
     normalize_external_member_names,
     normalize_external_schedule_date_bounds,
+    strip_parenthetical_text,
 )
 from fixed.llm import chat_model
 from fixed.mcp_client import (
@@ -276,10 +277,14 @@ class CollectMemberSchedulesInput(BaseModel):
 
 
 def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequest:
-    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다."""
+    """앱 일정 row를 Week 2 StructuredRequest 기준으로 읽습니다.
+
+    SQLite row는 `request_kind`로 개인/그룹을 구분합니다. Week 1 임시 일정 row에는
+    이 값이 없으므로 개인 일정으로 봅니다.
+    """
 
     return StructuredRequest(
-        kind="personal_schedule",
+        kind="group_schedule" if row.get("request_kind") == "group_schedule" else "personal_schedule",
         title=row.get("title"),
         date=row.get("date"),
         start_time=row.get("start_time"),
@@ -287,6 +292,30 @@ def _structured_request_from_schedule_row(row: dict[str, Any]) -> StructuredRequ
         members=row.get("attendees") or row.get("members") or [],
         original_text=str(row.get("title") or ""),
     )
+
+
+def _my_schedule_notes(request: StructuredRequest) -> str:
+    """내 일정 row가 개인 일정인지, 참석자가 있는 그룹 일정인지 설명합니다."""
+
+    if request.kind != "group_schedule":
+        return "Nana 개인 일정"
+    members = [str(member).strip() for member in (request.members or []) if str(member).strip()]
+    return f"Nana 그룹 일정 · 참석자: {', '.join(members)}" if members else "Nana 그룹 일정"
+
+
+def _dedupe_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """같은 일정이 앱 DB와 공유 저장소 양쪽에서 들어와도 한 번만 남깁니다."""
+
+    deduped: dict[tuple[str, ...], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            str(row.get("member_name") or "").strip(),
+            str(row.get("date") or "").strip(),
+            str(row.get("start_time") or "").strip() or "미정",
+            strip_parenthetical_text(str(row.get("title") or "")),
+        )
+        deduped.setdefault(key, row)
+    return list(deduped.values())
 
 
 def _collect_member_schedules(
@@ -298,58 +327,53 @@ def _collect_member_schedules(
 ) -> dict[str, Any]:
     """내 일정과 외부 멤버 일정을 같은 row 구조로 합칩니다."""
 
-    normalized_member_names = normalize_external_member_names(member_names)
+    normalized_members = normalize_external_member_names(member_names)
     normalized_date_from, normalized_date_to = normalize_external_schedule_date_bounds(
-        normalized_member_names,
+        normalized_members,
         date_from,
         date_to,
     )
 
-    rows: list[dict[str, Any]] = []
-    for schedule in personal_schedules:
-        request = _structured_request_from_schedule_row(schedule)
-        schedule_date = (request.date or "").split("T", 1)[0].strip()
+    my_rows: list[dict[str, Any]] = []
+    for row in personal_schedules:
+        request = _structured_request_from_schedule_row(row)
+        schedule_date = request.date
         if not schedule_date:
             continue
         if normalized_date_from and schedule_date < normalized_date_from:
             continue
         if normalized_date_to and schedule_date > normalized_date_to:
             continue
-        rows.append(
+        end_time = row.get("end_time")
+        my_rows.append(
             {
                 "member_name": "나",
-                "title": request.title or "제목 없음",
+                "title": request.title,
                 "date": schedule_date,
-                "start_time": request.start_time or "미정",
-                "end_time": request.end_time or "미정",
-                "notes": "내 개인 일정",
+                "start_time": request.start_time,
+                "end_time": request.end_time if end_time != "미정" else "18:00",
+                "notes": _my_schedule_notes(request),
             }
         )
 
-    external_member_names = [
-        member_name
-        for member_name in normalized_member_names
-        if member_name != "나"
-    ]
-    if external_member_names:
+    external_payload = {"rows": []}
+    if normalized_members:
         external_payload = json.loads(
             call_mcp_tool_sync(
                 "extract_schedules_from_history",
                 {
-                    "member_names": external_member_names,
+                    "member_names": normalized_members,
                     "date_from": normalized_date_from,
                     "date_to": normalized_date_to,
                 },
             )
         )
-        rows.extend(external_payload.get("rows", []))
 
+    rows = _dedupe_schedule_rows([*my_rows, *external_payload.get("rows", [])])
     return {
         "ok": True,
         "tool_name": "collect_member_schedules",
-        "member_names": normalized_member_names,
-        "date_from": normalized_date_from,
-        "date_to": normalized_date_to,
+        "members": ["나", *[name for name in normalized_members if name != "나"]],
         "rows": rows,
         "schedule_summary": external_schedule_summary(rows),
     }
