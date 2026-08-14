@@ -1,9 +1,21 @@
 from __future__ import annotations
 
-"""SQLite 대화 목록을 ChromaDB 대화 청크로 동기화하고 검색하는 저장소입니다."""
+"""SQLite 대화 목록을 ChromaDB 메시지 window 청크로 동기화하고 검색하는 저장소입니다.
+
+대화 1건을 통째로 청크 하나에 담으면 메시지가 한 건 붙을 때마다 대화 전문을 다시
+embedding해야 해서 누적 비용이 대화 길이의 제곱으로 늘어납니다. 그래서 메시지를
+`WINDOW_SIZE`개씩 끊어 청크로 만들고, 이미 가득 찬 window는 내용이 더 바뀌지 않으므로
+다시 embedding하지 않습니다.
+
+대화 제목은 사용자가 대화를 부르는 이름이라 검색어로 자주 쓰이므로 embedding 본문에
+포함합니다. 제목은 메시지를 붙일 때 바뀌지 않으므로 append 비용은 여전히 window 1개입니다.
+반대로 상태와 수정 시각은 메시지를 붙일 때마다 바뀌지만 검색 대상 본문은 아니므로
+`source_hash`에서 제외하고 metadata만 갱신합니다.
+"""
 
 import hashlib
 import json
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -13,9 +25,14 @@ from fixed.reference_store import OpenAIEmbeddingFunction
 
 
 class ConversationRAGStore:
-    """앱 SQLite 대화 전사를 대화 단위 ChromaDB 청크로 관리합니다."""
+    """앱 SQLite 대화 전사를 메시지 window 단위 ChromaDB 청크로 관리합니다."""
 
     COLLECTION_NAME = "kanana_conversation_chunks_openai"
+    WINDOW_SIZE = 8
+    # 제목은 embedding 본문에 들어가므로 metadata-only 갱신 대상이 아닙니다.
+    MUTABLE_METADATA_FIELDS = ("status", "updated_at")
+    # 한 대화가 검색 결과를 독점하지 않도록 대화당 기본 window 수를 제한합니다.
+    MAX_WINDOWS_PER_CONVERSATION = 2
 
     def __init__(
         self,
@@ -46,6 +63,8 @@ class ConversationRAGStore:
                 "embedding_model": CONFIG.openai_embedding_model,
             },
         )
+        self._sync_cache_key: tuple[str, tuple[str, ...]] | None = None
+        self._sync_total = 0
 
     def backend_info(self) -> dict[str, Any]:
         """Tool payload에 포함할 vector backend 정보를 반환합니다."""
@@ -59,8 +78,23 @@ class ConversationRAGStore:
             "chroma_dir": str(self.chroma_dir),
         }
 
-    def sync_from_sqlite(self, sqlite_store: AppSQLiteStore) -> dict[str, int]:
-        """SQLite 대화 목록을 읽어 신규/변경/삭제분만 ChromaDB에 반영합니다."""
+    def sync_from_sqlite(
+        self,
+        sqlite_store: AppSQLiteStore,
+        *,
+        skip_conversation_ids: str | Iterable[str] | None = None,
+    ) -> dict[str, int]:
+        """SQLite 대화 목록을 읽어 신규/변경/삭제분만 ChromaDB에 반영합니다.
+
+        `skip_conversation_ids`에 있는 대화는 어차피 검색에서 제외되므로 embedding도
+        하지 않습니다. 기존 청크는 지우지 않고 그대로 두어, 나중에 그 대화가 검색
+        대상이 될 때 한 번만 다시 embedding되게 합니다.
+        """
+
+        skip_ids = self._normalized_skip_ids(skip_conversation_ids)
+        cache_key = (self._sqlite_fingerprint(sqlite_store), tuple(sorted(skip_ids)))
+        if cache_key == self._sync_cache_key:
+            return {"upserted": 0, "skipped": self._sync_total, "deleted": 0, "total": self._sync_total}
 
         chunks = self._conversation_chunks(sqlite_store)
         chunk_by_id = {chunk["chunk_id"]: chunk for chunk in chunks}
@@ -71,10 +105,17 @@ class ConversationRAGStore:
             self.collection.delete(ids=stale_ids)
 
         upsert_chunks: list[dict[str, Any]] = []
+        refresh_chunks: list[dict[str, Any]] = []
         skipped = 0
         for chunk_id, chunk in chunk_by_id.items():
+            metadata = chunk["metadata"]
             existing_metadata = existing.get(chunk_id) or {}
-            if existing_metadata.get("source_hash") == chunk["metadata"]["source_hash"]:
+            if existing_metadata.get("source_hash") == metadata["source_hash"]:
+                skipped += 1
+                if self._metadata_needs_refresh(existing_metadata, metadata):
+                    refresh_chunks.append(chunk)
+                continue
+            if metadata["conversation_id"] in skip_ids:
                 skipped += 1
                 continue
             upsert_chunks.append(chunk)
@@ -85,7 +126,15 @@ class ConversationRAGStore:
                 documents=[chunk["content"] for chunk in upsert_chunks],
                 metadatas=[chunk["metadata"] for chunk in upsert_chunks],
             )
+        if refresh_chunks:
+            # document를 넘기지 않으므로 embedding 재계산 없이 metadata만 갱신됩니다.
+            self.collection.update(
+                ids=[chunk["chunk_id"] for chunk in refresh_chunks],
+                metadatas=[chunk["metadata"] for chunk in refresh_chunks],
+            )
 
+        self._sync_cache_key = cache_key
+        self._sync_total = len(chunks)
         return {
             "upserted": len(upsert_chunks),
             "skipped": skipped,
@@ -128,34 +177,48 @@ class ConversationRAGStore:
         distances = result.get("distances", [[]])[0]
         ids = result.get("ids", [[]])[0]
         hits: list[dict[str, Any]] = []
+        # 한 대화의 window들이 결과를 독점하지 않도록 대화당 개수를 제한하고,
+        # 넘친 것은 자리가 남을 때만 뒤에 채웁니다. 특정 대화를 지목한 검색은 제한하지 않습니다.
+        overflow: list[dict[str, Any]] = []
+        windows_per_conversation: dict[str, int] = {}
 
         for index, document in enumerate(documents):
             metadata = metadatas[index] or {}
             hit_conversation_id = str(metadata.get("conversation_id") or "")
             if not conversation_id and exclude_conversation_id and hit_conversation_id == exclude_conversation_id:
                 continue
-            hits.append(
-                {
-                    "chunk_id": ids[index],
+            hit = {
+                "chunk_id": ids[index],
+                "conversation_id": hit_conversation_id,
+                "title": metadata.get("title", ""),
+                "status": metadata.get("status", ""),
+                "content": document,
+                "distance": distances[index] if index < len(distances) else None,
+                "metadata": {
                     "conversation_id": hit_conversation_id,
                     "title": metadata.get("title", ""),
                     "status": metadata.get("status", ""),
-                    "content": document,
-                    "distance": distances[index] if index < len(distances) else None,
-                    "metadata": {
-                        "conversation_id": hit_conversation_id,
-                        "title": metadata.get("title", ""),
-                        "status": metadata.get("status", ""),
-                        "created_at": metadata.get("created_at", ""),
-                        "updated_at": metadata.get("updated_at", ""),
-                        "message_count": metadata.get("message_count", 0),
-                        "last_message_at": metadata.get("last_message_at", ""),
-                        "source_hash": metadata.get("source_hash", ""),
-                    },
-                }
-            )
+                    "created_at": metadata.get("created_at", ""),
+                    "updated_at": metadata.get("updated_at", ""),
+                    "window_index": metadata.get("window_index", 0),
+                    "message_count": metadata.get("message_count", 0),
+                    "last_message_at": metadata.get("last_message_at", ""),
+                    "source_hash": metadata.get("source_hash", ""),
+                },
+            }
+            seen_windows = windows_per_conversation.get(hit_conversation_id, 0)
+            if conversation_id or seen_windows < self.MAX_WINDOWS_PER_CONVERSATION:
+                windows_per_conversation[hit_conversation_id] = seen_windows + 1
+                hits.append(hit)
+                if len(hits) >= normalized_limit:
+                    return hits
+            else:
+                overflow.append(hit)
+
+        for hit in overflow:
             if len(hits) >= normalized_limit:
                 break
+            hits.append(hit)
         return hits
 
     def context_from_hits(self, hits: list[dict[str, Any]]) -> str:
@@ -174,6 +237,65 @@ class ConversationRAGStore:
             lines.append(f"[{index}] {title} | conversation_id={conversation_id} | updated_at={updated_at}")
             lines.append(str(hit.get("content") or "").strip())
         return "\n\n".join(lines)
+
+    def _normalized_skip_ids(self, skip_conversation_ids: str | Iterable[str] | None) -> frozenset[str]:
+        """문자열 하나 또는 여러 개를 받아 공백을 제거한 conversation_id 집합으로 만듭니다."""
+
+        if not skip_conversation_ids:
+            return frozenset()
+        candidates = [skip_conversation_ids] if isinstance(skip_conversation_ids, str) else list(skip_conversation_ids)
+        return frozenset(str(candidate).strip() for candidate in candidates if str(candidate).strip())
+
+    def _sqlite_fingerprint(self, sqlite_store: AppSQLiteStore) -> str:
+        """대화/메시지 테이블의 가벼운 지문을 만들어 불필요한 재청킹을 막습니다.
+
+        메시지 본문까지 읽지 않고 대화 row와 메시지 개수/마지막 rowid만 봅니다.
+        앱에서 메시지는 추가만 되고 수정되지 않으므로 이 조합으로 충분합니다.
+        """
+
+        with sqlite_store.connect() as conn:
+            conversation_rows = [
+                [
+                    str(row["conversation_id"]),
+                    str(row["title"] or ""),
+                    str(row["status"] or ""),
+                    str(row["updated_at"] or ""),
+                ]
+                for row in conn.execute(
+                    """
+                    SELECT conversation_id, title, status, updated_at
+                    FROM conversations
+                    WHERE status IN ('active', 'archived')
+                    ORDER BY conversation_id ASC
+                    """
+                ).fetchall()
+            ]
+            message_row = conn.execute(
+                """
+                SELECT COUNT(*) AS message_count,
+                       COALESCE(MAX(rowid), 0) AS max_rowid,
+                       COALESCE(MAX(created_at), '') AS max_created_at
+                FROM messages
+                """
+            ).fetchone()
+
+        source = {
+            "conversations": conversation_rows,
+            "messages": [
+                int(message_row["message_count"]),
+                int(message_row["max_rowid"]),
+                str(message_row["max_created_at"]),
+            ],
+        }
+        return self._digest(source)
+
+    def _metadata_needs_refresh(self, existing_metadata: dict[str, Any], metadata: dict[str, Any]) -> bool:
+        """embedding은 그대로 두고 metadata만 갱신하면 되는지 판단합니다."""
+
+        return any(
+            str(existing_metadata.get(field) or "") != str(metadata.get(field) or "")
+            for field in self.MUTABLE_METADATA_FIELDS
+        )
 
     def _existing_metadata_by_id(self) -> dict[str, dict[str, Any]]:
         result = self.collection.get(include=["metadatas"])
@@ -230,58 +352,77 @@ class ConversationRAGStore:
 
         chunks: list[dict[str, Any]] = []
         for conversation_id in order:
-            conversation = conversations[conversation_id]
-            messages = conversation["messages"]
-            if not messages:
-                continue
-            chunks.append(self._chunk_from_conversation(conversation))
+            chunks.extend(self._chunks_from_conversation(conversations[conversation_id]))
         return chunks
 
-    def _chunk_from_conversation(self, conversation: dict[str, Any]) -> dict[str, Any]:
+    def _chunks_from_conversation(self, conversation: dict[str, Any]) -> list[dict[str, Any]]:
+        """대화 하나를 `WINDOW_SIZE`개 메시지씩 끊어 청크 목록으로 만듭니다."""
+
         messages = conversation["messages"]
-        title = str(conversation.get("title") or "새 대화")
-        status = str(conversation.get("status") or "active")
-        created_at = str(conversation.get("created_at") or "")
-        updated_at = str(conversation.get("updated_at") or "")
-        last_message_at = str(messages[-1].get("created_at") or "")
-        source_hash = self._source_hash(conversation)
-        lines = [
-            f"대화 제목: {title}",
-            f"대화 상태: {status}",
-            f"대화 생성: {created_at}",
-            f"대화 수정: {updated_at}",
-            "[메시지]",
-        ]
-        for message in messages:
-            role = str(message.get("role") or "")
-            content = " ".join(str(message.get("content") or "").split())
-            message_created_at = str(message.get("created_at") or "")
-            lines.append(f"{message_created_at} | {role} | {content}")
+        if not messages:
+            return []
 
         conversation_id = str(conversation["conversation_id"])
-        return {
-            "chunk_id": f"conversation:{conversation_id}",
-            "content": "\n".join(lines),
-            "metadata": {
-                "conversation_id": conversation_id,
-                "title": title,
-                "status": status,
-                "created_at": created_at,
-                "updated_at": updated_at,
-                "message_count": len(messages),
-                "last_message_at": last_message_at,
-                "source_hash": source_hash,
-            },
+        title = str(conversation.get("title") or "새 대화")
+        shared_metadata = {
+            "conversation_id": conversation_id,
+            "title": title,
+            "status": str(conversation.get("status") or "active"),
+            "created_at": str(conversation.get("created_at") or ""),
+            "updated_at": str(conversation.get("updated_at") or ""),
         }
+        windows = [messages[start : start + self.WINDOW_SIZE] for start in range(0, len(messages), self.WINDOW_SIZE)]
+        return [
+            {
+                "chunk_id": f"conversation:{conversation_id}#w{window_index}",
+                "content": "\n".join(
+                    [f"대화 제목: {title}", *(self._message_line(message) for message in window)]
+                ),
+                "metadata": {
+                    **shared_metadata,
+                    "window_index": window_index,
+                    "message_count": len(window),
+                    "last_message_at": str(window[-1].get("created_at") or ""),
+                    "source_hash": self._source_hash(conversation_id, window_index, title, window),
+                },
+            }
+            for window_index, window in enumerate(windows)
+        ]
 
-    def _source_hash(self, conversation: dict[str, Any]) -> str:
+    def _message_line(self, message: dict[str, Any]) -> str:
+        """메시지 한 건을 embedding 대상 한 줄로 만듭니다."""
+
+        role = str(message.get("role") or "")
+        content = " ".join(str(message.get("content") or "").split())
+        created_at = str(message.get("created_at") or "")
+        return f"{created_at} | {role} | {content}"
+
+    def _source_hash(
+        self,
+        conversation_id: str,
+        window_index: int,
+        title: str,
+        messages: list[dict[str, Any]],
+    ) -> str:
+        """embedding 본문에 들어가는 값만 해싱합니다.
+
+        제목은 본문에 포함되므로 해시에도 넣습니다. 제목이 바뀌면 그 대화의 window만
+        다시 embedding되는데, 제목은 메시지를 붙일 때 바뀌지 않으므로 append 비용에는
+        영향이 없습니다.
+
+        반대로 상태와 대화 수정 시각은 본문이 아니므로 제외합니다. 이 값들이 해시에
+        들어가 있으면 메시지 한 건이 추가될 때마다 과거 window까지 전부 다시
+        embedding됩니다.
+        """
+
         source = {
-            "conversation_id": conversation.get("conversation_id"),
-            "title": conversation.get("title"),
-            "status": conversation.get("status"),
-            "created_at": conversation.get("created_at"),
-            "updated_at": conversation.get("updated_at"),
-            "messages": conversation.get("messages") or [],
+            "conversation_id": conversation_id,
+            "window_index": window_index,
+            "title": title,
+            "messages": messages,
         }
+        return self._digest(source)
+
+    def _digest(self, source: Any) -> str:
         encoded = json.dumps(source, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
